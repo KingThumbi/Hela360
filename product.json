@@ -1,0 +1,24 @@
+{
+  "internal_sku": "PARA-500-001",
+  "name": "Paracetamol 500mg",
+  "generic_name": "Paracetamol",
+  "brand_name": "Generic",
+  "category_name": "Analgesics",
+  "unit_code": "TAB",
+  "unit_name": "Tablet",
+  "product_type": "stockable",
+  "track_inventory": true,
+  "track_batches": true,
+  "track_expiry": true,
+  "reorder_level": 50,
+  "reorder_qty": 200,
+  "default_sale_price": 5,
+  "cost_price": 2.5,
+  "codes": [
+    {
+      "code_type": "barcode",
+      "code_value": "1234567890123",
+      "is_primary": true
+    }
+  ]
+}
