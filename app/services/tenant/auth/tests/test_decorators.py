@@ -234,32 +234,35 @@ def test_permission_wrappers_delegate(
 # Role wrappers
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Role wrappers
+# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(
-    ("decorator_factory", "expected"),
+    ("wrapper", "args", "expected"),
     [
         (
-            decorators.require_role("manager"),
-            "role",
+            decorators.require_role,
+            ("manager",),
+            {"role": "manager"},
         ),
         (
-            decorators.require_any_role(
-                ("manager", "cashier"),
-            ),
-            "any_roles",
+            decorators.require_any_role,
+            (("manager", "cashier"),),
+            {"any_roles": ("manager", "cashier")},
         ),
         (
-            decorators.require_all_roles(
-                ("manager", "cashier"),
-            ),
-            "all_roles",
+            decorators.require_all_roles,
+            (("manager", "cashier"),),
+            {"all_roles": ("manager", "cashier")},
         ),
     ],
 )
 def test_role_wrappers_delegate(
     monkeypatch: pytest.MonkeyPatch,
-    decorator_factory,
-    expected: dict[str, Any]
+    wrapper,
+    args,
+    expected: dict[str, Any],
 ) -> None:
     captured: dict[str, Any] = {}
 
@@ -277,7 +280,9 @@ def test_role_wrappers_delegate(
         fake_require_authorization,
     )
 
-    @decorator_factory
+    decorator = wrapper(*args)
+
+    @decorator
     def endpoint() -> None:
         pass
 
@@ -285,8 +290,7 @@ def test_role_wrappers_delegate(
 
     for key, value in expected.items():
         assert captured[key] == value
-
-
+        
 # ---------------------------------------------------------------------------
 # Tenant / Branch wrappers
 # ---------------------------------------------------------------------------

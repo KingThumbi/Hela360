@@ -27,8 +27,8 @@ from app.models import (
     Warehouse,
 )
 from app.models.pos import SaleRefund, SaleRefundItem, SaleActionRequest
-from app.services.refunds import RefundError, RefundService
-from app.services.sale_approvals import ApprovalError, SaleApprovalService
+from app.services.tenant.pos.refund_service import RefundError, RefundService
+from app.services.tenant.pos.sale_approval_service import ApprovalError, SaleApprovalService
 
 bp = Blueprint("sales", __name__)
 

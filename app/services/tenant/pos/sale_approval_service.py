@@ -6,7 +6,7 @@ from uuid import uuid4
 from app.extensions import db
 from app.models import Sale, User
 from app.models.pos import SaleActionRequest
-from app.services.refunds import RefundService, RefundError
+from app.services.tenant.pos.refund_service import RefundService, RefundError
 
 
 def utcnow():

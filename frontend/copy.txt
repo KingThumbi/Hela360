@@ -1,0 +1,294 @@
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ # 1. Overall structure
+pwd
+tree -L 3 app
+
+# 2. Locate the core models
+find app -name "*.py" | grep models
+
+# 3. Find User, Role, Tenant, Branch models
+grep -R "class User" -n app
+grep -R "class Role" -n app
+grep -R "class Tenant" -n app
+grep -R "class Branch" -n app
+
+# 4. Display the model definitions
+sed -n '/class User/,/^class /p' app/models.py
+sed -n '/class Role/,/^class /p' app/models.py
+sed -n '/class Tenant/,/^class /p' app/models.py
+sed -n '/class Branch/,/^class /p' app/models.py
+/home/thumbi/Hela360
+app
+├── api
+│   ├── customers.py
+│   ├── health.py
+│   ├── __init__.py
+│   ├── inventory.py
+│   ├── products.py
+│   ├── __pycache__
+│   │   ├── customers.cpython-312.pyc
+│   │   ├── health.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── products.cpython-312.pyc
+│   │   └── sales.cpython-312.pyc
+│   ├── sales.py
+│   └── tenants.py
+├── api_sales.py
+├── App.tsx
+├── config.py
+├── extensions.py
+├── __init__.py
+├── models
+│   ├── audit.py
+│   ├── auth.py
+│   ├── base.py
+│   ├── customer.py
+│   ├── __init__.py
+│   ├── inventory.py
+│   ├── pos.py
+│   ├── product.py
+│   ├── __pycache__
+│   │   ├── audit.cpython-312.pyc
+│   │   ├── auth.cpython-312.pyc
+│   │   ├── base.cpython-312.pyc
+│   │   ├── customer.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── inventory.cpython-312.pyc
+│   │   ├── pos.cpython-312.pyc
+│   │   ├── product.cpython-312.pyc
+│   │   ├── shift.cpython-312.pyc
+│   │   └── tenant.cpython-312.pyc
+│   ├── shift.py
+│   └── tenant.py
+├── providers.tsx
+├── __pycache__
+│   ├── api_sales.cpython-312.pyc
+│   ├── config.cpython-312.pyc
+│   ├── extensions.cpython-312.pyc
+│   └── __init__.cpython-312.pyc
+├── router.tsx
+└── services
+    ├── audit_service.py
+    ├── inventory_service.py
+    ├── __pycache__
+    │   ├── refunds.cpython-312.pyc
+    │   └── sale_approvals.cpython-312.pyc
+    ├── refunds.py
+    ├── sale_approvals.py
+    └── sales_service.py
+
+8 directories, 50 files
+app/models/auth.py
+app/models/tenant.py
+app/models/audit.py
+app/models/pos.py
+app/models/shift.py
+app/models/inventory.py
+app/models/product.py
+app/models/base.py
+app/models/__init__.py
+app/models/customer.py
+app/models/auth.py:6:class User(UUIDPrimaryKeyMixin, TimestampMixin, UserMixin, db.Model):
+app/models/auth.py:54:class UserRole(db.Model):
+app/models/auth.py:25:class Role(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
+app/models/auth.py:47:class RolePermission(db.Model):
+app/models/tenant.py:6:class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
+app/models/tenant.py:22:class Branch(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
+sed: can't read app/models.py: No such file or directory
+sed: can't read app/models.py: No such file or directory
+sed: can't read app/models.py: No such file or directory
+sed: can't read app/models.py: No such file or directory
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ # Existing authentication libraries
+grep -R "LoginManager" -n app
+grep -R "login_manager" -n app
+grep -R "login_required" -n app
+grep -R "current_user" -n app
+grep -R "flask_login" -n app
+grep -R "jwt" -ni app
+grep -R "Authorization" -ni app
+grep -R "Bearer" -ni app
+app/extensions.py:4:from flask_login import LoginManager
+app/extensions.py:9:login_manager = LoginManager()
+grep: app/__pycache__/extensions.cpython-312.pyc: binary file matches
+app/extensions.py:9:login_manager = LoginManager()
+app/__init__.py:6:from app.extensions import db, login_manager, migrate
+app/__init__.py:13:    login_manager.init_app(app)
+app/api/__init__.py:4:from app.extensions import db, login_manager, migrate
+app/api/__init__.py:16:    login_manager.init_app(app)
+grep: app/api/__pycache__/__init__.cpython-312.pyc: binary file matches
+grep: app/__pycache__/__init__.cpython-312.pyc: binary file matches
+grep: app/__pycache__/extensions.cpython-312.pyc: binary file matches
+app/extensions.py:4:from flask_login import LoginManager
+app/models/auth.py:2:from flask_login import UserMixin
+grep: app/models/__pycache__/auth.cpython-312.pyc: binary file matches
+grep: app/__pycache__/extensions.cpython-312.pyc: binary file matches
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ grep -R "generate_password_hash" -n app
+grep -R "check_password_hash" -n app
+grep -R "password_hash" -n app
+grep -R "set_password" -n app
+grep -R "verify_password" -n app
+app/__init__.py:3:from werkzeug.security import generate_password_hash
+app/__init__.py:94:                password_hash=generate_password_hash(admin_password),
+grep: app/__pycache__/__init__.cpython-312.pyc: binary file matches
+app/models/auth.py:20:    password_hash = db.Column(db.Text, nullable=False)
+grep: app/models/__pycache__/auth.cpython-312.pyc: binary file matches
+app/__init__.py:3:from werkzeug.security import generate_password_hash
+app/__init__.py:94:                password_hash=generate_password_hash(admin_password),
+grep: app/__pycache__/__init__.cpython-312.pyc: binary file matches
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ grep -R "register_blueprint" -n app
+app/__init__.py:16:def register_blueprints(app: Flask) -> None:
+app/__init__.py:22:    app.register_blueprint(health_bp, url_prefix="/api")
+app/__init__.py:23:    app.register_blueprint(products_bp, url_prefix="/api")
+app/__init__.py:24:    app.register_blueprint(customers_bp, url_prefix="/api")
+app/__init__.py:25:    app.register_blueprint(sales_bp, url_prefix="/api")
+app/__init__.py:130:    #app.register_blueprint(api_sales)
+app/__init__.py:136:    register_blueprints(app)
+app/api/__init__.py:7:def register_blueprints(app: Flask) -> None:
+app/api/__init__.py:10:    app.register_blueprint(health_bp, url_prefix="/api")
+app/api/__init__.py:28:    register_blueprints(app)
+grep: app/api/__pycache__/__init__.cpython-312.pyc: binary file matches
+grep: app/__pycache__/__init__.cpython-312.pyc: binary file matches
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ grep -n "SECRET_KEY" config.py
+grep -n "JWT" config.py
+grep -n "SQLALCHEMY" config.py
+grep -n "SESSION" config.py
+grep -n "REMEMBER" config.py
+grep: config.py: No such file or directory
+grep: config.py: No such file or directory
+grep: config.py: No such file or directory
+grep: config.py: No such file or directory
+grep: config.py: No such file or directory
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ ls
+ls app
+
+test -f requirements.txt && sed -n '1,200p' requirements.txt
+test -f pyproject.toml && sed -n '1,200p' pyproject.toml
+app  app.py  frontend  migrations  models.py  product.json  __pycache__  README.md  requirements.txt  run.py  venv
+api  api_sales.py  App.tsx  config.py  extensions.py  __init__.py  models  providers.tsx  __pycache__  router.tsx  services
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.7
+Flask-Login==0.6.3
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ grep -R "db.relationship" -n app/models*s*
+grep -R "ForeignKey" -n app/models*
+app/models/tenant.py:19:    branches = db.relationship("Branch", back_populates="tenant", cascade="all, delete-orphan")
+app/models/tenant.py:42:    tenant = db.relationship("Tenant", back_populates="branches")
+app/models/auth.py:13:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/auth.py:14:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=True, index=True)
+app/models/auth.py:31:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/auth.py:50:    role_id = db.Column(db.String(36), db.ForeignKey("roles.id"), primary_key=True)
+app/models/auth.py:51:    permission_id = db.Column(db.String(36), db.ForeignKey("permissions.id"), primary_key=True)
+app/models/auth.py:57:    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), primary_key=True)
+app/models/auth.py:58:    role_id = db.Column(db.String(36), db.ForeignKey("roles.id"), primary_key=True)
+app/models/tenant.py:29:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:12:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:13:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/pos.py:23:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:24:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/pos.py:25:    till_id = db.Column(db.String(36), db.ForeignKey("tills.id"), nullable=False, index=True)
+app/models/pos.py:27:    opened_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+app/models/pos.py:31:    closed_by = db.Column(db.String(36), db.ForeignKey("users.id"))
+app/models/pos.py:47:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:48:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/pos.py:49:    till_id = db.Column(db.String(36), db.ForeignKey("tills.id"), nullable=False, index=True)
+app/models/pos.py:50:    shift_id = db.Column(db.String(36), db.ForeignKey("shifts.id"), index=True)
+app/models/pos.py:51:    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
+app/models/pos.py:53:    customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), index=True)
+app/models/pos.py:71:    cashier_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+app/models/pos.py:78:    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+app/models/pos.py:79:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+app/models/pos.py:80:    batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
+app/models/pos.py:100:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:112:    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+app/models/pos.py:113:    payment_method_id = db.Column(db.String(36), db.ForeignKey("payment_methods.id"), nullable=False, index=True)
+app/models/pos.py:119:    received_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+app/models/pos.py:127:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:128:    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+app/models/pos.py:129:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/pos.py:130:    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
+app/models/pos.py:131:    till_id = db.Column(db.String(36), db.ForeignKey("tills.id"), nullable=False, index=True)
+app/models/pos.py:132:    cashier_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+app/models/pos.py:133:    customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), index=True)
+app/models/pos.py:152:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:153:    refund_id = db.Column(db.String(36), db.ForeignKey("sale_refunds.id", ondelete="CASCADE"), nullable=False, index=True)
+app/models/pos.py:154:    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+app/models/pos.py:155:    sale_item_id = db.Column(db.String(36), db.ForeignKey("sale_items.id"), nullable=False, index=True)
+app/models/pos.py:156:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+app/models/pos.py:157:    batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
+app/models/pos.py:172:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/pos.py:173:    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+app/models/pos.py:178:    requested_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+app/models/pos.py:179:    approved_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+app/models/pos.py:180:    rejected_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+app/models/inventory.py:10:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/inventory.py:11:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/inventory.py:21:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/inventory.py:22:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+app/models/inventory.py:23:    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
+app/models/inventory.py:38:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/inventory.py:39:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/inventory.py:40:    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
+app/models/inventory.py:41:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+app/models/inventory.py:51:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/inventory.py:52:    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+app/models/inventory.py:53:    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
+app/models/inventory.py:54:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+app/models/inventory.py:55:    batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
+app/models/inventory.py:63:    created_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+app/models/product.py:11:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/product.py:12:    parent_id = db.Column(db.String(36), db.ForeignKey("product_categories.id"))
+app/models/product.py:25:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/product.py:36:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/product.py:48:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/product.py:49:    category_id = db.Column(db.String(36), db.ForeignKey("product_categories.id"), index=True)
+app/models/product.py:50:    brand_id = db.Column(db.String(36), db.ForeignKey("brands.id"), index=True)
+app/models/product.py:51:    unit_id = db.Column(db.String(36), db.ForeignKey("units_of_measure.id"), index=True)
+app/models/product.py:88:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+app/models/product.py:89:    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+grep: app/models/__pycache__/auth.cpython-312.pyc: binary file matches
+grep: app/models/__pycache__/pos.cpython-312.pyc: binary file matches
+grep: app/models/__pycache__/inventory.cpython-312.pyc: binary file matches
+grep: app/models/__pycache__/tenant.cpython-312.pyc: binary file matches
+grep: app/models/__pycache__/customer.cpython-312.pyc: binary file matches
+grep: app/models/__pycache__/product.cpython-312.pyc: binary file matches
+app/models/customer.py:10:    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ grep -R "@app.before_request" -n app
+grep -R "@app.after_request" -n app
+grep -R "@bp.before_request" -n app
+grep -R "before_request" -n app
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ find app -maxdepth 2 -type f | sort
+app/api/customers.py
+app/api/health.py
+app/api/__init__.py
+app/api/inventory.py
+app/api/products.py
+app/api/sales.py
+app/api_sales.py
+app/api/tenants.py
+app/App.tsx
+app/config.py
+app/extensions.py
+app/__init__.py
+app/models/audit.py
+app/models/auth.py
+app/models/base.py
+app/models/customer.py
+app/models/__init__.py
+app/models/inventory.py
+app/models/pos.py
+app/models/product.py
+app/models/shift.py
+app/models/tenant.py
+app/providers.tsx
+app/__pycache__/api_sales.cpython-312.pyc
+app/__pycache__/config.cpython-312.pyc
+app/__pycache__/extensions.cpython-312.pyc
+app/__pycache__/__init__.cpython-312.pyc
+app/router.tsx
+app/services/audit_service.py
+app/services/inventory_service.py
+app/services/refunds.py
+app/services/sale_approvals.py
+app/services/sales_service.py
+(venv) thumbi@thumbi-Latitude-3570:~/Hela360$ 
