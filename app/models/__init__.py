@@ -13,6 +13,12 @@ from app.models.inventory import Warehouse, InventoryBatch, StockBalance, Invent
 from app.models.pos import Till, Shift, Sale, SaleItem, PaymentMethod, SalePayment
 from app.models.audit import AuditLog
 from .shift import TillShift
+from .security import (
+    UserSession,
+    RefreshToken,
+    LoginAttempt,
+    PasswordResetToken,
+)
 
 __all__ = [
     "Tenant",
@@ -40,4 +46,8 @@ __all__ = [
     "PaymentMethod",
     "SalePayment",
     "AuditLog",
+    "UserSession",
+    "RefreshToken",
+    "LoginAttempt",
+    "PasswordResetToken",
 ]
