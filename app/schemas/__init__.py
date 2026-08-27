@@ -3,6 +3,7 @@ from app.schemas.goods_receipt import (
     CreateGoodsReceiptRequest,
 )
 from app.schemas.stock_count import (
+    AddDiscoveredStockCountItemRequest,
     CreateStockCountRequest,
     UpdateStockCountItemRequest,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "CreateGoodsReceiptRequest",
     "CreateStockAdjustmentFromCountRequest",
     "CreateStockAdjustmentRequest",
+    "AddDiscoveredStockCountItemRequest",
     "CreateStockCountRequest",
     "CreateSupplierRequest",
     "SupplierListFilters",

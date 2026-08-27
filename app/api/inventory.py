@@ -8,7 +8,11 @@ from app.schemas import (
     CreateStockAdjustmentFromCountRequest,
     CreateStockAdjustmentRequest,
 )
-from app.schemas import CreateStockCountRequest, UpdateStockCountItemRequest
+from app.schemas import (
+    AddDiscoveredStockCountItemRequest,
+    CreateStockCountRequest,
+    UpdateStockCountItemRequest,
+)
 from app.serializers import serialize_goods_receipt
 from app.serializers import serialize_stock_adjustment
 from app.serializers import serialize_stock_count
@@ -369,6 +373,57 @@ def get_stock_count(count_id: str):
                 **service.serialization_context(count),
             ),
         }
+    )
+
+
+@bp.post("/inventory/stock-counts/<count_id>/items/discovered")
+@require_permission("inventory.count")
+def add_discovered_stock_count_item(count_id: str):
+    """
+    Record physical stock discovered during an open Stock Count.
+
+    This endpoint records counting evidence only. It does not create an
+    InventoryBatch, mutate StockBalance, or post an InventoryMovement.
+
+    For blind counts, expected quantities and variance information remain
+    concealed by the Stock Count serializer while the count is open.
+    """
+
+    identity = _current_identity()
+    payload = request.get_json(silent=True) or {}
+
+    service = StockCountService(db.session)
+
+    service.add_discovered_item(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        count_id=count_id,
+        counted_by=identity.user_id,
+        request=AddDiscoveredStockCountItemRequest.from_payload(
+            payload
+        ),
+    )
+
+    count = service.get_stock_count(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        count_id=count_id,
+    )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": (
+                    "Discovered stock count item recorded successfully."
+                ),
+                "item": serialize_stock_count(
+                    count,
+                    **service.serialization_context(count),
+                ),
+            }
+        ),
+        201,
     )
 
 

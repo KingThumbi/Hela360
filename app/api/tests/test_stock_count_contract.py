@@ -312,7 +312,12 @@ def test_stock_count_requires_inventory_count_permission(
 
 
 def test_stock_count_create_snapshots_physical_on_hand_and_batches(client):
-    response = client.post("/api/inventory/stock-counts", json=stock_count_payload())
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
 
     assert response.status_code == 201
     item = response.get_json()["item"]
@@ -372,6 +377,7 @@ def test_stock_count_partial_scope_can_snapshot_zero_system_non_batch_product(cl
         "/api/inventory/stock-counts",
         json=stock_count_payload(
             product_ids=[ZERO_PRODUCT_ID],
+            count_mode="visible",
         ),
     )
 
@@ -401,7 +407,12 @@ def test_stock_count_idempotency_and_open_warehouse_conflict(client):
 
 
 def test_stock_count_entry_derives_expected_variance_after_movements(client):
-    created = client.post("/api/inventory/stock-counts", json=stock_count_payload())
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
     count_id = created.get_json()["item"]["id"]
     item = next(
         line
@@ -484,10 +495,25 @@ def test_stock_count_complete_requires_all_items_and_does_not_mutate_stock(clien
     assert response.status_code == 400
     assert "All stock count items" in error_message(response)
 
-    for item in created.get_json()["item"]["items"]:
+    persisted_items = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .order_by(
+            StockCountItem.line_number.asc()
+        )
+        .all()
+    )
+
+    for item in persisted_items:
         response = client.put(
-            f"/api/inventory/stock-counts/{count_id}/items/{item['id']}",
-            json={"counted_quantity": item["expected_quantity"]},
+            f"/api/inventory/stock-counts/{count_id}/items/{item.id}",
+            json={
+                "counted_quantity": str(
+                    item.expected_quantity
+                ),
+            },
         )
         assert response.status_code == 200
 
@@ -575,3 +601,1081 @@ def test_stock_count_list_validates_filters(client):
     )
     assert response.status_code == 400
     assert "warehouse_id" in error_message(response)
+
+
+# ============================================================================
+# Blind counting and discovered physical stock
+# ============================================================================
+
+
+def test_stock_count_defaults_to_blind_mode(client):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert response.status_code == 201
+
+    count_id = response.get_json()["item"]["id"]
+    count = db.session.get(StockCount, count_id)
+
+    assert count is not None
+    assert count.count_mode == "blind"
+
+
+def test_stock_count_can_explicitly_use_visible_mode(client):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
+
+    assert response.status_code == 201
+
+    count_id = response.get_json()["item"]["id"]
+    count = db.session.get(StockCount, count_id)
+
+    assert count is not None
+    assert count.count_mode == "visible"
+
+
+def test_stock_count_mode_participates_in_idempotency_fingerprint(client):
+    first = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="blind",
+        ),
+    )
+
+    assert first.status_code == 201
+
+    replay_with_different_mode = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
+
+    assert replay_with_different_mode.status_code == 409
+    assert "idempotency_key" in error_message(
+        replay_with_different_mode
+    )
+
+
+def test_snapshot_stock_count_items_are_marked_as_snapshot(client):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert response.status_code == 201
+
+    count_id = response.get_json()["item"]["id"]
+
+    items = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .all()
+    )
+
+    assert items
+    assert {
+        item.source_type
+        for item in items
+    } == {"snapshot"}
+
+
+def test_discovered_batches_can_be_recorded_in_parts(client):
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    service = StockCountService(db.session)
+
+    observations = [
+        {
+            "batch_number": "BATCH-X",
+            "expiry_date": "2027-05-31",
+            "counted_quantity": "100",
+        },
+        {
+            "batch_number": "BATCH-Y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "50",
+        },
+        {
+            "batch_number": "BATCH-Z",
+            "expiry_date": "2029-01-31",
+            "counted_quantity": "50",
+        },
+    ]
+
+    created_items = []
+
+    for observation in observations:
+        request = (
+            AddDiscoveredStockCountItemRequest
+            .from_payload(
+                {
+                    "product_id": BATCH_PRODUCT_ID,
+                    **observation,
+                }
+            )
+        )
+
+        item = service.add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+        created_items.append(item)
+
+    persisted = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=BATCH_PRODUCT_ID,
+            source_type="discovered",
+        )
+        .order_by(
+            StockCountItem.line_number.asc()
+        )
+        .all()
+    )
+
+    assert len(persisted) == 3
+
+    assert [
+        item.observed_batch_number
+        for item in persisted
+    ] == [
+        "BATCH-X",
+        "BATCH-Y",
+        "BATCH-Z",
+    ]
+
+    assert [
+        item.observed_expiry_date.isoformat()
+        for item in persisted
+    ] == [
+        "2027-05-31",
+        "2028-06-30",
+        "2029-01-31",
+    ]
+
+    assert [
+        item.counted_quantity
+        for item in persisted
+    ] == [
+        Decimal("100.0000"),
+        Decimal("50.0000"),
+        Decimal("50.0000"),
+    ]
+
+    assert all(
+        item.batch_id is None
+        for item in persisted
+    )
+
+    assert all(
+        item.snapshot_quantity
+        == Decimal("0.0000")
+        for item in persisted
+    )
+
+    assert all(
+        item.expected_quantity
+        == Decimal("0.0000")
+        for item in persisted
+    )
+
+    assert [
+        item.variance_quantity
+        for item in persisted
+    ] == [
+        Decimal("100.0000"),
+        Decimal("50.0000"),
+        Decimal("50.0000"),
+    ]
+
+    assert sum(
+        (
+            item.counted_quantity
+            for item in persisted
+        ),
+        Decimal("0"),
+    ) == Decimal("200.0000")
+
+    assert all(
+        item.counted_by == USER_ID
+        for item in created_items
+    )
+
+
+def test_discovered_batch_identity_rejects_case_only_duplicate(client):
+    from app.errors import ConflictError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+    service = StockCountService(db.session)
+
+    first = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "BATCH-Y",
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "50",
+            }
+        )
+    )
+
+    service.add_discovered_item(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        count_id=count_id,
+        counted_by=USER_ID,
+        request=first,
+    )
+
+    duplicate = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "batch-y",
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "25",
+            }
+        )
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="already has a stock count line",
+    ):
+        service.add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=duplicate,
+        )
+
+
+def test_discovered_item_cannot_duplicate_snapshot_batch(client):
+    from app.errors import ConflictError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    request = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "BATCH-A",
+                "expiry_date": "2027-01-31",
+                "counted_quantity": "10",
+            }
+        )
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="already has a stock count line",
+    ):
+        StockCountService(
+            db.session
+        ).add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+
+def test_discovered_item_requires_open_stock_count(client):
+    from app.errors import ConflictError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    count = db.session.get(
+        StockCount,
+        count_id,
+    )
+    count.status = "completed"
+    db.session.commit()
+
+    request = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "BATCH-Y",
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "50",
+            }
+        )
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="not open",
+    ):
+        StockCountService(
+            db.session
+        ).add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "product_id",
+        "payload",
+        "expected_message",
+    ),
+    [
+        (
+            BATCH_PRODUCT_ID,
+            {
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "50",
+            },
+            "batch_number is required",
+        ),
+        (
+            BATCH_PRODUCT_ID,
+            {
+                "batch_number": "BATCH-Y",
+                "counted_quantity": "50",
+            },
+            "expiry_date is required",
+        ),
+        (
+            NON_BATCH_PRODUCT_ID,
+            {
+                "batch_number": "NOT-ALLOWED",
+                "counted_quantity": "5",
+            },
+            "batch_number is not allowed",
+        ),
+        (
+            NON_BATCH_PRODUCT_ID,
+            {
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "5",
+            },
+            "expiry_date is not allowed",
+        ),
+    ],
+)
+def test_discovered_item_enforces_product_batch_expiry_policy(
+    client,
+    product_id,
+    payload,
+    expected_message,
+):
+    from app.errors import ValidationError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    request = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": product_id,
+                **payload,
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=expected_message,
+    ):
+        StockCountService(
+            db.session
+        ).add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "product_id",
+        "expected_message",
+    ),
+    [
+        (
+            "service-product",
+            "inventory-tracked",
+        ),
+        (
+            "other-tenant-product",
+            "belong to this tenant",
+        ),
+    ],
+)
+def test_discovered_item_preserves_product_scope_rules(
+    client,
+    product_id,
+    expected_message,
+):
+    from app.errors import ValidationError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    request = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": product_id,
+                "counted_quantity": "1",
+            }
+        )
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=expected_message,
+    ):
+        StockCountService(
+            db.session
+        ).add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+
+def test_non_batch_product_cannot_create_duplicate_discovered_line(client):
+    from app.errors import ConflictError
+    from app.schemas import (
+        AddDiscoveredStockCountItemRequest,
+    )
+    from app.services.tenant.inventory import (
+        StockCountService,
+    )
+
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    request = (
+        AddDiscoveredStockCountItemRequest
+        .from_payload(
+            {
+                "product_id": NON_BATCH_PRODUCT_ID,
+                "counted_quantity": "5",
+            }
+        )
+    )
+
+    with pytest.raises(
+        ConflictError,
+        match="existing line",
+    ):
+        StockCountService(
+            db.session
+        ).add_discovered_item(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            count_id=count_id,
+            counted_by=USER_ID,
+            request=request,
+        )
+
+
+# ============================================================================
+# Blind Stock Count serialization
+# ============================================================================
+
+
+def test_open_blind_count_hides_system_quantities_and_variance(client):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="blind",
+        ),
+    )
+
+    assert response.status_code == 201
+
+    item = response.get_json()["item"]
+
+    assert item["count_mode"] == "blind"
+    assert item["status"] == "open"
+
+    assert "variance_items" not in item["summary"]
+    assert (
+        "positive_variance_items"
+        not in item["summary"]
+    )
+    assert (
+        "negative_variance_items"
+        not in item["summary"]
+    )
+
+    for line in item["items"]:
+        assert line["source_type"] == "snapshot"
+
+        assert (
+            "snapshot_quantity"
+            not in line
+        )
+        assert (
+            "expected_quantity"
+            not in line
+        )
+        assert (
+            "variance_quantity"
+            not in line
+        )
+
+        assert "counted_quantity" in line
+
+
+def test_open_visible_count_exposes_system_quantities_and_variance(client):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
+
+    assert response.status_code == 201
+
+    item = response.get_json()["item"]
+
+    assert item["count_mode"] == "visible"
+
+    assert "variance_items" in item["summary"]
+    assert (
+        "positive_variance_items"
+        in item["summary"]
+    )
+    assert (
+        "negative_variance_items"
+        in item["summary"]
+    )
+
+    for line in item["items"]:
+        assert "snapshot_quantity" in line
+        assert "expected_quantity" in line
+        assert "variance_quantity" in line
+
+
+def test_completed_blind_count_reveals_system_quantities_and_variance(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="blind",
+        ),
+    )
+
+    assert created.status_code == 201
+
+    count_id = (
+        created.get_json()["item"]["id"]
+    )
+
+    count = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    lines = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .order_by(
+            StockCountItem.line_number.asc()
+        )
+        .all()
+    )
+
+    for line in lines:
+        response = client.put(
+            (
+                f"/api/inventory/stock-counts/"
+                f"{count_id}/items/{line.id}"
+            ),
+            json={
+                "counted_quantity":
+                    str(
+                        line.expected_quantity
+                    ),
+            },
+        )
+
+        assert response.status_code == 200
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/complete"
+        )
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    assert item["count_mode"] == "blind"
+    assert item["status"] == "completed"
+
+    assert "variance_items" in item["summary"]
+    assert (
+        "positive_variance_items"
+        in item["summary"]
+    )
+    assert (
+        "negative_variance_items"
+        in item["summary"]
+    )
+
+    for line in item["items"]:
+        assert "snapshot_quantity" in line
+        assert "expected_quantity" in line
+        assert "variance_quantity" in line
+
+    assert count is not None
+
+
+def test_blind_count_remains_blind_after_entering_quantity(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="blind",
+        ),
+    )
+
+    assert created.status_code == 201
+
+    count_id = (
+        created.get_json()["item"]["id"]
+    )
+
+    line = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .order_by(
+            StockCountItem.line_number.asc()
+        )
+        .first()
+    )
+
+    assert line is not None
+
+    response = client.put(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/{line.id}"
+        ),
+        json={
+            "counted_quantity": "7",
+        },
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    updated = next(
+        candidate
+        for candidate in item["items"]
+        if candidate["id"] == str(line.id)
+    )
+
+    assert (
+        updated["counted_quantity"]
+        == "7.0000"
+    )
+
+    assert "snapshot_quantity" not in updated
+    assert "expected_quantity" not in updated
+    assert "variance_quantity" not in updated
+
+    assert "variance_items" not in item["summary"]
+
+
+# ============================================================================
+# Discovered Stock Count API
+# ============================================================================
+
+
+def test_discovered_stock_count_api_records_batch_expiry_line(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "BATCH-Y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "50",
+            "notes": "Found during physical count.",
+        },
+    )
+
+    assert response.status_code == 201
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+
+    item = payload["item"]
+
+    assert item["count_mode"] == "blind"
+    assert item["status"] == "open"
+
+    discovered = next(
+        line
+        for line in item["items"]
+        if line["source_type"] == "discovered"
+    )
+
+    assert discovered["product"]["id"] == BATCH_PRODUCT_ID
+    assert discovered["batch"] is None
+    assert discovered["observed_batch_number"] == "BATCH-Y"
+    assert discovered["observed_expiry_date"] == "2028-06-30"
+    assert discovered["counted_quantity"] == "50.0000"
+    assert discovered["counted_by"]["id"] == USER_ID
+
+    # Open blind counts must not disclose reconciliation quantities.
+    assert "snapshot_quantity" not in discovered
+    assert "expected_quantity" not in discovered
+    assert "variance_quantity" not in discovered
+
+
+def test_discovered_stock_count_api_accepts_multiple_batches_for_product(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    observations = [
+        ("BATCH-X", "2027-05-31", "100"),
+        ("BATCH-Y", "2028-06-30", "50"),
+        ("BATCH-Z", "2029-01-31", "50"),
+    ]
+
+    for batch_number, expiry_date, quantity in observations:
+        response = client.post(
+            (
+                f"/api/inventory/stock-counts/"
+                f"{count_id}/items/discovered"
+            ),
+            json={
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": batch_number,
+                "expiry_date": expiry_date,
+                "counted_quantity": quantity,
+            },
+        )
+
+        assert response.status_code == 201
+
+    persisted = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=BATCH_PRODUCT_ID,
+            source_type="discovered",
+        )
+        .all()
+    )
+
+    assert len(persisted) == 3
+
+    total = sum(
+        (
+            item.counted_quantity
+            for item in persisted
+        ),
+        Decimal("0"),
+    )
+
+    assert total == Decimal("200.0000")
+
+
+def test_discovered_stock_count_api_rejects_duplicate_batch_identity(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    first = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "BATCH-Y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "50",
+        },
+    )
+
+    assert first.status_code == 201
+
+    duplicate = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "batch-y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "10",
+        },
+    )
+
+    assert duplicate.status_code == 409
+    assert "already has a stock count line" in error_message(
+        duplicate
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "payload",
+        "expected_message",
+    ),
+    [
+        (
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "50",
+            },
+            "batch_number is required",
+        ),
+        (
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "BATCH-Y",
+                "counted_quantity": "50",
+            },
+            "expiry_date is required",
+        ),
+        (
+            {
+                "product_id": BATCH_PRODUCT_ID,
+                "batch_number": "BATCH-Y",
+                "expiry_date": "2028-06-30",
+                "counted_quantity": "-1",
+            },
+            "counted_quantity",
+        ),
+    ],
+)
+def test_discovered_stock_count_api_validates_payload(
+    client,
+    payload,
+    expected_message,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json=payload,
+    )
+
+    assert response.status_code == 400
+    assert expected_message in error_message(response)
+
+
+def test_discovered_stock_count_api_rejects_completed_count(client):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    count_id = created.get_json()["item"]["id"]
+
+    count = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    count.status = "completed"
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "BATCH-Y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "50",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "not open" in error_message(response)
+
+
+def test_discovered_stock_count_api_requires_inventory_count_permission(
+    app_context,
+    identity: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured = {}
+
+    def deny(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import (
+            PermissionDeniedError,
+        )
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.authorization_service.authorize",
+        deny,
+    )
+
+    response = app_context.test_client().post(
+        (
+            "/api/inventory/stock-counts/"
+            "any-count/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "BATCH-Y",
+            "expiry_date": "2028-06-30",
+            "counted_quantity": "50",
+        },
+    )
+
+    assert response.status_code == 403
+
+    assert (
+        captured["kwargs"]["permission"]
+        == "inventory.count"
+    )

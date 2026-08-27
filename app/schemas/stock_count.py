@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -58,6 +59,46 @@ def _decimal(
         raise ValidationError(f"{field} must be a valid number.") from exc
 
 
+def _optional_date(
+    payload: dict[str, Any],
+    field: str,
+) -> date | None:
+    value = payload.get(field)
+
+    if value in (None, ""):
+        return None
+
+    if not isinstance(value, str):
+        raise ValidationError(
+            f"{field} must be an ISO date string."
+        )
+
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise ValidationError(
+            f"{field} must be a valid ISO date in YYYY-MM-DD format."
+        ) from exc
+
+
+def _count_mode(payload: dict[str, Any]) -> str:
+    value = payload.get("count_mode", "blind")
+
+    if not isinstance(value, str):
+        raise ValidationError(
+            "count_mode must be a string."
+        )
+
+    normalized = value.strip().lower()
+
+    if normalized not in {"blind", "visible"}:
+        raise ValidationError(
+            "count_mode must be either 'blind' or 'visible'."
+        )
+
+    return normalized
+
+
 def _product_ids(payload: dict[str, Any]) -> tuple[str, ...]:
     raw = payload.get("product_ids")
     if raw in (None, ""):
@@ -86,6 +127,7 @@ class CreateStockCountRequest:
     warehouse_id: str
     idempotency_key: str
     product_ids: tuple[str, ...] = ()
+    count_mode: str = "blind"
     notes: str | None = None
 
     @classmethod
@@ -101,7 +143,60 @@ class CreateStockCountRequest:
                 max_length=120,
             ),
             product_ids=_product_ids(payload),
+            count_mode=_count_mode(payload),
             notes=_optional_text(payload, "notes", max_length=10000),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AddDiscoveredStockCountItemRequest:
+    product_id: str
+    counted_quantity: Decimal
+    batch_number: str | None = None
+    expiry_date: date | None = None
+    notes: str | None = None
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> "AddDiscoveredStockCountItemRequest":
+        if not isinstance(payload, dict):
+            raise ValidationError(
+                "Request payload must be an object."
+            )
+
+        counted_quantity = _decimal(
+            payload,
+            "counted_quantity",
+        )
+
+        if counted_quantity < Decimal("0"):
+            raise ValidationError(
+                "counted_quantity must be non-negative."
+            )
+
+        return cls(
+            product_id=_required_text(
+                payload,
+                "product_id",
+                max_length=36,
+            ),
+            counted_quantity=counted_quantity,
+            batch_number=_optional_text(
+                payload,
+                "batch_number",
+                max_length=100,
+            ),
+            expiry_date=_optional_date(
+                payload,
+                "expiry_date",
+            ),
+            notes=_optional_text(
+                payload,
+                "notes",
+                max_length=10000,
+            ),
         )
 
 

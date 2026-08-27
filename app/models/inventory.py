@@ -152,6 +152,12 @@ class StockCount(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     idempotency_key = db.Column(db.String(120), nullable=False, index=True)
     request_fingerprint = db.Column(db.String(64), nullable=False)
     scope_type = db.Column(db.String(30), nullable=False, default="full")
+    count_mode = db.Column(
+        db.String(20),
+        nullable=False,
+        default="blind",
+        index=True,
+    )
     status = db.Column(db.String(30), nullable=False, default="open", index=True)
     snapshot_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
     started_at = db.Column(db.DateTime(timezone=True), nullable=False)
@@ -182,6 +188,20 @@ class StockCountItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     stock_count_id = db.Column(db.String(36), db.ForeignKey("stock_counts.id"), nullable=False, index=True)
     product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
     batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
+    source_type = db.Column(
+        db.String(20),
+        nullable=False,
+        default="snapshot",
+        index=True,
+    )
+    observed_batch_number = db.Column(
+        db.String(100),
+        index=True,
+    )
+    observed_expiry_date = db.Column(
+        db.Date,
+        index=True,
+    )
     line_number = db.Column(db.Integer, nullable=False)
     snapshot_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
     expected_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)

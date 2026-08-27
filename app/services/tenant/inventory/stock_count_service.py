@@ -20,7 +20,11 @@ from app.models import (
     User,
     Warehouse,
 )
-from app.schemas import CreateStockCountRequest, UpdateStockCountItemRequest
+from app.schemas import (
+    AddDiscoveredStockCountItemRequest,
+    CreateStockCountRequest,
+    UpdateStockCountItemRequest,
+)
 from app.serializers import serialize_stock_count, serialize_stock_count_summary
 
 
@@ -209,6 +213,7 @@ class StockCountService:
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,
                 scope_type="selected" if request.product_ids else "full",
+                count_mode=request.count_mode,
                 status=OPEN_STATUS,
                 snapshot_at=now,
                 started_at=now,
@@ -227,6 +232,7 @@ class StockCountService:
                         stock_count_id=str(count.id),
                         product_id=str(row["product"].id),
                         batch_id=str(row["batch"].id) if row["batch"] else None,
+                        source_type="snapshot",
                         line_number=line_number,
                         snapshot_quantity=_q4(row["quantity"]),
                         expected_quantity=_q4(row["quantity"]),
@@ -237,6 +243,192 @@ class StockCountService:
 
             self.session.commit()
             return count
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def add_discovered_item(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        count_id: str,
+        counted_by: str,
+        request: AddDiscoveredStockCountItemRequest,
+    ) -> StockCountItem:
+        """
+        Add a physical stock line discovered during an open stock count.
+
+        Discovered lines represent stock physically observed by the counter
+        that was not represented by an appropriate snapshot line.
+
+        For batch- or expiry-tracked products, physical identity is determined
+        by product + normalized batch number + expiry date within the count.
+
+        Non-batch/non-expiry products must use their existing snapshot line
+        rather than creating arbitrary duplicate discovered lines.
+        """
+
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        now = _now()
+
+        try:
+            count = self._locked_count(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                count_id=count_id,
+            )
+            self._ensure_open(count)
+
+            products = self._load_products(
+                tenant_id=tenant_id,
+                product_ids=[request.product_id],
+            )
+            product = products[request.product_id]
+
+            tracks_batches = bool(product.track_batches)
+            tracks_expiry = bool(product.track_expiry)
+
+            batch_number = (
+                request.batch_number.strip()
+                if request.batch_number
+                else None
+            )
+            expiry_date = request.expiry_date
+
+            if tracks_batches and not batch_number:
+                raise ValidationError(
+                    "batch_number is required for this product."
+                )
+
+            if tracks_expiry and expiry_date is None:
+                raise ValidationError(
+                    "expiry_date is required for this product."
+                )
+
+            if not tracks_batches and batch_number:
+                raise ValidationError(
+                    "batch_number is not allowed for a product "
+                    "that does not track batches."
+                )
+
+            if not tracks_expiry and expiry_date is not None:
+                raise ValidationError(
+                    "expiry_date is not allowed for a product "
+                    "that does not track expiry."
+                )
+
+            existing_lines = (
+                self.session.query(StockCountItem)
+                .filter(
+                    StockCountItem.stock_count_id == str(count.id),
+                    StockCountItem.product_id == str(product.id),
+                )
+                .with_for_update()
+                .all()
+            )
+
+            if not tracks_batches and not tracks_expiry:
+                if existing_lines:
+                    raise ConflictError(
+                        "This product already has a stock count line. "
+                        "Update the existing line instead."
+                    )
+
+            else:
+                normalized_batch = (
+                    batch_number.casefold()
+                    if batch_number
+                    else None
+                )
+
+                for existing in existing_lines:
+                    existing_batch = (
+                        existing.observed_batch_number
+                        if existing.source_type == "discovered"
+                        else None
+                    )
+                    existing_expiry = (
+                        existing.observed_expiry_date
+                        if existing.source_type == "discovered"
+                        else None
+                    )
+
+                    if existing.source_type == "snapshot" and existing.batch_id:
+                        system_batch = (
+                            self.session.query(InventoryBatch)
+                            .filter(
+                                InventoryBatch.id == existing.batch_id,
+                                InventoryBatch.tenant_id == tenant_id,
+                                InventoryBatch.product_id == str(product.id),
+                                InventoryBatch.warehouse_id
+                                == str(count.warehouse_id),
+                            )
+                            .first()
+                        )
+
+                        if system_batch:
+                            existing_batch = system_batch.batch_number
+                            existing_expiry = system_batch.expiry_date
+
+                    existing_normalized_batch = (
+                        existing_batch.strip().casefold()
+                        if existing_batch
+                        else None
+                    )
+
+                    if (
+                        existing_normalized_batch == normalized_batch
+                        and existing_expiry == expiry_date
+                    ):
+                        raise ConflictError(
+                            "This product batch and expiry already has a "
+                            "stock count line. Update the existing line instead."
+                        )
+
+            max_line_number = (
+                self.session.query(
+                    func.max(StockCountItem.line_number)
+                )
+                .filter(
+                    StockCountItem.stock_count_id == str(count.id)
+                )
+                .scalar()
+                or 0
+            )
+
+            counted_quantity = _q4(
+                request.counted_quantity
+            )
+
+            item = StockCountItem(
+                stock_count_id=str(count.id),
+                product_id=str(product.id),
+                batch_id=None,
+                source_type="discovered",
+                observed_batch_number=batch_number,
+                observed_expiry_date=expiry_date,
+                line_number=int(max_line_number) + 1,
+                snapshot_quantity=Decimal("0.0000"),
+                expected_quantity=Decimal("0.0000"),
+                counted_quantity=counted_quantity,
+                variance_quantity=counted_quantity,
+                counted_at=now,
+                counted_by=counted_by,
+                notes=request.notes,
+                created_at=now,
+                updated_at=now,
+            )
+
+            self.session.add(item)
+            self.session.commit()
+
+            return item
+
         except Exception:
             self.session.rollback()
             raise
