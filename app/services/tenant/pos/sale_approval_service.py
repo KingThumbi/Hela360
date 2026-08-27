@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from app.extensions import db
@@ -95,8 +96,17 @@ class SaleApprovalService:
         self.session.flush()
 
         if request_row.action_type == "refund_sale":
-            refund = RefundService(self.session).create_refund(
+            sale = self._get_sale_or_404(
+                tenant_id,
+                request_row.sale_id,
+            )
+            refund_identity = SimpleNamespace(
                 tenant_id=tenant_id,
+                branch_id=str(sale.branch_id),
+                user_id=approved_by,
+            )
+            refund = RefundService(self.session).create_refund(
+                identity=refund_identity,
                 sale_id=request_row.sale_id,
                 payload=request_row.request_payload or {},
             )

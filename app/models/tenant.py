@@ -8,6 +8,26 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
 
     legal_name = db.Column(db.String(200), nullable=False)
     display_name = db.Column(db.String(200), nullable=False)
+    business_code = db.Column(
+        db.String(20),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    # Stable public workspace identifier used during tenant-aware
+    # authentication and future workspace URL resolution.
+    #
+    # This is intentionally separate from business_code because
+    # business_code belongs to the tenant's commercial/document
+    # numbering identity and may evolve independently.
+    workspace_slug = db.Column(
+        db.String(80),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
     business_type = db.Column(db.String(50), nullable=False, default="pharmacy")
     phone = db.Column(db.String(50))
     email = db.Column(db.String(150))

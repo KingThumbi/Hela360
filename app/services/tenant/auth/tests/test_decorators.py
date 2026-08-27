@@ -30,7 +30,6 @@ def identity() -> Identity:
         user_id="user-1",
         tenant_id="tenant-1",
         branch_id="branch-1",
-        role="manager",
         permissions=("products.read",),
         session_id="session-1",
         token_type=JWTTokenType.ACCESS,

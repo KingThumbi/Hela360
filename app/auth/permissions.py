@@ -1,31 +1,49 @@
 """
-Permission Registry & Authorization Helpers
+Canonical Hela360 Tenant Permission Registry
+============================================
 
-This module defines the complete permission catalogue used by Hela360's
-Role-Based Access Control (RBAC) system.
+This module defines the canonical permission catalogue for tenant-scoped
+authorization within Hela360.
 
-Responsibilities
-----------------
-- Central permission registry
-- Permission validation
-- Wildcard permission support
-- Owner/Super Admin bypass
-- Authorization helper functions
+Scope
+-----
+These permissions govern access inside an individual Hela360 tenant.
+
+They MUST NOT be used to represent Hela360 platform/back-office
+administration. Platform administration is a separate authorization domain.
+
+Architecture
+------------
+Permissions are atomic capabilities.
+
+Users receive effective permissions primarily through tenant roles:
+
+    User
+      -> Role
+          -> Permission
+
+Direct user permission overrides may supplement or deny role-derived
+permissions where explicitly required.
+
+Tenant ownership and future platform-administrator authority are separate
+authorization concepts and MUST NOT be inferred from role names.
 
 Permission Naming Convention
 ----------------------------
-resource.action
+    resource.action
 
-Examples
---------
-products.read
-products.create
-sales.refund
-inventory.transfer
-reports.export
-users.manage
+Examples:
 
-Hela360 Enterprise Pharmacy POS & ERP
+    products.view
+    products.create
+    sales.refund
+    inventory.adjust
+    reports.export
+    users.manage
+
+The values defined here are the canonical application permission codes.
+Database Permission rows are persisted representations of this catalogue and
+must remain synchronized with it.
 """
 
 from __future__ import annotations
@@ -33,18 +51,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 
-# ======================================================================
+# ============================================================================
 # Permission Registry
-# ======================================================================
+# ============================================================================
 
 
 class Permissions:
-    """Application permission constants."""
+    """Canonical tenant-scoped Hela360 permission constants."""
 
     # ------------------------------------------------------------------
     # Products
     # ------------------------------------------------------------------
-    PRODUCTS_READ = "products.read"
+
+    PRODUCTS_VIEW = "products.view"
     PRODUCTS_CREATE = "products.create"
     PRODUCTS_EDIT = "products.edit"
     PRODUCTS_DELETE = "products.delete"
@@ -52,14 +71,17 @@ class Permissions:
     # ------------------------------------------------------------------
     # Inventory
     # ------------------------------------------------------------------
+
     INVENTORY_READ = "inventory.read"
     INVENTORY_RECEIVE = "inventory.receive"
+    INVENTORY_COUNT = "inventory.count"
     INVENTORY_ADJUST = "inventory.adjust"
     INVENTORY_TRANSFER = "inventory.transfer"
 
     # ------------------------------------------------------------------
-    # Sales
+    # Sales / POS
     # ------------------------------------------------------------------
+
     SALES_READ = "sales.read"
     SALES_CREATE = "sales.create"
     SALES_REFUND = "sales.refund"
@@ -68,52 +90,67 @@ class Permissions:
     # ------------------------------------------------------------------
     # Customers
     # ------------------------------------------------------------------
-    CUSTOMERS_READ = "customers.read"
+
+    CUSTOMERS_VIEW = "customers.view"
     CUSTOMERS_CREATE = "customers.create"
     CUSTOMERS_EDIT = "customers.edit"
 
     # ------------------------------------------------------------------
+    # Suppliers / Procurement
+    # ------------------------------------------------------------------
+
+    SUPPLIERS_VIEW = "suppliers.view"
+    SUPPLIERS_CREATE = "suppliers.create"
+    SUPPLIERS_UPDATE = "suppliers.update"
+    SUPPLIERS_DEACTIVATE = "suppliers.deactivate"
+
+    # ------------------------------------------------------------------
     # Reports
     # ------------------------------------------------------------------
+
     REPORTS_VIEW = "reports.view"
     REPORTS_EXPORT = "reports.export"
 
     # ------------------------------------------------------------------
-    # User Administration
+    # User & Role Administration
     # ------------------------------------------------------------------
+
     USERS_READ = "users.read"
     USERS_MANAGE = "users.manage"
 
     ROLES_READ = "roles.read"
     ROLES_MANAGE = "roles.manage"
 
+    # ------------------------------------------------------------------
+    # Tenant Settings
+    # ------------------------------------------------------------------
+
     SETTINGS_MANAGE = "settings.manage"
 
     # ------------------------------------------------------------------
     # Branches
     # ------------------------------------------------------------------
+
     BRANCHES_READ = "branches.read"
     BRANCHES_MANAGE = "branches.manage"
 
     # ------------------------------------------------------------------
     # Audit
     # ------------------------------------------------------------------
+
     AUDIT_VIEW = "audit.view"
 
     # ------------------------------------------------------------------
-    # Tenant
+    # Tenant Administration
     # ------------------------------------------------------------------
+
     TENANT_MANAGE = "tenant.manage"
 
-    # ------------------------------------------------------------------
-    # System
-    # ------------------------------------------------------------------
-    SYSTEM_ADMIN = "*"
 
+# ============================================================================
+# Canonical Catalogue
+# ============================================================================
 
-# ======================================================================
-# Permission Catalogue
-# ======================================================================
 
 ALL_PERMISSIONS: tuple[str, ...] = tuple(
     value
@@ -122,44 +159,31 @@ ALL_PERMISSIONS: tuple[str, ...] = tuple(
 )
 
 
-# ======================================================================
+# ============================================================================
 # Validation
-# ======================================================================
+# ============================================================================
 
 
 def is_valid_permission(permission: str) -> bool:
-    """
-    Determine whether a permission exists.
-    """
+    """Return whether ``permission`` is a canonical tenant permission."""
+
     return permission in ALL_PERMISSIONS
 
 
-# ======================================================================
-# Wildcard Matching
-# ======================================================================
+# ============================================================================
+# Permission Matching
+# ============================================================================
 
 
 def _matches(permission: str, granted: str) -> bool:
     """
-    Determine whether a granted permission satisfies the requested
-    permission.
+    Determine whether a granted permission satisfies a requested permission.
 
-    Supported Examples
-    ------------------
+    Exact permission codes are the normal authorization mechanism.
 
-    *
-
-    products.*
-
-    inventory.*
-
-    sales.*
-
-    reports.*
-
-    Exact match:
-
-    products.read
+    Module wildcards remain supported by the matcher for compatibility with
+    existing authorization infrastructure, but wildcard grants are not part
+    of the canonical tenant permission catalogue.
     """
 
     if granted == "*":
@@ -169,24 +193,19 @@ def _matches(permission: str, granted: str) -> bool:
         return True
 
     if granted.endswith(".*"):
-
         prefix = granted[:-2]
-
         return permission.startswith(prefix + ".")
 
     return False
 
 
-# ======================================================================
+# ============================================================================
 # Permission Checks
-# ======================================================================
+# ============================================================================
 
 
 def has_permission(identity, permission: str) -> bool:
-    """
-    Determine whether an authenticated identity possesses
-    a required permission.
-    """
+    """Determine whether an authenticated identity has a permission."""
 
     if identity is None:
         return False
@@ -209,9 +228,7 @@ def has_any_permission(
     identity,
     permissions: Iterable[str],
 ) -> bool:
-    """
-    Require at least one permission.
-    """
+    """Return whether the identity has at least one requested permission."""
 
     return any(
         has_permission(identity, permission)
@@ -223,9 +240,7 @@ def has_all_permissions(
     identity,
     permissions: Iterable[str],
 ) -> bool:
-    """
-    Require every permission.
-    """
+    """Return whether the identity has every requested permission."""
 
     return all(
         has_permission(identity, permission)
@@ -233,30 +248,24 @@ def has_all_permissions(
     )
 
 
-# ======================================================================
+# ============================================================================
 # Utilities
-# ======================================================================
+# ============================================================================
 
 
 def list_permissions() -> list[str]:
-    """
-    Return the complete permission catalogue.
-    """
+    """Return the canonical tenant permission catalogue."""
 
     return sorted(ALL_PERMISSIONS)
 
 
 def permission_groups() -> dict[str, list[str]]:
-    """
-    Return permissions grouped by module.
-    """
+    """Return canonical permissions grouped by module."""
 
     groups: dict[str, list[str]] = {}
 
     for permission in sorted(ALL_PERMISSIONS):
-
         module = permission.split(".")[0]
-
         groups.setdefault(module, []).append(permission)
 
     return groups

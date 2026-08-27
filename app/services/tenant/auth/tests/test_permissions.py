@@ -43,7 +43,7 @@ def test_get_permissions_returns_context_permissions(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         tenant_id="tenant-1",
         roles=frozenset(),
         permissions=frozenset({"products.read", "sales.read"}),
@@ -104,7 +104,7 @@ def test_get_permission_objects_returns_sorted_unique() -> None:
 
     result = service.get_permission_objects("user")
 
-    assert tuple(p.name for p in result) == (
+    assert tuple(p.code for p in result) == (
         "a",
         "b",
     )
@@ -123,7 +123,7 @@ def test_refresh_context_rebuilds_context(
     u = user()
 
     context = AuthorizationContext(
-        user=u,
+        user_id=u.id,
         tenant_id=u.tenant_id,
         roles=frozenset(),
         permissions=frozenset(),
@@ -169,7 +169,7 @@ def test_has_permission_true(
     u = user()
 
     context = AuthorizationContext(
-        user=u,
+        user_id=u.id,
         permissions=frozenset({"inventory.read"}),
     )
 
@@ -177,12 +177,6 @@ def test_has_permission_true(
         service,
         "_get_authorization_context",
         lambda *a, **k: context,
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_has_global_authorization_override",
-        lambda *_: False,
     )
 
     assert service.has_permission(
@@ -197,19 +191,15 @@ def test_has_permission_override(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
+        tenant_id="tenant-1",
+        is_owner=True,
     )
 
     monkeypatch.setattr(
         service,
         "_get_authorization_context",
         lambda *a, **k: context,
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_has_global_authorization_override",
-        lambda *_: True,
     )
 
     assert service.has_permission(
@@ -227,7 +217,7 @@ def test_has_any_permission() -> None:
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         permissions=frozenset({"a", "b"}),
     )
 
@@ -249,7 +239,7 @@ def test_has_all_permissions() -> None:
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         permissions=frozenset({"a", "b", "c"}),
     )
 
@@ -336,18 +326,27 @@ def test_has_system_permission(
 # ---------------------------------------------------------------------------
 
 
+
 def test_has_global_access_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = AuthorizationService()
 
-    monkeypatch.setattr(
-        service,
-        "_has_global_authorization_override",
-        lambda *_: True,
+    context = AuthorizationContext(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        is_owner=True,
     )
 
-    assert service._has_global_access(user())
+    monkeypatch.setattr(
+        service,
+        "_get_authorization_context",
+        lambda *a, **k: context,
+    )
+
+    assert service._has_global_access(
+        user()
+    )
 
 
 def test_has_global_access_system_permission(
@@ -357,34 +356,21 @@ def test_has_global_access_system_permission(
 
     u = user()
 
-    monkeypatch.setattr(
-        service,
-        "_has_global_authorization_override",
-        lambda *_: False,
+    context = AuthorizationContext(
+        user_id=u.id,
+        tenant_id=u.tenant_id,
+        permissions=frozenset({
+            SYSTEM_PERMISSION,
+        }),
     )
 
     monkeypatch.setattr(
         service,
-        "_is_platform_administrator",
-        lambda *_: False,
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_get_cached_context",
-        lambda *_: AuthorizationContext(
-            user=u,
-            permissions=frozenset({SYSTEM_PERMISSION}),
-        ),
+        "_get_authorization_context",
+        lambda *a, **k: context,
     )
 
     assert service._has_global_access(u)
-
-
-# ---------------------------------------------------------------------------
-# _is_platform_administrator
-# ---------------------------------------------------------------------------
-
 
 def test_platform_admin_flag() -> None:
     service = AuthorizationService()
@@ -394,19 +380,19 @@ def test_platform_admin_flag() -> None:
     )
 
 
-def test_platform_admin_role(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+
+def test_platform_admin_role() -> None:
     service = AuthorizationService()
 
-    monkeypatch.setattr(
-        service,
-        "get_roles",
-        lambda *_: frozenset(
-            {PLATFORM_ADMIN_ROLE},
-        ),
+    platform_admin = user(
+        roles=[
+            role(
+                name=PLATFORM_ADMIN_ROLE,
+            ),
+        ],
     )
 
     assert service._is_platform_administrator(
-        user(),
+        platform_admin,
     )
+

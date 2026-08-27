@@ -1,10 +1,36 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AppLayout } from "@/layouts/AppLayout";
+import { ROUTE_PERMISSION_REQUIREMENTS } from "@/routes/permissions";
 import { ProtectedRoute } from "@/routes/ProtectedRoute";
-
+import { PATHS } from "@/routes/routes";
+import {
+  ApplicationProvider,
+  ShellProvider,
+} from "@/providers";
 import { LoginPage } from "@/features/auth/LoginPage";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { CustomersPage } from "@/features/customers";
+import { DashboardPage } from "@/features/dashboard";
+import {
+  CreateStockCountPage,
+  CreateStockAdjustmentPage,
+  GoodsReceiptDetailPage,
+  GoodsReceiptHistoryPage,
+  InventoryPage,
+  ReceiveStockPage,
+  StockAdjustmentDetailPage,
+  StockAdjustmentsPage,
+  StockCountDetailPage,
+  StockCountsPage,
+} from "@/features/inventory";
+import { ProductsPage } from "@/features/products";
+import {
+  PosPage,
+  RefundsPage,
+  SaleReceiptPage,
+  SalesHistoryPage,
+} from "@/features/sales";
+import { SuppliersPage } from "@/features/suppliers";
 
 /**
  * Hela360 Application Router
@@ -33,15 +59,20 @@ export const router = createBrowserRouter([
    * ProtectedRoute will redirect unauthenticated users to /login.
    */
   {
-    path: "/",
-    element: <Navigate to="/dashboard" replace />,
+    path: PATHS.ROOT,
+    element: (
+      <Navigate
+        to={PATHS.DASHBOARD}
+        replace
+      />
+    ),
   },
 
   /**
    * Public routes
    */
   {
-    path: "/login",
+    path: PATHS.LOGIN,
     element: <LoginPage />,
   },
 
@@ -50,14 +81,18 @@ export const router = createBrowserRouter([
    */
   {
     element: (
-      <ProtectedRoute>
-        <AppLayout />
-      </ProtectedRoute>
+      <ShellProvider>
+        <ApplicationProvider>
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        </ApplicationProvider>
+      </ShellProvider>    
     ),
 
     children: [
       {
-        path: "/dashboard",
+        path: PATHS.DASHBOARD,
         element: <DashboardPage />,
       },
 
@@ -66,13 +101,33 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/products",
-        element: <div>Products Module (Coming Soon)</div>,
+        path: PATHS.PRODUCTS.ROOT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.PRODUCTS.ROOT
+              ].permission
+            }
+          >
+            <ProductsPage />
+          </ProtectedRoute>
+        ),
       },
 
       {
-        path: "/customers",
-        element: <div>Customers Module (Coming Soon)</div>,
+        path: PATHS.CUSTOMERS.ROOT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.CUSTOMERS.ROOT
+              ].permission
+            }
+          >
+            <CustomersPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*
@@ -80,8 +135,153 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/inventory",
-        element: <div>Inventory Module (Coming Soon)</div>,
+        path: PATHS.INVENTORY.ROOT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.ROOT
+              ].permission
+            }
+          >
+            <InventoryPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.RECEIVE,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.RECEIVE
+              ].permission
+            }
+          >
+            <ReceiveStockPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.RECEIPTS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.RECEIPTS
+              ].permission
+            }
+          >
+            <GoodsReceiptHistoryPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.RECEIPT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.RECEIPT
+              ].permission
+            }
+          >
+            <GoodsReceiptDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_COUNTS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_COUNTS
+              ].permission
+            }
+          >
+            <StockCountsPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_COUNT_NEW,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_COUNT_NEW
+              ].permission
+            }
+          >
+            <CreateStockCountPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_COUNT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_COUNT
+              ].permission
+            }
+          >
+            <StockCountDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_ADJUSTMENTS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_ADJUSTMENTS
+              ].permission
+            }
+          >
+            <StockAdjustmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_ADJUSTMENT_NEW,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_ADJUSTMENT_NEW
+              ].permission
+            }
+          >
+            <CreateStockAdjustmentPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.INVENTORY.STOCK_ADJUSTMENT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.INVENTORY.STOCK_ADJUSTMENT
+              ].permission
+            }
+          >
+            <StockAdjustmentDetailPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*
@@ -89,8 +289,68 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/sales",
+        path: PATHS.SALES.ROOT,
         element: <div>Sales Module (Coming Soon)</div>,
+      },
+
+      {
+        path: PATHS.SALES.HISTORY,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.SALES.HISTORY
+              ].permission
+            }
+          >
+            <SalesHistoryPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.SALES.POS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.SALES.POS
+              ].permission
+            }
+          >
+            <PosPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.SALES.RETURNS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.SALES.RETURNS
+              ].permission
+            }
+          >
+            <RefundsPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.SALES.RECEIPT,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.SALES.RECEIPT
+              ].permission
+            }
+          >
+            <SaleReceiptPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*
@@ -98,8 +358,23 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/procurement",
+        path: PATHS.PROCUREMENT.ROOT,
         element: <div>Procurement Module (Coming Soon)</div>,
+      },
+
+      {
+        path: PATHS.PROCUREMENT.SUPPLIERS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.PROCUREMENT.SUPPLIERS
+              ].permission
+            }
+          >
+            <SuppliersPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*
@@ -107,7 +382,7 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/finance",
+        path: PATHS.FINANCE.ROOT,
         element: <div>Finance Module (Coming Soon)</div>,
       },
 
@@ -116,7 +391,7 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/reports",
+        path: PATHS.REPORTS.ROOT,
         element: <div>Reports Module (Coming Soon)</div>,
       },
 
@@ -125,7 +400,7 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/administration",
+        path: PATHS.ADMINISTRATION.ROOT,
         element: <div>Administration Module (Coming Soon)</div>,
       },
 
@@ -134,7 +409,7 @@ export const router = createBrowserRouter([
        */
 
       {
-        path: "/settings",
+        path: PATHS.SETTINGS.ROOT,
         element: <div>Settings Module (Coming Soon)</div>,
       },
     ],
@@ -145,6 +420,11 @@ export const router = createBrowserRouter([
    */
   {
     path: "*",
-    element: <Navigate to="/dashboard" replace />,
+    element: (
+      <Navigate
+        to={PATHS.DASHBOARD}
+        replace
+      />
+    ),
   },
 ]);

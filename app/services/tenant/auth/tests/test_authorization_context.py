@@ -55,7 +55,7 @@ def test_aggregate_roles_empty_user() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_aggregate_permissions_returns_permission_names() -> None:
+def test_aggregate_permissions_returns_permission_codes() -> None:
     service = AuthorizationService()
 
     admin = role(
@@ -121,11 +121,56 @@ def test_build_authorization_context() -> None:
 
     assert isinstance(context, AuthorizationContext)
 
-    assert context.user is u
+    assert context.user_id == u.id
     assert context.tenant_id == "tenant-1"
+    assert context.is_owner is False
+    assert context.is_platform_admin is False
     assert context.roles == frozenset()
     assert context.permissions == frozenset()
     assert context.branch_ids == frozenset()       
+
+def test_cached_authorization_context_is_orm_independent() -> None:
+    service = AuthorizationService()
+
+    u = user(
+        tenant_id="tenant-1",
+        roles=[
+            role(
+                name="cashier",
+                permissions=[
+                    permission("sales.create"),
+                ],
+            ),
+        ],
+    )
+
+    context = service._build_authorization_context(u)
+
+    # The cached snapshot must contain only scalar/immutable authorization
+    # state and must not retain the originating ORM/user object.
+    assert context.user_id == u.id
+    assert context.tenant_id == u.tenant_id
+    assert context.roles == frozenset({"cashier"})
+    assert context.permissions == frozenset({
+        "sales.create",
+    })
+
+    service._store_cached_context(context)
+
+    cached = service._authorization_context_cache[
+        service._authorization_cache_key(
+            tenant_id=context.tenant_id,
+            user_id=context.user_id,
+        )
+    ]
+
+    assert cached is context
+    assert cached.has_global_override is False
+    assert "sales.create" in cached.permissions
+
+    # Architectural regression guard: AuthorizationContext must never
+    # regain a SQLAlchemy/User reference.
+    assert not hasattr(cached, "user")
 
 def test_get_authorization_context_builds_when_missing(
     monkeypatch: pytest.MonkeyPatch,
@@ -134,7 +179,10 @@ def test_get_authorization_context_builds_when_missing(
 
     fake_user = user()
 
-    expected = AuthorizationContext(user=fake_user)
+    expected = AuthorizationContext(
+        user_id=fake_user.id,
+        tenant_id=fake_user.tenant_id,
+    )
 
     monkeypatch.setattr(
         service,
@@ -174,7 +222,10 @@ def test_get_authorization_context_uses_cache(
 
     fake_user = user()
 
-    cached = AuthorizationContext(user=fake_user)
+    cached = AuthorizationContext(
+        user_id=fake_user.id,
+        tenant_id=fake_user.tenant_id,
+    )
 
     monkeypatch.setattr(
         service,
@@ -218,7 +269,10 @@ def test_refresh_context_rebuilds_cache(
 
     fake_user = user()
 
-    context = AuthorizationContext(user=fake_user)
+    context = AuthorizationContext(
+        user_id=fake_user.id,
+        tenant_id=fake_user.tenant_id,
+    )
 
     monkeypatch.setattr(
         service,

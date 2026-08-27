@@ -70,3 +70,29 @@ Thumbs.db
 *.swp
 *.swo
 *~
+# ---------------------------------------------------------------------------
+# Local development snapshots
+# ---------------------------------------------------------------------------
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+
+# Local development/audit artifacts
+frontend/0
+frontend/*.tar.gz
+frontend/*-audit.txt
+
+# Frontend build output
+frontend/dist/
+
+# Local environment secrets
+.env
+.env.local
+.env.*.local
+
+# Local checkpoint copies
+.gitignore.pre-*
+
+# Local/reference documents accidentally generated inside frontend source
+frontend/src/**/*.pdf

@@ -25,7 +25,7 @@ from app.services.tenant.auth.authorization_service import (
 class FakePermission:
     """Simple permission model used by tests."""
 
-    name: str
+    code: str
 
 
 @dataclass(slots=True)
@@ -68,9 +68,9 @@ class FakeUser:
 # ---------------------------------------------------------------------------
 
 
-def permission(name: str = "products.read") -> FakePermission:
+def permission(code: str = "products.read") -> FakePermission:
     """Create a fake permission."""
-    return FakePermission(name=name)
+    return FakePermission(code=code)
 
 
 def role(

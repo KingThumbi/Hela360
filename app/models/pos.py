@@ -11,6 +11,7 @@ class Till(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
 
     tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
     branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+    warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), index=True)
 
     code = db.Column(db.String(30), nullable=False)
     name = db.Column(db.String(100), nullable=False)
@@ -48,6 +49,11 @@ class Sale(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
     till_id = db.Column(db.String(36), db.ForeignKey("tills.id"), nullable=False, index=True)
     shift_id = db.Column(db.String(36), db.ForeignKey("shifts.id"), index=True)
+    till_shift_id = db.Column(
+        db.String(36),
+        db.ForeignKey("till_shifts.id"),
+        index=True,
+    )
     warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
 
     customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), index=True)
@@ -77,10 +83,15 @@ class SaleItem(UUIDPrimaryKeyMixin, db.Model):
 
     sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
     product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+    product_unit_id = db.Column(db.String(36), db.ForeignKey("product_units.id"), index=True)
     batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
 
     quantity = db.Column(db.Numeric(18, 4), nullable=False)
+    base_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
     unit_price = db.Column(db.Numeric(18, 2), nullable=False)
+    unit_code_snapshot = db.Column(db.String(20))
+    unit_name_snapshot = db.Column(db.String(50))
+    conversion_factor_to_base = db.Column(db.Numeric(18, 6), nullable=False, default=1)
 
     discount_amount = db.Column(db.Numeric(18, 2), nullable=False, default=0)
     tax_amount = db.Column(db.Numeric(18, 2), nullable=False, default=0)
@@ -89,6 +100,31 @@ class SaleItem(UUIDPrimaryKeyMixin, db.Model):
     cost_of_sale = db.Column(db.Numeric(18, 2))
 
     is_returned = db.Column(db.Boolean, nullable=False, default=False)
+
+
+class DispensingRecord(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
+    __tablename__ = "dispensing_records"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "sale_item_id",
+            name="uq_dispensing_records_sale_item_id",
+        ),
+    )
+
+    tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+    branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
+    customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), nullable=False, index=True)
+    sale_id = db.Column(db.String(36), db.ForeignKey("sales.id"), nullable=False, index=True)
+    sale_item_id = db.Column(db.String(36), db.ForeignKey("sale_items.id"), nullable=False, index=True)
+    product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+    dispensed_quantity = db.Column(db.Numeric(18, 4), nullable=False)
+    prescription_reference = db.Column(db.String(100))
+    prescriber_name = db.Column(db.String(150), nullable=False)
+    prescriber_registration_number = db.Column(db.String(100))
+    prescription_date = db.Column(db.Date)
+    notes = db.Column(db.Text)
+    dispensed_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    dispensed_at = db.Column(db.DateTime(timezone=True), nullable=False)
 
 
 class PaymentMethod(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
@@ -129,6 +165,11 @@ class SaleRefund(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     branch_id = db.Column(db.String(36), db.ForeignKey("branches.id"), nullable=False, index=True)
     warehouse_id = db.Column(db.String(36), db.ForeignKey("warehouses.id"), nullable=False, index=True)
     till_id = db.Column(db.String(36), db.ForeignKey("tills.id"), nullable=False, index=True)
+    till_shift_id = db.Column(
+        db.String(36),
+        db.ForeignKey("till_shifts.id"),
+        index=True,
+    )
     cashier_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
     customer_id = db.Column(db.String(36), db.ForeignKey("customers.id"), index=True)
 
@@ -157,6 +198,7 @@ class SaleRefundItem(UUIDPrimaryKeyMixin, db.Model):
     batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
 
     quantity = db.Column(db.Numeric(18, 4), nullable=False)
+    base_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
     unit_price = db.Column(db.Numeric(18, 2), nullable=False)
 
     discount_amount = db.Column(db.Numeric(18, 2), nullable=False, default=0)
@@ -186,4 +228,4 @@ class SaleActionRequest(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     requires_approval = db.Column(db.Boolean, nullable=False, default=True)
     approved_at = db.Column(db.DateTime(timezone=True))
     rejected_at = db.Column(db.DateTime(timezone=True))
-    executed_at = db.Column(db.DateTime(timezone=True))        
+    executed_at = db.Column(db.DateTime(timezone=True))

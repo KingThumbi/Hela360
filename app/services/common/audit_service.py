@@ -35,12 +35,15 @@ class AuditService:
         module: AuditModule,
         action: AuditAction,
         entity_type: str,
-        tenant_id: str,
+        tenant_id: str | None,
         entity_id: str | None = None,
         user_id: str | None = None,
         branch_id: str | None = None,
+        session_id: str | None = None,
+        status: str = "success",
         old_values: dict[str, Any] | None = None,
         new_values: dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
         reason: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -48,18 +51,76 @@ class AuditService:
     ) -> AuditLog:
         """
         Persist an audit record.
+
+        Parameters
+        ----------
+        module
+            Functional Hela360 module responsible for the event.
+
+        action
+            Machine-readable audit action.
+
+        entity_type
+            Domain entity affected by the event.
+
+        tenant_id
+            Tenant boundary within which the event occurred.
+
+        entity_id
+            Optional identifier of the affected entity.
+
+        user_id
+            Optional authenticated user responsible for the event.
+
+        branch_id
+            Optional branch context.
+
+        session_id
+            Optional authentication session associated with the event.
+
+        status
+            Outcome of the audited operation. Defaults to ``success``.
+
+        old_values
+            Optional state before the operation.
+
+        new_values
+            Optional state after the operation.
+
+        details
+            Additional structured event metadata.
+
+        reason
+            Optional human-readable reason for the event.
+
+        ip_address
+            Optional originating client IP address.
+
+        user_agent
+            Optional originating client user agent.
+
+        commit
+            Commit the audit record immediately when True.
+
+        Returns
+        -------
+        AuditLog
+            Persisted audit record.
         """
 
         audit = AuditLog(
             tenant_id=tenant_id,
             branch_id=branch_id,
             user_id=user_id,
+            session_id=session_id,
             module_code=module.value,
             entity_type=entity_type,
             entity_id=entity_id,
             action=action.value,
+            status=status,
             old_values=old_values,
             new_values=new_values,
+            details=details,
             reason=reason,
             ip_address=ip_address,
             user_agent=user_agent,
@@ -71,25 +132,35 @@ class AuditService:
             db.session.commit()
 
         return audit
-
-    def safe_log(self, **kwargs: Any) -> None:
+        
+    def safe_log(
+        self,
+        **kwargs: Any,
+    ) -> None:
         """
-        Best-effort audit logging.
+        Persist an audit event on a best-effort basis.
 
-        Audit failures should never interrupt the primary business
+        Audit failures must never interrupt the primary business
         transaction.
+
+        Any database transaction left in a failed state is rolled back
+        before the exception is logged.
         """
 
         try:
             self.log(**kwargs)
 
-        except SQLAlchemyError:
-            db.session.rollback()
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to rollback session after audit failure."
+                )
 
             current_app.logger.exception(
                 "Failed to persist audit event."
             )
-
     # ==========================================================
     # Authorization Helpers
     # ==========================================================
@@ -98,7 +169,7 @@ class AuditService:
         self,
         *,
         action: AuditAction,
-        tenant_id: str,
+        tenant_id: str | None,
         user_id: str,
         entity_type: str,
         entity_id: str | None = None,
@@ -213,7 +284,7 @@ class AuditService:
     def login_failure(
         self,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
         email: str,
         ip_address: str | None = None,
         reason: str | None = None,

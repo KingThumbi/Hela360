@@ -308,6 +308,50 @@ class PasswordService:
 password_service = PasswordService()
 
 
+def hash_password(
+    password: str,
+) -> PasswordHash:
+    return password_service.hash_password(password)
+
+
+def verify_password(
+    password: str,
+    password_hash: PasswordHash,
+) -> bool:
+    return password_service.verify_password(
+        password,
+        password_hash,
+    )
+
+
+def needs_rehash(
+    password_hash: PasswordHash,
+) -> bool:
+    return password_service.needs_rehash(password_hash)
+
+
+def upgrade_hash_if_needed(
+    password: str,
+    existing_hash: PasswordHash,
+) -> PasswordHash | None:
+    return password_service.upgrade_hash_if_needed(
+        password,
+        existing_hash,
+    )
+
+
+def validate_password(
+    password: str,
+) -> PasswordValidationResult:
+    return password_service.validate_password(password)
+
+
+def is_valid_password(
+    password: str,
+) -> bool:
+    return password_service.is_valid_password(password)
+
+
 # ============================================================================
 # Module Exports
 # ============================================================================
@@ -318,4 +362,10 @@ __all__ = [
     "PasswordValidationResult",
     "PasswordService",
     "password_service",
+    "hash_password",
+    "verify_password",
+    "needs_rehash",
+    "upgrade_hash_if_needed",
+    "validate_password",
+    "is_valid_password",
 ]

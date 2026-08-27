@@ -68,7 +68,6 @@ class JWTClaims:
     TENANT_ID: Final[str] = "tenant_id"
     BRANCH_ID: Final[str] = "branch_id"
 
-    ROLE: Final[str] = "role"
     PERMISSIONS: Final[str] = "permissions"
 
     SESSION_ID: Final[str] = "session_id"
@@ -103,7 +102,6 @@ class JWTTokenType(StrEnum):
 # ============================================================================
 
 ACCESS_CLAIMS: Final[tuple[str, ...]] = (
-    JWTClaims.ROLE,
     JWTClaims.PERMISSIONS,
 )
 
@@ -154,7 +152,6 @@ class Identity:
     tenant_id: str
     branch_id: str | None
 
-    role: str | None
     permissions: tuple[str, ...]
 
     session_id: str
@@ -336,7 +333,6 @@ def _build_payload(
     tenant_id: str,
     session_id: str,
     branch_id: str | None = None,
-    role: str | None = None,
     permissions: list[str] | tuple[str, ...] | None = None,
 ) -> JWTPayload:
     """
@@ -345,7 +341,7 @@ def _build_payload(
     All JWTs issued by Hela360 are created through this function to
     guarantee a consistent claim set across the platform.
 
-    Access tokens include authorization claims (role and permissions).
+    Access tokens include effective permission claims.
     Refresh tokens intentionally omit authorization information.
     """
 
@@ -367,9 +363,6 @@ def _build_payload(
 
     if branch_id is not None:
         payload[JWTClaims.BRANCH_ID] = branch_id
-
-    if role is not None:
-        payload[JWTClaims.ROLE] = role
 
     if permissions:
         payload[JWTClaims.PERMISSIONS] = list(permissions)
@@ -455,7 +448,6 @@ def create_access_token(
     user_id: str,
     tenant_id: str,
     branch_id: str | None,
-    role: str | None,
     permissions: list[str],
     session_id: str,
 ) -> str:
@@ -472,7 +464,6 @@ def create_access_token(
         user_id=user_id,
         tenant_id=tenant_id,
         branch_id=branch_id,
-        role=role,
         permissions=permissions,
         session_id=session_id,
     )
@@ -687,18 +678,6 @@ def get_session_id(
     return payload[JWTClaims.SESSION_ID]
 
 
-def get_role(
-    payload: JWTPayload,
-) -> str | None:
-    """
-    Return the user's role.
-    """
-
-    return payload.get(
-        JWTClaims.ROLE
-    )
-
-
 def get_permissions(
     payload: JWTPayload,
 ) -> list[str]:
@@ -736,8 +715,7 @@ def get_identity(
         user_id=get_user_id(payload),
         tenant_id=get_tenant_id(payload),
         branch_id=get_branch_id(payload),
-        role=get_role(payload),
-        permissions=get_permissions(payload),
+        permissions=tuple(get_permissions(payload)),
         session_id=get_session_id(payload),
         token_type=get_token_type(payload),
         jti=get_token_id(payload),
@@ -946,7 +924,6 @@ __all__ = [
     "get_tenant_id",
     "get_branch_id",
     "get_session_id",
-    "get_role",
     "get_permissions",
 
     # ------------------------------------------------------------------

@@ -128,3 +128,55 @@
     @apply font-sans;
     }
 }
+/* ==========================================================================
+ * Hela360 Brand Tokens
+ * ========================================================================== */
+
+:root {
+  --hela-navy: #062e67;
+  --hela-navy-strong: #032653;
+  --hela-navy-soft: #0b417f;
+
+  --hela-gold: #efa90a;
+  --hela-gold-strong: #d99400;
+  --hela-gold-soft: #f6c64c;
+
+  --hela-success: #22c55e;
+  --hela-danger: #ef4444;
+}
+
+.dark {
+  --hela-navy: #0b4a8f;
+  --hela-navy-strong: #07376d;
+  --hela-navy-soft: #1760aa;
+
+  --hela-gold: #f2b21a;
+  --hela-gold-strong: #d99a00;
+  --hela-gold-soft: #f7ce63;
+}
+
+@layer utilities {
+  .bg-hela-primary {
+    background-color: var(--hela-navy);
+  }
+
+  .text-hela-primary {
+    color: var(--hela-navy);
+  }
+
+  .border-hela-primary {
+    border-color: var(--hela-navy);
+  }
+
+  .bg-hela-accent {
+    background-color: var(--hela-gold);
+  }
+
+  .text-hela-accent {
+    color: var(--hela-gold);
+  }
+
+  .border-hela-accent {
+    border-color: var(--hela-gold);
+  }
+}

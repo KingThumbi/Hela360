@@ -1,75 +1,123 @@
 """
 Session Service
+===============
 
-Enterprise session lifecycle management.
+Enterprise authentication session lifecycle management for Hela360.
 
-This service owns creation, lookup, revocation and expiration of user
-authentication sessions.
+This service is the single authority responsible for persistence and lifecycle
+operations involving authenticated user sessions.
 
 Responsibilities
 ----------------
-- Create login sessions
+- Create authenticated sessions
+- Resolve sessions
 - Resolve active sessions
-- Revoke sessions
-- Revoke all sessions for a user
-- Update last activity
-- Check session validity
+- Track session activity
+- Revoke individual sessions
+- Revoke all sessions belonging to a user
+- Expire stale sessions
+- Validate session state
 
-This service intentionally contains NO JWT logic and NO password
-verification logic.
+Architectural Boundaries
+------------------------
+This service intentionally contains no:
 
-JWT issuance belongs to JWTService.
-Authentication workflows belong to AuthenticationService.
+- password verification logic
+- JWT creation or decoding logic
+- refresh-token persistence logic
+- authorization policy evaluation
+
+Those responsibilities belong respectively to:
+
+- PasswordService / AuthenticationService
+- JWTService
+- RefreshTokenService
+- AuthorizationService
+
+A UserSession represents the authenticated device/client context.
+
+Refresh tokens belong to a session. A session does not depend on a particular
+refresh token because rotating refresh tokens may produce multiple token
+records during the lifetime of one session.
 
 Hela360 Enterprise Pharmacy POS & ERP
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import select
 
 from app.extensions import db
-from app.models.auth import AuthSession
+from app.models.security import (
+    TokenRevocationReason,
+    UserSession,
+)
+
+
+# =============================================================================
+# Session Service
+# =============================================================================
 
 
 class SessionService:
     """
-    Enterprise authentication session service.
+    Enterprise authentication session lifecycle manager.
+
+    The service is stateless and may safely be reused throughout the
+    application lifecycle.
     """
 
-    # ------------------------------------------------------------------
+    # =========================================================================
     # Session Creation
-    # ------------------------------------------------------------------
+    # =========================================================================
 
     def create(
         self,
         *,
         user_id: str,
         tenant_id: str,
-        refresh_token_jti: str,
         expires_at: datetime,
         device_name: str | None = None,
+        browser: str | None = None,
+        operating_system: str | None = None,
+        device_fingerprint: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-    ) -> AuthSession:
+        country: str | None = None,
+        city: str | None = None,
+    ) -> UserSession:
         """
-        Create a new authenticated session.
+        Create a new authenticated user session.
+
+        The session is created before JWT issuance so its identifier can be
+        embedded into both access and refresh tokens.
+
+        Refresh-token state is deliberately not stored on the session.
+        RefreshTokenService owns refresh-token persistence and associates
+        individual refresh-token records with this session through session_id.
         """
 
-        session = AuthSession(
+        now = datetime.now(UTC)
+
+        session = UserSession(
             id=str(uuid4()),
             user_id=user_id,
             tenant_id=tenant_id,
-            refresh_token_jti=refresh_token_jti,
             device_name=device_name,
+            browser=browser,
+            operating_system=operating_system,
+            device_fingerprint=device_fingerprint,
             ip_address=ip_address,
+            last_ip_address=ip_address,
             user_agent=user_agent,
+            country=country,
+            city=city,
             expires_at=expires_at,
+            last_activity_at=now,
             revoked_at=None,
-            last_activity_at=datetime.now(UTC),
         )
 
         db.session.add(session)
@@ -77,29 +125,29 @@ class SessionService:
 
         return session
 
-    # ------------------------------------------------------------------
+    # =========================================================================
     # Queries
-    # ------------------------------------------------------------------
+    # =========================================================================
 
     def get(
         self,
         session_id: str,
-    ) -> AuthSession | None:
+    ) -> UserSession | None:
         """
-        Retrieve a session by ID.
+        Retrieve a session by primary key.
         """
 
         return db.session.get(
-            AuthSession,
+            UserSession,
             session_id,
         )
 
     def get_active(
         self,
         session_id: str,
-    ) -> AuthSession | None:
+    ) -> UserSession | None:
         """
-        Return an active session.
+        Retrieve an active, non-revoked and non-expired session.
         """
 
         session = self.get(session_id)
@@ -107,82 +155,127 @@ class SessionService:
         if session is None:
             return None
 
-        if self.is_revoked(session):
+        if session.revoked_at is not None:
             return None
 
-        if self.is_expired(session):
+        if session.expires_at <= datetime.now(UTC):
             return None
 
         return session
 
-    def list_user_sessions(
+    def get_user_sessions(
         self,
         *,
         user_id: str,
-    ) -> list[AuthSession]:
+        tenant_id: str | None = None,
+    ) -> list[UserSession]:
         """
-        Return all sessions for a user.
+        Return sessions belonging to a user.
         """
 
         stmt = (
-            select(AuthSession)
-            .where(AuthSession.user_id == user_id)
-            .order_by(AuthSession.created_at.desc())
+            select(UserSession)
+            .where(
+                UserSession.user_id == user_id,
+            )
+            .order_by(
+                UserSession.created_at.desc(),
+            )
         )
 
-        return list(db.session.scalars(stmt))
+        if tenant_id is not None:
+            stmt = stmt.where(
+                UserSession.tenant_id == tenant_id,
+            )
 
-    # ------------------------------------------------------------------
-    # Activity
-    # ------------------------------------------------------------------
+        return list(
+            db.session.scalars(stmt).all()
+        )
+
+    def get_active_user_sessions(
+        self,
+        *,
+        user_id: str,
+        tenant_id: str | None = None,
+    ) -> list[UserSession]:
+        """
+        Return currently active sessions belonging to a user.
+        """
+
+        now = datetime.now(UTC)
+
+        stmt = select(UserSession).where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+        )
+
+        if tenant_id is not None:
+            stmt = stmt.where(
+                UserSession.tenant_id == tenant_id,
+            )
+
+        stmt = stmt.order_by(
+            UserSession.created_at.desc(),
+        )
+
+        return list(
+            db.session.scalars(stmt).all()
+        )
+
+    # =========================================================================
+    # Session Activity
+    # =========================================================================
 
     def touch(
         self,
-        session: AuthSession,
+        session: UserSession,
+        *,
+        ip_address: str | None = None,
     ) -> None:
         """
-        Update the last activity timestamp.
+        Update session activity metadata.
         """
 
         session.last_activity_at = datetime.now(UTC)
 
+        if ip_address is not None:
+            session.last_ip_address = ip_address
+
         db.session.commit()
 
-    # ------------------------------------------------------------------
+    # =========================================================================
     # Revocation
-    # ------------------------------------------------------------------
+    # =========================================================================
 
     def revoke(
         self,
-        session: AuthSession,
-    ) -> None:
-        """
-        Revoke a session.
-        """
-
-        if session.revoked_at is None:
-            session.revoked_at = datetime.now(UTC)
-            db.session.commit()
-
-    def revoke_by_id(
-        self,
-        session_id: str,
+        session: UserSession,
+        *,
+        reason: TokenRevocationReason = TokenRevocationReason.LOGOUT,
+        revoked_by_user_id: str | None = None,
+        commit: bool = True,
     ) -> bool:
         """
-        Revoke a session by ID.
+        Revoke an authenticated session.
 
-        Returns
-        -------
-        bool
-            True if revoked.
+        Returns True when the session was newly revoked and False when it had
+        already been revoked.
+
+        ``commit=False`` allows a higher-level domain operation to include
+        session revocation within a larger atomic transaction.
         """
 
-        session = self.get(session_id)
-
-        if session is None:
+        if session.revoked_at is not None:
             return False
 
-        self.revoke(session)
+        session.revoke(
+            reason=reason,
+            revoked_by_user_id=revoked_by_user_id,
+        )
+
+        if commit:
+            db.session.commit()
 
         return True
 
@@ -190,107 +283,96 @@ class SessionService:
         self,
         *,
         user_id: str,
+        tenant_id: str | None = None,
+        reason: TokenRevocationReason = TokenRevocationReason.LOGOUT_ALL,
+        revoked_by_user_id: str | None = None,
     ) -> int:
         """
-        Revoke every session belonging to a user.
+        Revoke every active session belonging to a user.
 
-        Returns
-        -------
-        int
-            Number of sessions revoked.
+        Returns the number of sessions newly revoked.
         """
+
+        sessions = self.get_active_user_sessions(
+            user_id=user_id,
+            tenant_id=tenant_id,
+        )
+
+        if not sessions:
+            return 0
 
         now = datetime.now(UTC)
 
-        stmt = (
-            select(AuthSession)
-            .where(
-                AuthSession.user_id == user_id,
-                AuthSession.revoked_at.is_(None),
-            )
-        )
-
-        sessions = list(db.session.scalars(stmt))
-
         for session in sessions:
             session.revoked_at = now
+            session.revoke_reason = reason
+            session.revoked_by_user_id = revoked_by_user_id
 
         db.session.commit()
 
         return len(sessions)
 
-    # ------------------------------------------------------------------
-    # Expiry
-    # ------------------------------------------------------------------
+    # =========================================================================
+    # Expiration
+    # =========================================================================
 
-    def is_expired(
-        self,
-        session: AuthSession,
-    ) -> bool:
+    def expire_stale_sessions(self) -> int:
         """
-        Return True if the session has expired.
-        """
+        Mark expired, non-revoked sessions as expired.
 
-        return session.expires_at <= datetime.now(UTC)
-
-    def is_revoked(
-        self,
-        session: AuthSession,
-    ) -> bool:
-        """
-        Return True if the session has been revoked.
+        Returns the number of sessions updated.
         """
 
-        return session.revoked_at is not None
+        now = datetime.now(UTC)
 
-    def is_active(
-        self,
-        session: AuthSession,
-    ) -> bool:
-        """
-        Return True if the session is currently valid.
-        """
-
-        return (
-            not self.is_revoked(session)
-            and not self.is_expired(session)
+        stmt = select(UserSession).where(
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at <= now,
         )
 
-    # ------------------------------------------------------------------
-    # Maintenance
-    # ------------------------------------------------------------------
-
-    def delete_expired(
-        self,
-    ) -> int:
-        """
-        Permanently remove expired sessions.
-
-        Returns
-        -------
-        int
-            Number of deleted sessions.
-        """
-
-        stmt = (
-            select(AuthSession)
-            .where(AuthSession.expires_at < datetime.now(UTC))
+        sessions = list(
+            db.session.scalars(stmt).all()
         )
 
-        sessions = list(db.session.scalars(stmt))
-
-        count = len(sessions)
+        if not sessions:
+            return 0
 
         for session in sessions:
-            db.session.delete(session)
+            session.revoked_at = now
+            session.revoke_reason = TokenRevocationReason.SESSION_EXPIRED
 
         db.session.commit()
 
-        return count
+        return len(sessions)
 
+    # =========================================================================
+    # Validation
+    # =========================================================================
+
+    def is_active(
+        self,
+        session: UserSession,
+    ) -> bool:
+        """
+        Return True when a session is currently usable.
+        """
+
+        if session.revoked_at is not None:
+            return False
+
+        return session.expires_at > datetime.now(UTC)
+
+
+# =============================================================================
+# Singleton
+# =============================================================================
 
 session_service = SessionService()
 
+
+# =============================================================================
+# Module Exports
+# =============================================================================
 
 __all__ = [
     "SessionService",

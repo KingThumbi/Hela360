@@ -1,31 +1,110 @@
 from flask import Flask
 import click
 from werkzeug.security import generate_password_hash
-
+from flask_cors import CORS
 from app.config import Config
 from app.extensions import db, login_manager, migrate
-from app.models import Branch, PaymentMethod, Role, Tenant, User
-from app.api_sales import api_sales
+
+# Ensure SQLAlchemy models are registered
+from app import models  # noqa: F401
+
+from app.models import (
+    Branch,
+    PaymentMethod,
+    Role,
+    Tenant,
+    User,
+)
+
+from app.auth import init_app as init_auth
+
+
+# =============================================================================
+# Extensions
+# =============================================================================
 
 def register_extensions(app: Flask) -> None:
+    """
+    Register Flask extensions.
+    """
+
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
 
+    CORS(
+        app,
+        resources={
+            r"/api/*": {
+                "origins": app.config[
+                    "CORS_ALLOWED_ORIGINS"
+                ],
+            },
+        },
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Tenant-ID",
+            "X-Branch-ID",
+            "X-Request-ID",
+        ],
+        methods=[
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS",
+        ],
+    )
+
+# =============================================================================
+# Blueprints
+# =============================================================================
 
 def register_blueprints(app: Flask) -> None:
+    """
+    Register every API blueprint.
+
+    Authentication is registered first because every protected endpoint
+    depends on the IAM subsystem.
+    """
+
     from app.api.health import bp as health_bp
     from app.api.products import bp as products_bp
+    from app.api.payment_methods import bp as payment_methods_bp
+    from app.api.inventory import bp as inventory_bp
+    from app.api.tills import bp as tills_bp
+    from app.api.warehouses import bp as warehouses_bp
     from app.api.customers import bp as customers_bp
     from app.api.sales import bp as sales_bp
+    from app.api.suppliers import bp as suppliers_bp
+    from app.api.dashboard import bp as dashboard_bp
+
+    # Enterprise IAM
+    init_auth(app)
 
     app.register_blueprint(health_bp, url_prefix="/api")
     app.register_blueprint(products_bp, url_prefix="/api")
+    app.register_blueprint(payment_methods_bp, url_prefix="/api")
+    app.register_blueprint(inventory_bp, url_prefix="/api")
+    app.register_blueprint(tills_bp, url_prefix="/api")
+    app.register_blueprint(warehouses_bp, url_prefix="/api")
     app.register_blueprint(customers_bp, url_prefix="/api")
     app.register_blueprint(sales_bp, url_prefix="/api")
+    app.register_blueprint(suppliers_bp, url_prefix="/api")
+    app.register_blueprint(dashboard_bp, url_prefix="/api")
 
+
+# =============================================================================
+# CLI Commands
+# =============================================================================
 
 def register_commands(app: Flask) -> None:
+    """
+    Register Flask CLI commands.
+    """
+
     @app.cli.command("seed-initial")
     @click.option("--tenant-name", default="Hela360 Demo", show_default=True)
     @click.option("--branch-name", default="Main Branch", show_default=True)
@@ -37,8 +116,13 @@ def register_commands(app: Flask) -> None:
         admin_email: str,
         admin_password: str,
     ) -> None:
+        """
+        Seed an initial tenant, branch, administrator and payment methods.
+        """
+
         tenant = Tenant.query.filter_by(display_name=tenant_name).first()
-        if not tenant:
+
+        if tenant is None:
             tenant = Tenant(
                 legal_name=tenant_name,
                 display_name=tenant_name,
@@ -53,7 +137,8 @@ def register_commands(app: Flask) -> None:
             tenant_id=tenant.id,
             name=branch_name,
         ).first()
-        if not branch:
+
+        if branch is None:
             branch = Branch(
                 tenant_id=tenant.id,
                 code="MAIN",
@@ -68,7 +153,8 @@ def register_commands(app: Flask) -> None:
             tenant_id=tenant.id,
             code="admin",
         ).first()
-        if not admin_role:
+
+        if admin_role is None:
             admin_role = Role(
                 tenant_id=tenant.id,
                 name="Administrator",
@@ -83,7 +169,8 @@ def register_commands(app: Flask) -> None:
             tenant_id=tenant.id,
             email=admin_email,
         ).first()
-        if not admin_user:
+
+        if admin_user is None:
             admin_user = User(
                 tenant_id=tenant.id,
                 branch_id=branch.id,
@@ -97,19 +184,20 @@ def register_commands(app: Flask) -> None:
             )
             db.session.add(admin_user)
 
-        payment_methods = [
+        payment_methods = (
             ("cash", "Cash", "cash"),
             ("mpesa", "M-Pesa", "mpesa"),
             ("card", "Card", "card"),
             ("bank", "Bank Transfer", "bank"),
-        ]
+        )
 
         for code, name, method_type in payment_methods:
             exists = PaymentMethod.query.filter_by(
                 tenant_id=tenant.id,
                 code=code,
             ).first()
-            if not exists:
+
+            if exists is None:
                 db.session.add(
                     PaymentMethod(
                         tenant_id=tenant.id,
@@ -124,16 +212,48 @@ def register_commands(app: Flask) -> None:
         click.echo("Initial seed completed successfully.")
 
 
-def create_app(config_class: type[Config] = Config) -> Flask:
+# =============================================================================
+# Application Factory
+# =============================================================================
+
+def create_app(
+    config_class: type[Config] = Config,
+) -> Flask:
+    """
+    Create and configure the Hela360 application.
+
+    The application factory is responsible for:
+
+    1. Creating the Flask application instance.
+    2. Loading application configuration.
+    3. Initializing extensions.
+    4. Registering API blueprints.
+    5. Registering global API error handlers.
+    6. Registering CLI commands.
+
+    Returns
+    -------
+    Flask
+        A fully configured Flask application instance.
+    """
     app = Flask(__name__)
     app.config.from_object(config_class)
-    #app.register_blueprint(api_sales)
-    
+
+    # Initialize Flask extensions.
     register_extensions(app)
 
+    # Import database models for SQLAlchemy metadata discovery.
     from app import models  # noqa: F401
 
+    # Register REST API blueprints.
     register_blueprints(app)
+
+    # Register centralized API exception handlers.
+    from app.api.errors import register_error_handlers
+
+    register_error_handlers(app)
+
+    # Register custom Flask CLI commands.
     register_commands(app)
 
     return app

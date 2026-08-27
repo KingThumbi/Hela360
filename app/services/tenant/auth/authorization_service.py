@@ -59,15 +59,12 @@ from typing import Iterable
 
 from flask import current_app
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
-
+from sqlalchemy.orm import selectinload
 from app.extensions import db
 from app.models.auth import (
     Permission,
     Role,
-    RolePermission,
     User,
-    UserRole,
 )
 from app.services.common.audit_service import AuditService
 
@@ -77,9 +74,7 @@ from app.auth.exceptions import (
     AccountInactiveError,
     AccountLockedError,
     AccountSuspendedError,
-    AuthorizationError,
     BranchAccessDeniedError,
-    InvalidCredentialsError,
     PermissionDeniedError,
     RoleRequiredError,
     TenantAccessDeniedError,
@@ -113,28 +108,37 @@ OWNER_ROLE = "owner"
 @dataclass(slots=True, frozen=True)
 class AuthorizationContext:
     """
-    Immutable authorization snapshot for a user.
+    Immutable ORM-independent authorization snapshot.
 
-    This object represents the fully resolved authorization state of a user
-    at a particular point in time.
+    The context contains only scalar values and immutable collections.
+    SQLAlchemy model instances must never be retained here because their
+    lifecycle is bound to a database session and they may become expired
+    or detached after a commit or rollback.
 
-    It intentionally contains only authorization-related information,
-    allowing permission checks to avoid repeated database traversal once
-    constructed.
-
-    Future enhancements may cache instances of this object for the lifetime
-    of a request or via a distributed cache.
+    Runtime authorization checks may therefore safely reuse this snapshot
+    without dereferencing ORM state.
     """
 
-    user: User
+    user_id: int | str
 
     tenant_id: int | str | None = None
+
+    is_owner: bool = False
+
+    is_platform_admin: bool = False
 
     roles: frozenset[str] = field(default_factory=frozenset)
 
     permissions: frozenset[str] = field(default_factory=frozenset)
 
     branch_ids: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def has_global_override(self) -> bool:
+        """
+        Whether this authorization snapshot bypasses ordinary RBAC checks.
+        """
+        return self.is_owner or self.is_platform_admin
 
 # ---------------------------------------------------------------------------
 # Authorization service
@@ -206,7 +210,7 @@ class AuthorizationService:
             to that tenant to prevent cross-tenant authorization.
 
         eager:
-            When True, eagerly loads role and permission relationships to avoid
+            When True, eagerly loads roles and their permissions to avoid
             N+1 query patterns during authorization.
 
         Returns
@@ -214,23 +218,28 @@ class AuthorizationService:
         User | None
             The resolved user or ``None`` if no matching user exists.
         """
+
         stmt = select(User)
 
         if eager:
             stmt = stmt.options(
-                joinedload(User.user_roles)                 # type: ignore[arg-type]
-                .joinedload(UserRole.role)                  # type: ignore[arg-type]
-                .joinedload(Role.role_permissions)          # type: ignore[arg-type]
-                .joinedload(RolePermission.permission)      # type: ignore[arg-type]
+                selectinload(User.roles)
+                .selectinload(Role.permissions)
             )
 
-        stmt = stmt.where(User.id == user_id)
+        stmt = stmt.where(
+            User.id == user_id,
+        )
 
         if tenant_id is not None:
-            stmt = stmt.where(User.tenant_id == tenant_id)
+            stmt = stmt.where(
+                User.tenant_id == tenant_id,
+            )
 
-        return db.session.execute(stmt).unique().scalar_one_or_none()
-
+        return db.session.execute(
+            stmt
+        ).scalar_one_or_none()
+    
     def get_user_or_raise(
         self,
         user_id: int | str,
@@ -327,26 +336,21 @@ class AuthorizationService:
 # Authorization context
 # ---------------------------------------------------------------------------
 
-    def _user_cache_key(
+    def _authorization_cache_key(
         self,
-        user: User,
+        *,
+        tenant_id: int | str | None,
+        user_id: int | str,
     ) -> tuple[int | str | None, int | str]:
         """
-        Return the cache key for an authorization context.
+        Return the stable cache key for an authorization context.
 
-        The cache key includes both the tenant identifier and the user
-        identifier to ensure complete tenant isolation.
-
-        Returns
-        -------
-        tuple
-            A stable cache key in the form::
-
-                (tenant_id, user_id)
+        Cache identity consists entirely of scalar identifiers and therefore
+        has no dependency on SQLAlchemy model lifecycle state.
         """
         return (
-            getattr(user, "tenant_id", None),
-            user.id,
+            tenant_id,
+            user_id,
         )
 
     def _get_cached_context(
@@ -354,21 +358,33 @@ class AuthorizationService:
         user: User,
     ) -> AuthorizationContext | None:
         """
-        Retrieve a cached authorization context for the user.
+        Retrieve a cached authorization context for a resolved user.
         """
-        return self._authorization_context_cache.get(self._user_cache_key(user))
+        return self._authorization_context_cache.get(
+            self._authorization_cache_key(
+                tenant_id=getattr(
+                    user,
+                    "tenant_id",
+                    None,
+                ),
+                user_id=user.id,
+            )
+        )
 
     def _store_cached_context(
         self,
         context: AuthorizationContext,
     ) -> AuthorizationContext:
         """
-        Store an authorization context in the local cache.
-
-        The current implementation is intentionally lightweight. It serves as
-        the extension point for future request-scoped or distributed caching.
+        Store an ORM-independent authorization snapshot in the local cache.
         """
-        self._authorization_context_cache[self._user_cache_key(context.user)] = context
+        self._authorization_context_cache[
+            self._authorization_cache_key(
+                tenant_id=context.tenant_id,
+                user_id=context.user_id,
+            )
+        ] = context
+
         return context
 
     def clear_authorization_cache(self) -> None:
@@ -428,7 +444,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         return role in context.roles
@@ -450,7 +466,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         required_roles = frozenset(roles)
@@ -475,7 +491,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         required_roles = frozenset(roles)
@@ -616,28 +632,88 @@ class AuthorizationService:
         """
         Aggregate every effective permission assigned to a user.
 
-        Effective permissions are computed as the union of permissions granted
-        by all assigned roles. Duplicate permissions are removed automatically
-        and the resulting collection is deterministically ordered.
+        Effective permissions are resolved from:
+
+        1. Permissions inherited through assigned roles.
+        2. Explicit user-level permission grants.
+        3. Explicit user-level permission denials.
+
+        Resolution rule
+        ---------------
+
+            effective_permissions
+            =
+            (role_permissions | explicit_allows)
+            - explicit_denies
+
+        Explicit user denials therefore take precedence over both role-derived
+        permissions and direct user grants.
+
+        Permission evaluation always uses the canonical ``Permission.code`` value,
+        never the human-readable permission name.
 
         Parameters
         ----------
         user:
-            The resolved user.
+            Resolved user.
 
         Returns
         -------
         frozenset[str]
-            Deterministically ordered permission names.
+            Effective canonical permission codes.
         """
-        permission_names = {
-            str(permission.name)
+
+        role_permissions = {
+            str(permission.code)
             for role in getattr(user, "roles", ())
             for permission in getattr(role, "permissions", ())
-            if getattr(permission, "name", None)
+            if getattr(permission, "code", None)
         }
 
-        return frozenset(sorted(permission_names))    
+        explicit_allows = {
+            str(override.permission.code)
+            for override in getattr(
+                user,
+                "permission_overrides",
+                (),
+            )
+            if (
+                getattr(override, "effect", None) == "allow"
+                and getattr(override, "permission", None) is not None
+                and getattr(
+                    override.permission,
+                    "code",
+                    None,
+                )
+            )
+        }
+
+        explicit_denies = {
+            str(override.permission.code)
+            for override in getattr(
+                user,
+                "permission_overrides",
+                (),
+            )
+            if (
+                getattr(override, "effect", None) == "deny"
+                and getattr(override, "permission", None) is not None
+                and getattr(
+                    override.permission,
+                    "code",
+                    None,
+                )
+            )
+        }
+
+        effective_permissions = (
+            role_permissions
+            | explicit_allows
+        ) - explicit_denies
+
+        return frozenset(
+            sorted(effective_permissions)
+        )
     
     def _build_authorization_context(
         self,
@@ -662,11 +738,25 @@ class AuthorizationService:
             Fully populated immutable authorization snapshot.
         """
         return AuthorizationContext(
-            user=user,
-            tenant_id=getattr(user, "tenant_id", None),
+            user_id=user.id,
+            tenant_id=getattr(
+                user,
+                "tenant_id",
+                None,
+            ),
+            is_owner=self._is_owner(user),
+            is_platform_admin=(
+                self._is_platform_administrator(
+                    user
+                )
+            ),
             roles=self._aggregate_roles(user),
-            permissions=self._aggregate_permissions(user),
-            branch_ids=self._aggregate_branch_ids(user),
+            permissions=self._aggregate_permissions(
+                user
+            ),
+            branch_ids=self._aggregate_branch_ids(
+                user
+            ),
         )
 
     def _get_authorization_context(
@@ -728,35 +818,93 @@ class AuthorizationService:
 
     def get_permission_objects(
         self,
-        user: User | int |str,
+        user: User | int | str,
         *,
         tenant_id: int | str | None = None,
     ) -> tuple[Permission, ...]:
         """
-        Return Permission model instances assigned to the user.
+        Return effective Permission model instances assigned to the user.
 
-        This helper is intended for administrative interfaces,
-        reporting, and auditing. Permission evaluation should
-        generally use :meth:`get_permissions`.
+        Effective permission objects include:
 
-        Duplicate permissions inherited from multiple roles are removed while
-        preserving deterministic ordering.
+        * permissions inherited from roles
+        * explicit user-level allows
+
+        Explicit user-level denies remove permissions from the result.
+
+        This method is intended primarily for administrative interfaces,
+        reporting, auditing, and permission inspection.
+
+        Runtime authorization should generally use :meth:`get_permissions`.
         """
+
         resolved_user = self._resolve_user(
             user,
             tenant_id=tenant_id,
         )
 
         permissions: dict[str, Permission] = {
-            permission.name: permission
-            for role in getattr(resolved_user, "roles", ())
-            for permission in getattr(role, "permissions", ())
-            if getattr(permission, "name", None)
+            str(permission.code): permission
+            for role in getattr(
+                resolved_user,
+                "roles",
+                (),
+            )
+            for permission in getattr(
+                role,
+                "permissions",
+                (),
+            )
+            if getattr(permission, "code", None)
         }
 
+        denied_codes: set[str] = set()
+
+        for override in getattr(
+            resolved_user,
+            "permission_overrides",
+            (),
+        ):
+            permission = getattr(
+                override,
+                "permission",
+                None,
+            )
+
+            if (
+                permission is None
+                or not getattr(
+                    permission,
+                    "code",
+                    None,
+                )
+            ):
+                continue
+
+            permission_code = str(
+                permission.code
+            )
+
+            if override.effect == "allow":
+                permissions[
+                    permission_code
+                ] = permission
+
+            elif override.effect == "deny":
+                denied_codes.add(
+                    permission_code
+                )
+
+        for permission_code in denied_codes:
+            permissions.pop(
+                permission_code,
+                None,
+            )
+
         return tuple(
-            permissions[name]
-            for name in sorted(permissions)
+            permissions[permission_code]
+            for permission_code
+            in sorted(permissions)
         )
 
     def refresh_context(
@@ -808,7 +956,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         return permission in context.permissions
@@ -831,7 +979,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         required_permissions = frozenset(permissions)
@@ -858,7 +1006,7 @@ class AuthorizationService:
             tenant_id=tenant_id,
         )
 
-        if self._has_global_authorization_override(context.user):
+        if context.has_global_override:
             return True
 
         required_permissions = frozenset(permissions)
@@ -920,47 +1068,46 @@ class AuthorizationService:
 
     def _has_global_access(self, user: User) -> bool:
         """
-        Determine whether the user bypasses normal permission evaluation.
+        Determine whether the user bypasses normal authorization evaluation.
 
-        This method centralizes every authorization override within the
-        application.
-
-        Current overrides
-        -----------------
-        * Tenant owner
-        * Platform administrator (future compatible)
-        * Wildcard system permission
-
-        Future implementations should extend this method rather than modify
-        individual permission evaluation methods.
+        Global access is derived from the immutable authorization context and
+        therefore remains safe across SQLAlchemy transaction boundaries.
         """
-        if self._has_global_authorization_override(user):
-            return True
+        context = self._get_authorization_context(
+            user
+        )
 
-        if self._is_platform_administrator(user):
-            return True
-
-        context = self._get_cached_context(user)
-
-        if context is not None:
-            return SYSTEM_PERMISSION in context.permissions
-
-        permissions = self.get_permissions(user)
-
-        return SYSTEM_PERMISSION in permissions
+        return (
+            context.has_global_override
+            or SYSTEM_PERMISSION
+            in context.permissions
+        )
 
     def _is_platform_administrator(self, user: User) -> bool:
         """
-        Extension point for platform-wide administrators.
+        Determine whether a resolved user is a platform administrator.
 
-        The current authorization model is tenant-centric. This method
-        provides a stable hook for introducing platform administrators
-        without requiring changes to permission evaluation logic.
+        This method intentionally inspects the already-resolved ORM object
+        directly. It must not call get_roles() because doing so would recurse
+        through authorization-context resolution while a context is being
+        constructed.
         """
-        if getattr(user, "is_platform_admin", False):
+        if getattr(
+            user,
+            "is_platform_admin",
+            False,
+        ):
             return True
 
-        return PLATFORM_ADMIN_ROLE in self.get_roles(user)
+        return any(
+            getattr(role, "name", None)
+            == PLATFORM_ADMIN_ROLE
+            for role in getattr(
+                user,
+                "roles",
+                (),
+            )
+        )
 
 # ---------------------------------------------------------------------------
 # Authorization overrides

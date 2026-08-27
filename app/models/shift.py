@@ -1,41 +1,105 @@
 # app/models/shift.py
-import uuid
-from datetime import datetime, timezone
-
 from app.extensions import db
+from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
 
 
-def utc_now():
-    return datetime.now(timezone.utc)
+class TillShift(
+    UUIDPrimaryKeyMixin,
+    TimestampMixin,
+    db.Model,
+):
+    """
+    Operational POS till shift.
 
+    A till shift represents the period during which a cashier is
+    responsible for a specific till within a tenant and branch.
 
-class TillShift(db.Model):
+    Identifier Strategy
+    -------------------
+    Hela360 uses UUID-formatted String(36) identifiers throughout the
+    tenant application domain.
+
+    TillShift follows the same canonical identifier strategy so that
+    tenant, branch, till, cashier, sale, and refund relationships remain
+    type-consistent across the ERP.
+    """
+
     __tablename__ = "till_shifts"
 
-    id = db.Column(db.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = db.Column(
+        db.String(36),
+        db.ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
 
-    tenant_id = db.Column(db.UUID(as_uuid=True), nullable=False, index=True)
-    branch_id = db.Column(db.UUID(as_uuid=True), nullable=False, index=True)
-    till_id = db.Column(db.UUID(as_uuid=True), nullable=False, index=True)
-    cashier_id = db.Column(db.UUID(as_uuid=True), nullable=False, index=True)
+    branch_id = db.Column(
+        db.String(36),
+        db.ForeignKey("branches.id"),
+        nullable=False,
+        index=True,
+    )
 
-    status = db.Column(db.String(20), nullable=False, default="open", index=True)
+    till_id = db.Column(
+        db.String(36),
+        db.ForeignKey("tills.id"),
+        nullable=False,
+        index=True,
+    )
 
-    opening_float = db.Column(db.Numeric(18, 2), nullable=False, default=0)
-    closing_cash = db.Column(db.Numeric(18, 2), nullable=True)
+    cashier_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
 
-    notes = db.Column(db.Text, nullable=True)
+    active_session_id = db.Column(
+        db.String(36),
+        db.ForeignKey("user_sessions.id"),
+        nullable=True,
+        index=True,
+    )
 
-    opened_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now, index=True)
-    closed_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
+    status = db.Column(
+        db.String(20),
+        nullable=False,
+        default="open",
+        index=True,
+    )
 
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
-    updated_at = db.Column(
+    opening_float = db.Column(
+        db.Numeric(18, 2),
+        nullable=False,
+        default=0,
+    )
+
+    closing_cash = db.Column(
+        db.Numeric(18, 2),
+        nullable=True,
+    )
+
+    notes = db.Column(
+        db.Text,
+        nullable=True,
+    )
+
+    opened_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
-        default=utc_now,
-        onupdate=utc_now,
+        index=True,
+    )
+
+    closed_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+        index=True,
     )
 
     def __repr__(self):
-        return f"<TillShift {self.id} till={self.till_id} cashier={self.cashier_id} status={self.status}>"
+        return (
+            f"<TillShift {self.id} "
+            f"till={self.till_id} "
+            f"cashier={self.cashier_id} "
+            f"status={self.status}>"
+        )

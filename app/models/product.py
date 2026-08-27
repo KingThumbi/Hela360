@@ -79,6 +79,55 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     is_active = db.Column(db.Boolean, nullable=False, default=True)
 
 
+class ProductUnit(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
+    __tablename__ = "product_units"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "tenant_id",
+            "product_id",
+            "unit_id",
+            name="uq_product_units_tenant_product_unit",
+        ),
+        db.Index(
+            "ix_product_units_one_base_per_product",
+            "tenant_id",
+            "product_id",
+            unique=True,
+            postgresql_where=db.text("is_base = true"),
+        ),
+    )
+
+    tenant_id = db.Column(
+        db.String(36),
+        db.ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
+    )
+    product_id = db.Column(
+        db.String(36),
+        db.ForeignKey("products.id"),
+        nullable=False,
+        index=True,
+    )
+    unit_id = db.Column(
+        db.String(36),
+        db.ForeignKey("units_of_measure.id"),
+        nullable=False,
+        index=True,
+    )
+
+    conversion_factor_to_base = db.Column(
+        db.Numeric(18, 6),
+        nullable=False,
+        default=1,
+    )
+    is_base = db.Column(db.Boolean, nullable=False, default=False)
+    can_sell = db.Column(db.Boolean, nullable=False, default=True)
+    can_receive = db.Column(db.Boolean, nullable=False, default=True)
+    sale_price = db.Column(db.Numeric(18, 2))
+    minimum_sale_price = db.Column(db.Numeric(18, 2))
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    
 class ProductCode(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     __tablename__ = "product_codes"
     __table_args__ = (
@@ -87,6 +136,7 @@ class ProductCode(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
 
     tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
     product_id = db.Column(db.String(36), db.ForeignKey("products.id"), nullable=False, index=True)
+    product_unit_id = db.Column(db.String(36), db.ForeignKey("product_units.id"), index=True)
 
     code_type = db.Column(db.String(20), nullable=False)
     code_value = db.Column(db.String(200), nullable=False)

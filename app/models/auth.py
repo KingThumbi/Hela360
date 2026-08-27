@@ -92,14 +92,24 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, UserMixin, db.Model):
     roles = db.relationship(
         "Role",
         secondary="user_roles",
+        primaryjoin="User.id == UserRole.user_id",
+        secondaryjoin="Role.id == UserRole.role_id",
         back_populates="users",
         lazy="selectin",
+    )
+    permission_overrides = db.relationship(
+        "UserPermission",
+        foreign_keys="UserPermission.user_id",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        overlaps="user",
     )
 
     sessions = db.relationship(
         "UserSession",
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="UserSession.user_id",
         lazy="selectin",
     )
 
@@ -107,6 +117,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, UserMixin, db.Model):
         "RefreshToken",
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="RefreshToken.user_id",
         lazy="selectin",
     )
 
@@ -114,6 +125,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, UserMixin, db.Model):
         "PasswordResetToken",
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="PasswordResetToken.user_id",
         lazy="selectin",
     )
 
@@ -174,6 +186,8 @@ class Role(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     users = db.relationship(
         "User",
         secondary="user_roles",
+        primaryjoin="Role.id == UserRole.role_id",
+        secondaryjoin="User.id == UserRole.user_id",
         back_populates="roles",
         lazy="selectin",
     )
@@ -246,13 +260,6 @@ class RolePermission(TimestampMixin, db.Model):
 
     __tablename__ = "role_permissions"
 
-    __table_args__ = (
-        db.UniqueConstraint(
-            "role_id",
-            "permission_id",
-            name="uq_role_permission",
-        ),
-    )
 
     role_id = db.Column(
         db.String(36),
@@ -279,11 +286,13 @@ class RolePermission(TimestampMixin, db.Model):
     role = db.relationship(
         "Role",
         foreign_keys=[role_id],
+        overlaps="permissions,roles",
     )
 
     permission = db.relationship(
         "Permission",
         foreign_keys=[permission_id],
+        overlaps="permissions,roles",
     )
 
     assigned_by = db.relationship(
@@ -315,11 +324,6 @@ class UserRole(TimestampMixin, db.Model):
     __tablename__ = "user_roles"
 
     __table_args__ = (
-        db.UniqueConstraint(
-            "user_id",
-            "role_id",
-            name="uq_user_role",
-        ),
         db.Index(
             "ix_user_roles_user",
             "user_id",
@@ -329,7 +333,6 @@ class UserRole(TimestampMixin, db.Model):
             "role_id",
         ),
     )
-
     user_id = db.Column(
         db.String(36),
         db.ForeignKey("users.id", ondelete="CASCADE"),
@@ -355,13 +358,15 @@ class UserRole(TimestampMixin, db.Model):
     user = db.relationship(
         "User",
         foreign_keys=[user_id],
+        overlaps="roles,users",
     )
 
     role = db.relationship(
         "Role",
         foreign_keys=[role_id],
+        overlaps="roles,users",
     )
-
+    
     assigned_by = db.relationship(
         "User",
         foreign_keys=[assigned_by_user_id],
@@ -372,4 +377,109 @@ class UserRole(TimestampMixin, db.Model):
             f"<UserRole "
             f"user={self.user_id} "
             f"role={self.role_id}>"
+        )
+# ============================================================================
+# User-Permission Overrides
+# ============================================================================
+
+
+class UserPermission(TimestampMixin, db.Model):
+    """
+    Explicit permission override assigned directly to a user.
+
+    User-level permission overrides complement role-based access control.
+
+    Effective authorization is resolved as:
+
+        role permissions
+        + explicit user allows
+        - explicit user denies
+
+    Explicit denies take precedence over role-derived grants.
+
+    This model is intentionally auditable so Hela360 can record:
+
+    * who assigned the override
+    * why the override was assigned
+    * when the override was created
+
+    Roles remain the primary authorization mechanism. User permissions are
+    intended for tenant-specific exceptions without requiring unnecessary
+    custom roles.
+    """
+
+    __tablename__ = "user_permissions"
+
+    __table_args__ = (
+        db.Index(
+            "ix_user_permissions_user",
+            "user_id",
+        ),
+        db.Index(
+            "ix_user_permissions_permission",
+            "permission_id",
+        ),
+        db.CheckConstraint(
+            "effect IN ('allow', 'deny')",
+            name="ck_user_permissions_effect",
+        ),
+    )
+
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+
+    permission_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "permissions.id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+
+    effect = db.Column(
+        db.String(10),
+        nullable=False,
+        default="allow",
+    )
+
+    assigned_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        nullable=True,
+    )
+
+    assignment_reason = db.Column(
+        db.String(255),
+    )
+
+    user = db.relationship(
+        "User",
+        foreign_keys=[user_id],
+        overlaps="permission_overrides",
+    )
+
+    permission = db.relationship(
+        "Permission",
+        foreign_keys=[permission_id],
+        overlaps="user_overrides",
+    )
+
+    assigned_by = db.relationship(
+        "User",
+        foreign_keys=[assigned_by_user_id],
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserPermission "
+            f"user={self.user_id} "
+            f"permission={self.permission_id} "
+            f"effect={self.effect}>"
         )

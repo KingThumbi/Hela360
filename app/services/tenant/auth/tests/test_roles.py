@@ -32,7 +32,7 @@ def test_get_roles_returns_context_roles(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"admin", "manager"}),
     )
 
@@ -58,7 +58,7 @@ def test_has_role_true(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"admin"}),
     )
 
@@ -83,7 +83,7 @@ def test_has_role_false(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"manager"}),
     )
 
@@ -107,7 +107,11 @@ def test_has_role_global_override(
 ) -> None:
     service = AuthorizationService()
 
-    context = AuthorizationContext(user=user())
+    context = AuthorizationContext(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        is_owner=True,
+    )
 
     monkeypatch.setattr(
         service,
@@ -135,7 +139,7 @@ def test_has_any_role_true(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"manager", "cashier"}),
     )
 
@@ -163,7 +167,7 @@ def test_has_any_role_false(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"cashier"}),
     )
 
@@ -190,7 +194,11 @@ def test_has_any_role_global_override(
 ) -> None:
     service = AuthorizationService()
 
-    context = AuthorizationContext(user=user())
+    context = AuthorizationContext(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        is_owner=True,
+    )
 
     monkeypatch.setattr(
         service,
@@ -221,7 +229,7 @@ def test_has_all_roles_true(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"admin", "manager", "cashier"}),
     )
 
@@ -249,7 +257,7 @@ def test_has_all_roles_false(
     service = AuthorizationService()
 
     context = AuthorizationContext(
-        user=user(),
+        user_id="user-1",
         roles=frozenset({"manager"}),
     )
 
@@ -276,7 +284,11 @@ def test_has_all_roles_global_override(
 ) -> None:
     service = AuthorizationService()
 
-    context = AuthorizationContext(user=user())
+    context = AuthorizationContext(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        is_owner=True,
+    )
 
     monkeypatch.setattr(
         service,

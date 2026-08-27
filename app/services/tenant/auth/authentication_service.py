@@ -61,7 +61,7 @@ Hela360 Enterprise Pharmacy POS & ERP
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from flask_sqlalchemy import session
@@ -69,19 +69,28 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
 from app.extensions import db
-from app.models.auth import User
+from app.models.auth import (
+    Role,
+    User,
+    UserPermission,
+)
 from app.models.security import (
     PasswordResetToken,
+    TokenRevocationReason,
     UserSession,
+)
+
+from app.services.tenant.auth.authorization_service import (
+    authorization_service,
+)
+
+from app.services.tenant.auth.jwt_service import (
+    jwt_service,
 )
 
 from app.services.common.audit_actions import AuditAction
 from app.services.common.audit_service import audit_service
-
-from app.auth.jwt import (
-    create_access_token,
-    create_refresh_token,
-)
+from app.services.common.audit_modules import AuditModule
 
 from app.auth.exceptions import (
     AccountArchivedError,
@@ -262,7 +271,14 @@ class AuthenticationService:
         stmt = (
             select(User)
             .options(
-                selectinload(User.roles),
+                selectinload(User.roles)
+                .selectinload(Role.permissions),
+
+                selectinload(
+                    User.permission_overrides
+                ).selectinload(
+                    UserPermission.permission
+                ),
             )
             .where(
                 User.tenant_id == tenant_id,
@@ -315,31 +331,29 @@ class AuthenticationService:
     def _authorization_claims(
         self,
         user: User,
-    ) -> tuple[str | None, list[str]]:
+    ) -> list[str]:
         """
-        Resolve the user's authorization claims.
+        Resolve the user's effective authorization claims.
 
-        These claims are embedded into newly issued access tokens so that
-        every token reflects the user's current role assignments and
-        effective permissions.
+        Access-token authorization claims are derived from the canonical
+        AuthorizationService so JWTs reflect the user's complete effective
+        permission state:
+
+            role permissions
+            + explicit user allows
+            - explicit user denies
+
+        Assigned tenant roles are not projected into a singular JWT role.
+        Hela360 supports multiple role assignments, and role collection order
+        does not define user identity or authorization precedence.
         """
 
-        primary_role = (
-            user.roles[0].code
-            if user.roles
-            else None
+        return sorted(
+            authorization_service.get_permissions(
+                user,
+                tenant_id=user.tenant_id,
+            )
         )
-
-        permissions = sorted(
-            {
-                permission.code
-                for role in user.roles
-                for permission in role.permissions
-            }
-        )
-
-        return primary_role, permissions
-
 
     # =======================================================================
     # Token Helpers
@@ -348,37 +362,30 @@ class AuthenticationService:
     def _issue_tokens(
         self,
         context: AuthenticationContext,
-    ) -> tuple[str, str]:
+    ):
         """
-        Issue a new access token and refresh token for an authenticated
-        session.
+        Issue a new access/refresh JWT pair for an authenticated session.
 
-        Authorization claims are resolved immediately before token issuance
-        so that every access token reflects the user's current roles and
-        permissions.
+        JWTService is the canonical token-issuance boundary. The returned
+        token-pair metadata contains the actual refresh-token JTI and expiry
+        that must subsequently be persisted through RefreshTokenService.
         """
 
-        role, permissions = self._authorization_claims(
+        permissions = self._authorization_claims(
             context.user,
         )
 
-        access_token = create_access_token(
-            user_id=context.user.id,
-            tenant_id=context.user.tenant_id,
-            branch_id=context.user.branch_id,
-            role=role,
+        return jwt_service.issue_token_pair(
+            user_id=str(context.user.id),
+            tenant_id=str(context.user.tenant_id),
+            branch_id=(
+                str(context.user.branch_id)
+                if context.user.branch_id
+                else None
+            ),
             permissions=permissions,
-            session_id=context.session.id,
-        )
-
-        refresh_token = create_refresh_token(
-            user_id=context.user.id,
-            tenant_id=context.user.tenant_id,
-            session_id=context.session.id,
-        )
-
-        return access_token, refresh_token
-    
+            session_id=str(context.session.id),
+        )    
     # =======================================================================
     # Audit Helpers
     # =======================================================================
@@ -389,10 +396,11 @@ class AuthenticationService:
         context: AuthenticationContext,
     ) -> None:
         """
-        Record a successful authentication.
+        Record a successful authentication event.
         """
 
         audit_service.safe_log(
+            module=AuditModule.AUTH,
             action=AuditAction.LOGIN_SUCCESS,
             entity_type="User",
             entity_id=context.user.id,
@@ -416,44 +424,13 @@ class AuthenticationService:
         Record a failed authentication attempt.
         """
 
-        audit_service.safe_log(
-            action=AuditAction.LOGIN_FAILURE,
-            entity_type="Authentication",
+        audit_service.login_failure(
             tenant_id=tenant_id,
+            email=username_or_email,
             ip_address=ip_address,
-            status="failed",
-            details={
-                "username_or_email": username_or_email,
-                "reason": reason,
-            },
+            reason=reason,
         )
 
-    def _audit_token_refresh(
-        self,
-        *,
-        context: AuthenticationContext,
-    ) -> None:
-        """
-        Record a successful refresh token rotation.
-
-        A refresh event indicates that an authenticated session has
-        successfully exchanged a valid refresh token for a new JWT pair.
-        """
-
-        audit_service.safe_log(
-            action=AuditAction.TOKEN_REFRESHED,
-            entity_type="Authentication",
-            entity_id=context.session.id,
-            user_id=context.user.id,
-            tenant_id=context.user.tenant_id,
-            branch_id=context.user.branch_id,
-            session_id=context.session.id,
-            ip_address=context.ip_address,
-            user_agent=context.user_agent,
-            metadata={
-                "refresh_token_jti": context.session.refresh_token_jti,
-            },
-        )
     # =======================================================================
     # Session Cleanup Helpers
     # =======================================================================
@@ -462,18 +439,26 @@ class AuthenticationService:
         self,
         *,
         refresh_token,
-        session: UserSession,
+        session: UserSession | None,
+        reason: TokenRevocationReason = TokenRevocationReason.SECURITY_EVENT,
     ) -> None:
         """
-        Revoke both the refresh token and its associated session.
+        Revoke a refresh token and, when available, its associated session.
 
-        This helper is used whenever a refresh workflow determines that the
-        current authentication context can no longer be trusted.
+        This helper is used when a refresh workflow determines that the
+        authentication context can no longer be trusted.
         """
 
-        refresh_token_service.revoke(refresh_token)
-        session_service.revoke(session)
+        refresh_token_service.revoke(
+            refresh_token,
+            reason=reason,
+        )
 
+        if session is not None:
+            session_service.revoke(
+                session,
+                reason=reason,
+            )
     # =======================================================================
     # Account Validation Helpers
     # =======================================================================
@@ -547,7 +532,7 @@ class AuthenticationService:
         # Lockout protection
         # --------------------------------------------------------------
 
-        if login_attempt_service.is_locked(
+        if not login_attempt_service.can_attempt(
             email=username_or_email,
             tenant_id=tenant_id,
             ip_address=ip_address,
@@ -578,7 +563,7 @@ class AuthenticationService:
                 tenant_id=tenant_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                reason="Unknown account",
+                failure_reason="Unknown account",
             )
 
             self._audit_login_failure(
@@ -601,10 +586,9 @@ class AuthenticationService:
             login_attempt_service.record_failure(
                 email=user.email or username_or_email,
                 tenant_id=tenant_id,
-                user_id=user.id,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                reason="Incorrect password",
+                failure_reason="Incorrect password",
             )
 
             self._audit_login_failure(
@@ -623,7 +607,6 @@ class AuthenticationService:
         login_attempt_service.record_success(
             email=user.email or username_or_email,
             tenant_id=tenant_id,
-            user_id=user.id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
@@ -632,7 +615,6 @@ class AuthenticationService:
             email=user.email or username_or_email,
             tenant_id=tenant_id,
         )
-
         # --------------------------------------------------------------
         # Upgrade password hash if required
         # --------------------------------------------------------------
@@ -643,25 +625,20 @@ class AuthenticationService:
         )
 
         # --------------------------------------------------------------
-        # Persist refresh token
-        # --------------------------------------------------------------
-
-        refresh_record = refresh_token_service.create(
-            user_id=user.id,
-            tenant_id=user.tenant_id,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
-
-        # --------------------------------------------------------------
         # Create authenticated session
         # --------------------------------------------------------------
 
+        provisional_session_expiry = (
+            datetime.now(UTC)
+            + timedelta(
+                seconds=jwt_service.refresh_token_expires_in(),
+            )
+        )
+
         session = session_service.create(
-            user_id=user.id,
-            tenant_id=user.tenant_id,
-            refresh_token_jti=refresh_record.jti,
-            expires_at=refresh_record.expires_at,
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id),
+            expires_at=provisional_session_expiry,
             device_name=device_name,
             ip_address=ip_address,
             user_agent=user_agent,
@@ -679,11 +656,30 @@ class AuthenticationService:
         )
 
         # --------------------------------------------------------------
-        # Issue tokens
+        # Issue authoritative JWT pair
         # --------------------------------------------------------------
 
-        access_token, refresh_token = self._issue_tokens(
+        token_pair = self._issue_tokens(
             context=context,
+        )
+
+        # Synchronize the session lifetime with the actual
+        # refresh-token expiry issued by JWTService.
+        session.expires_at = token_pair.refresh_expires_at
+
+        # --------------------------------------------------------------
+        # Persist refresh-token metadata
+        # --------------------------------------------------------------
+
+        refresh_record = refresh_token_service.create(
+            jwt_id=token_pair.refresh_jti,
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id),
+            session_id=str(session.id),
+            expires_at=token_pair.refresh_expires_at,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            device_name=device_name,
         )
 
         # --------------------------------------------------------------
@@ -700,11 +696,12 @@ class AuthenticationService:
 
         return AuthenticationResult(
             user=user,
-            access_token=access_token,
-            refresh_token=refresh_token,
+            access_token=token_pair.access_token,
+            refresh_token=token_pair.refresh_token,
             session=session,
             refresh_token_record=refresh_record,
         )
+
     # =======================================================================
     # Token Refresh
     # =======================================================================
@@ -714,52 +711,96 @@ class AuthenticationService:
         *,
         refresh_token: str,
         ip_address: str | None = None,
-        user_agent: str |None = None,
+        user_agent: str | None = None,
     ) -> RefreshResult:
         """
-        Refresh an authenticated session.
+        Rotate a valid refresh token and issue replacement authentication
+        credentials.
 
         Workflow
         --------
-        1. Decode the refresh JWT.
-        2. Validate the persisted refresh token.
-        3. Resolve the active session.
-        4. Resolve and validate the authenticated user.
-        5. Rotate the refresh token.
-        6. Update the authenticated session.
-        7. Issue a fresh JWT pair.
-        8. Audit the refresh event.
-
-        Raises
-        ------
-        InvalidCredentialsError
-            Refresh token cannot be used.
-
-        AccountInactiveError
-            Authentication session is no longer active.
-
-        UserNotFoundError
-            User no longer exists.
+        1. Decode and validate the refresh JWT.
+        2. Resolve its persisted refresh-token record.
+        3. Validate token ownership and lifecycle state.
+        4. Resolve the active authentication session.
+        5. Resolve and validate the authenticated user.
+        6. Issue a replacement refresh JWT.
+        7. Persist the replacement as a rotation child of the old token.
+        8. Issue a fresh access token.
+        9. Extend and touch the authenticated session.
+        10. Return the replacement token pair.
         """
 
         # --------------------------------------------------------------
-        # Decode refresh token
+        # Decode refresh JWT
         # --------------------------------------------------------------
 
-        identity = refresh_token_service.decode(refresh_token)
+        payload = jwt_service.decode_refresh_token(
+            refresh_token,
+        )
+
+        jwt_id = jwt_service.token_id(payload)
+        user_id = jwt_service.extract_user_id(payload)
+        tenant_id = jwt_service.extract_tenant_id(payload)
+        session_id = jwt_service.extract_session_id(payload)
+
+        if not jwt_id or not user_id or not tenant_id or not session_id:
+            raise InvalidCredentialsError(
+                "Refresh token is missing required authentication claims."
+            )
 
         # --------------------------------------------------------------
-        # Validate persisted refresh token
+        # Resolve persisted refresh-token record
         # --------------------------------------------------------------
 
-        current_refresh = refresh_token_service.get_by_jti(
-            identity.token_id,
+        current_refresh = refresh_token_service.get_by_jwt_id(
+            jwt_id,
         )
 
         if current_refresh is None:
-            raise InvalidCredentialsError("Refresh token not found.")
+            raise InvalidCredentialsError(
+                "Refresh token not found."
+            )
 
-        if not refresh_token_service.is_active(current_refresh):
+        # --------------------------------------------------------------
+        # Validate token claim ownership
+        # --------------------------------------------------------------
+
+        if (
+            str(current_refresh.user_id) != str(user_id)
+            or str(current_refresh.tenant_id) != str(tenant_id)
+            or str(current_refresh.session_id) != str(session_id)
+        ):
+            refresh_token_service.revoke_family(
+                token_family=current_refresh.token_family,
+                reason=TokenRevocationReason.SECURITY_EVENT,
+            )
+
+            raise InvalidCredentialsError(
+                "Refresh token authentication context is invalid."
+            )
+
+        # --------------------------------------------------------------
+        # Detect replay / invalid persisted token
+        # --------------------------------------------------------------
+
+        if not current_refresh.is_active:
+            if current_refresh.is_rotated:
+                refresh_token_service.revoke_family(
+                    token_family=current_refresh.token_family,
+                    reason=TokenRevocationReason.REUSE_DETECTED,
+                )
+
+                session = session_service.get(
+                    str(current_refresh.session_id),
+                )
+
+                if session is not None:
+                    session_service.revoke(
+                        session,
+                        reason=TokenRevocationReason.REUSE_DETECTED,
+                    )
+
             raise InvalidCredentialsError(
                 "Refresh token is no longer valid."
             )
@@ -769,14 +810,15 @@ class AuthenticationService:
         # --------------------------------------------------------------
 
         session = session_service.get_active(
-            identity.session_id,
+            str(session_id),
         )
 
         if session is None:
-            self._revoke_refresh_session(
-                refresh_token=current_refresh,
-                session=None,
+            refresh_token_service.revoke(
+                current_refresh,
+                reason=TokenRevocationReason.SESSION_EXPIRED,
             )
+
             raise AccountInactiveError(
                 "Authentication session has expired."
             )
@@ -785,20 +827,38 @@ class AuthenticationService:
         # Resolve authenticated user
         # --------------------------------------------------------------
 
-        user = db.session.get(User, identity.user_id)
+        user = db.session.get(
+            User,
+            str(user_id),
+        )
 
         if user is None:
             self._revoke_refresh_session(
                 refresh_token=current_refresh,
                 session=session,
+                reason=TokenRevocationReason.USER_DELETED,
             )
+
             raise UserNotFoundError()
+
+        if str(user.tenant_id) != str(tenant_id):
+            self._revoke_refresh_session(
+                refresh_token=current_refresh,
+                session=session,
+                reason=TokenRevocationReason.SECURITY_EVENT,
+            )
+
+            raise InvalidCredentialsError(
+                "Refresh token tenant context is invalid."
+            )
 
         if not user.is_active:
             self._revoke_refresh_session(
                 refresh_token=current_refresh,
                 session=session,
+                reason=TokenRevocationReason.ACCOUNT_DISABLED,
             )
+
             raise AccountInactiveError()
 
         # --------------------------------------------------------------
@@ -813,56 +873,81 @@ class AuthenticationService:
         )
 
         # --------------------------------------------------------------
-        # Rotate refresh token
+        # Issue replacement refresh JWT first
+        # --------------------------------------------------------------
+
+        replacement_refresh_jwt = jwt_service.issue_refresh_token(
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id),
+            session_id=str(session.id),
+        )
+
+        replacement_payload = jwt_service.decode_refresh_token(
+            replacement_refresh_jwt,
+        )
+
+        replacement_jwt_id = jwt_service.token_id(
+            replacement_payload,
+        )
+
+        replacement_expires_at = jwt_service.token_expiry(
+            replacement_payload,
+        )
+
+        # --------------------------------------------------------------
+        # Persist rotation
         # --------------------------------------------------------------
 
         new_refresh = refresh_token_service.rotate(
-            current_refresh,
-            ip_address=context.ip_address,
-            user_agent=context.user_agent,
+            old_token=current_refresh,
+            new_jwt_id=replacement_jwt_id,
+            expires_at=replacement_expires_at,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
 
         # --------------------------------------------------------------
-        # Update session
+        # Issue fresh access JWT
         # --------------------------------------------------------------
 
-        session.refresh_token_jti = new_refresh.jti
-        session.expires_at = new_refresh.expires_at
+        permissions = self._authorization_claims(
+            user,
+        )
 
-        session_service.touch(session)
-
-        db.session.commit()
-
-        # --------------------------------------------------------------
-        # Issue replacement JWTs
-        # --------------------------------------------------------------
-
-        access_token, refresh_jwt = self._issue_tokens(
-            context=context,
+        access_token = jwt_service.issue_access_token(
+            user_id=str(user.id),
+            tenant_id=str(user.tenant_id),
+            branch_id=(
+                str(user.branch_id)
+                if user.branch_id
+                else None
+            ),
+            permissions=permissions,
+            session_id=str(session.id),
         )
 
         # --------------------------------------------------------------
-        # Audit
+        # Refresh session lifetime/activity
         # --------------------------------------------------------------
 
-        audit_service.safe_log(
-            action=AuditAction.TOKEN_REFRESHED,
-            entity_type="Authentication",
-            entity_id=context.session.id,
-            user_id=context.user.id,
-            tenant_id=context.user.tenant_id,
-            branch_id=context.user.branch_id,
-            session_id=context.session.id,
-            ip_address=context.ip_address,
-            user_agent=context.user_agent,
+        session.expires_at = replacement_expires_at
+
+        session_service.touch(
+            session,
+            ip_address=ip_address,
         )
+
+        # --------------------------------------------------------------
+        # Result
+        # --------------------------------------------------------------
 
         return RefreshResult(
             access_token=access_token,
-            refresh_token=refresh_jwt,
-            session=context.session,
+            refresh_token=replacement_refresh_jwt,
+            session=session,
             refresh_token_record=new_refresh,
         )
+
     # =======================================================================
     # Logout
     # =======================================================================
@@ -873,27 +958,33 @@ class AuthenticationService:
         session_id: str,
     ) -> None:
         """
-        Logout a single authenticated session.
+        Logout one authenticated session.
 
-        Revokes both the authentication session and its associated
-        refresh token. Existing access tokens will naturally expire.
+        All still-active refresh tokens belonging to the session are revoked.
+        Existing access tokens expire naturally.
         """
 
-        session = session_service.get(session_id)
+        session = session_service.get(
+            session_id,
+        )
 
         if session is None:
             return
 
-        refresh = refresh_token_service.get_by_jti(
-            session.refresh_token_jti,
+        refresh_token_service.revoke_session_tokens(
+            session_id=str(session.id),
+            reason=TokenRevocationReason.LOGOUT,
+            revoked_by_user_id=str(session.user_id),
         )
 
-        if refresh is not None:
-            refresh_token_service.revoke(refresh)
-
-        session_service.revoke(session)
+        session_service.revoke(
+            session,
+            reason=TokenRevocationReason.LOGOUT,
+            revoked_by_user_id=str(session.user_id),
+        )
 
         audit_service.safe_log(
+            module=AuditModule.AUTH,
             action=AuditAction.LOGOUT,
             entity_type="Authentication",
             entity_id=session.id,
@@ -901,7 +992,6 @@ class AuthenticationService:
             tenant_id=session.tenant_id,
             session_id=session.id,
         )
-
     # =======================================================================
     # Logout All Devices
     # =======================================================================
@@ -914,32 +1004,74 @@ class AuthenticationService:
         """
         Logout every authenticated session belonging to a user.
 
+        All active refresh tokens and authentication sessions belonging to
+        the user's tenant are revoked.
+
         Returns
         -------
         int
-            Number of revoked sessions.
+            Number of authentication sessions revoked.
+
+        Raises
+        ------
+        UserNotFoundError
+            The requested user no longer exists.
         """
 
-        refresh_token_service.revoke_user_tokens(
-            user_id=user_id,
+        # --------------------------------------------------------------
+        # Resolve user / tenant context
+        # --------------------------------------------------------------
+
+        user = db.session.get(
+            User,
+            user_id,
         )
+
+        if user is None:
+            raise UserNotFoundError()
+
+        tenant_id = str(user.tenant_id)
+
+        # --------------------------------------------------------------
+        # Revoke refresh tokens
+        # --------------------------------------------------------------
+
+        refresh_token_service.revoke_user_tokens(
+            user_id=str(user.id),
+            tenant_id=tenant_id,
+            reason=TokenRevocationReason.LOGOUT_ALL,
+            revoked_by_user_id=str(user.id),
+        )
+
+        # --------------------------------------------------------------
+        # Revoke authenticated sessions
+        # --------------------------------------------------------------
 
         revoked = session_service.revoke_user_sessions(
-            user_id=user_id,
+            user_id=str(user.id),
+            tenant_id=tenant_id,
+            reason=TokenRevocationReason.LOGOUT_ALL,
+            revoked_by_user_id=str(user.id),
         )
 
+        # --------------------------------------------------------------
+        # Audit
+        # --------------------------------------------------------------
+
         audit_service.safe_log(
+            module=AuditModule.AUTH,
             action=AuditAction.LOGOUT_ALL,
             entity_type="User",
-            entity_id=user_id,
-            user_id=user_id,
+            entity_id=str(user.id),
+            user_id=str(user.id),
+            tenant_id=tenant_id,
             details={
                 "revoked_sessions": revoked,
             },
         )
 
         return revoked
-
+        
     # =======================================================================
     # Session Validation
     # =======================================================================
@@ -950,10 +1082,10 @@ class AuthenticationService:
         session_id: str,
     ) -> bool:
         """
-        Determine whether a session is currently valid.
+        Determine whether an authentication session is currently valid.
 
-        This method is useful for protected endpoints that maintain
-        server-side session state in addition to JWT validation.
+        A usable session must itself be active and retain at least one active
+        refresh token belonging to that session.
         """
 
         session = session_service.get_active(
@@ -963,18 +1095,16 @@ class AuthenticationService:
         if session is None:
             return False
 
-        refresh = refresh_token_service.get_by_jti(
-            session.refresh_token_jti,
+        refresh_tokens = refresh_token_service.list_session_tokens(
+            session_id=str(session.id),
+            include_revoked=False,
         )
 
-        if refresh is None:
-            return False
-
-        if not refresh_token_service.is_active(refresh):
-            return False
-
-        return True
-
+        return any(
+            token.is_active
+            for token in refresh_tokens
+        )
+    
     # =======================================================================
     # Session Activity
     # =======================================================================

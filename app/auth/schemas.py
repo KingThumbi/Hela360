@@ -26,11 +26,11 @@ from typing import Any
 
 @dataclass(slots=True)
 class LoginRequest:
-    """Login request payload."""
+    """Public tenant-aware login request payload."""
 
+    workspace: str
     email: str
     password: str
-    tenant_id: str | None = None
     branch_id: str | None = None
     remember_me: bool = False
     device_name: str | None = None
@@ -191,6 +191,66 @@ class CurrentUserResponse:
 
 
 # =====================================================================
+# Current Session
+# =====================================================================
+
+@dataclass(slots=True)
+class CurrentSessionUserResponse:
+    """Authenticated session user projection."""
+
+    id: str
+    email: str | None
+    username: str | None
+    first_name: str
+    last_name: str | None
+    is_active: bool
+    is_locked: bool
+    is_owner: bool
+
+
+@dataclass(slots=True)
+class CurrentSessionTenantResponse:
+    """Authenticated session tenant projection."""
+
+    id: str
+    name: str
+    status: str
+    is_active: bool
+
+
+@dataclass(slots=True)
+class CurrentSessionRoleResponse:
+    """Authenticated session role projection."""
+
+    id: str
+    name: str
+    code: str
+
+
+@dataclass(slots=True)
+class CurrentSessionBranchResponse:
+    """Authenticated session branch projection."""
+
+    id: str
+    tenant_id: str
+    name: str
+    code: str
+    is_active: bool
+
+
+@dataclass(slots=True)
+class CurrentSessionResponse:
+    """Current authenticated session response."""
+
+    user: CurrentSessionUserResponse
+    tenant: CurrentSessionTenantResponse
+    roles: list[CurrentSessionRoleResponse]
+    permissions: list[str]
+    branches: list[CurrentSessionBranchResponse]
+    default_branch_id: str | None = None
+
+
+# =====================================================================
 # Generic API Response
 # =====================================================================
 
@@ -237,6 +297,11 @@ __all__ = [
     "ForgotPasswordRequest",
     "ResetPasswordRequest",
     "CurrentUserResponse",
+    "CurrentSessionUserResponse",
+    "CurrentSessionTenantResponse",
+    "CurrentSessionRoleResponse",
+    "CurrentSessionBranchResponse",
+    "CurrentSessionResponse",
     "AuthResponse",
     "ErrorResponse",
 ]

@@ -7,7 +7,7 @@ class AuditLog(TimestampMixin, db.Model):
     __tablename__ = "audit_logs"
 
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
-    tenant_id = db.Column(db.String(36), nullable=False, index=True)
+    tenant_id = db.Column(db.String(36), nullable=True, index=True)
     branch_id = db.Column(db.String(36), index=True)
     user_id = db.Column(db.String(36), index=True)
     session_id = db.Column(db.String(36), index=True)

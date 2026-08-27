@@ -1,7 +1,11 @@
+from datetime import date
+
 from flask import Blueprint, jsonify, request
 
 from app.extensions import db
 from app.models import Customer
+from app.api.utils import current_identity as _current_identity
+from app.services.tenant.auth.decorators import require_permission
 
 bp = Blueprint("customers", __name__)
 
@@ -20,11 +24,33 @@ def _to_bool(value, default=False) -> bool:
     return bool(value)
 
 
-def _get_tenant_id():
-    tenant_id = request.args.get("tenant_id") or request.headers.get("X-Tenant-ID")
-    if not tenant_id:
-        return None
-    return tenant_id.strip()
+def _positive_int_arg(name: str, default: int):
+    raw_value = request.args.get(name)
+
+    if raw_value is None:
+        return default, None
+
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None, f"{name} must be a positive integer."
+
+    if value < 1:
+        return None, f"{name} must be a positive integer."
+
+    return value, None
+
+
+def _optional_date(value):
+    raw_value = (value or "").strip()
+
+    if not raw_value:
+        return None, None
+
+    try:
+        return date.fromisoformat(raw_value), None
+    except ValueError:
+        return None, "date_of_birth must use YYYY-MM-DD."
 
 
 def _serialize_customer(customer: Customer) -> dict:
@@ -62,10 +88,11 @@ def _generate_customer_number(tenant_id: str) -> str:
 
 
 @bp.get("/customers")
+@require_permission("customers.view")
 def list_customers():
-    tenant_id = _get_tenant_id()
-    if not tenant_id:
-        return _json_error("tenant_id is required. Pass it as query param or X-Tenant-ID header.", 400)
+    identity = _current_identity()
+
+    tenant_id = identity.tenant_id
 
     query = Customer.query.filter_by(tenant_id=tenant_id)
 
@@ -86,38 +113,66 @@ def list_customers():
 
     is_active = request.args.get("is_active")
     if is_active is not None:
-        query = query.filter(Customer.is_active == _to_bool(is_active))
+        query = query.filter(
+            Customer.is_active == _to_bool(is_active)
+        )
 
-    items = query.order_by(Customer.first_name.asc(), Customer.last_name.asc()).all()
+    page, page_error = _positive_int_arg("page", 1)
+    if page_error:
+        return _json_error(page_error)
 
-    return jsonify({
-        "ok": True,
-        "count": len(items),
-        "items": [_serialize_customer(item) for item in items],
-    })
+    per_page, per_page_error = _positive_int_arg("per_page", 25)
+    if per_page_error:
+        return _json_error(per_page_error)
+
+    total = query.count()
+
+    items = query.order_by(
+        Customer.first_name.asc(),
+        Customer.last_name.asc(),
+    ).offset((page - 1) * per_page).limit(per_page).all()
+
+    return jsonify(
+        {
+            "ok": True,
+            "count": total,
+            "items": [
+                _serialize_customer(item)
+                for item in items
+            ],
+        }
+    )
 
 
 @bp.get("/customers/<customer_id>")
+@require_permission("customers.view")
 def get_customer(customer_id: str):
-    tenant_id = _get_tenant_id()
-    if not tenant_id:
-        return _json_error("tenant_id is required. Pass it as query param or X-Tenant-ID header.", 400)
+    identity = _current_identity()
 
-    customer = Customer.query.filter_by(id=customer_id, tenant_id=tenant_id).first()
-    if not customer:
+    tenant_id = identity.tenant_id
+
+    customer = Customer.query.filter_by(
+        id=customer_id,
+        tenant_id=tenant_id,
+    ).first()
+
+    if customer is None:
         return _json_error("Customer not found.", 404)
 
-    return jsonify({
-        "ok": True,
-        "item": _serialize_customer(customer),
-    })
+    return jsonify(
+        {
+            "ok": True,
+            "item": _serialize_customer(customer),
+        }
+    )
 
 
 @bp.post("/customers")
+@require_permission("customers.create")
 def create_customer():
-    tenant_id = _get_tenant_id()
-    if not tenant_id:
-        return _json_error("tenant_id is required. Pass it as query param or X-Tenant-ID header.", 400)
+    identity = _current_identity()
+
+    tenant_id = identity.tenant_id
 
     data = request.get_json(silent=True) or {}
 
@@ -126,30 +181,59 @@ def create_customer():
     other_names = (data.get("other_names") or "").strip() or None
     phone = (data.get("phone") or "").strip() or None
     email = (data.get("email") or "").strip().lower() or None
+    date_of_birth, date_error = _optional_date(
+        data.get("date_of_birth")
+    )
+
+    if date_error:
+        return _json_error(date_error)
 
     if not first_name:
         return _json_error("first_name is required.")
 
     if phone:
-        existing_phone = Customer.query.filter_by(tenant_id=tenant_id, phone=phone).first()
+        existing_phone = Customer.query.filter_by(
+            tenant_id=tenant_id,
+            phone=phone,
+        ).first()
+
         if existing_phone:
-            return _json_error("A customer with that phone already exists.", 409)
+            return _json_error(
+                "A customer with that phone already exists.",
+                409,
+            )
 
     if email:
-        existing_email = Customer.query.filter_by(tenant_id=tenant_id, email=email).first()
-        if existing_email:
-            return _json_error("A customer with that email already exists.", 409)
+        existing_email = Customer.query.filter_by(
+            tenant_id=tenant_id,
+            email=email,
+        ).first()
 
-    customer_number = (data.get("customer_number") or "").strip()
+        if existing_email:
+            return _json_error(
+                "A customer with that email already exists.",
+                409,
+            )
+
+    customer_number = (
+        data.get("customer_number") or ""
+    ).strip()
+
     if not customer_number:
-        customer_number = _generate_customer_number(tenant_id)
+        customer_number = _generate_customer_number(
+            tenant_id
+        )
 
     existing_number = Customer.query.filter_by(
         tenant_id=tenant_id,
         customer_number=customer_number,
     ).first()
+
     if existing_number:
-        return _json_error("A customer with that customer_number already exists.", 409)
+        return _json_error(
+            "A customer with that customer_number already exists.",
+            409,
+        )
 
     customer = Customer(
         tenant_id=tenant_id,
@@ -160,23 +244,35 @@ def create_customer():
         phone=phone,
         email=email,
         gender=(data.get("gender") or "").strip() or None,
-        date_of_birth=data.get("date_of_birth") or None,
+        date_of_birth=date_of_birth,
         id_number=(data.get("id_number") or "").strip() or None,
         address=(data.get("address") or "").strip() or None,
         city=(data.get("city") or "").strip() or None,
         loyalty_points=0,
-        is_active=_to_bool(data.get("is_active"), True),
+        is_active=_to_bool(
+            data.get("is_active"),
+            True,
+        ),
     )
 
     try:
         db.session.add(customer)
         db.session.commit()
+
     except Exception as exc:
         db.session.rollback()
-        return _json_error(f"Failed to create customer: {exc}", 500)
+        return _json_error(
+            f"Failed to create customer: {exc}",
+            500,
+        )
 
-    return jsonify({
-        "ok": True,
-        "message": "Customer created successfully.",
-        "item": _serialize_customer(customer),
-    }), 201
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": "Customer created successfully.",
+                "item": _serialize_customer(customer),
+            }
+        ),
+        201,
+    )

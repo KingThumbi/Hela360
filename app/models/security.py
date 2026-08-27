@@ -103,6 +103,8 @@ class TokenRevocationReason(StrEnum):
 
     ADMIN_REVOKED = "admin_revoked"
 
+    SESSION_TAKEOVER = "session_takeover"
+
     REUSE_DETECTED = "reuse_detected"
 
     SECURITY_EVENT = "security_event"
@@ -295,6 +297,21 @@ __all__ = [
 # ============================================================================
 
 
+def _as_utc(value: datetime) -> datetime:
+    """
+    Normalize a persisted datetime to an aware UTC datetime.
+
+    Some database drivers, notably SQLite in contract tests, may return
+    DateTime(timezone=True) values without tzinfo. Hela360 stores these
+    timestamps with UTC semantics, so naive persisted values are interpreted
+    as UTC rather than compared directly with aware datetimes.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+
+    return value.astimezone(UTC)
+
+
 class UserSession(
     UUIDPrimaryKeyMixin,
     TimestampMixin,
@@ -403,6 +420,7 @@ class UserSession(
     user = db.relationship(
         "User",
         back_populates="sessions",
+        foreign_keys=[user_id],
         lazy="selectin",
     )
 
@@ -416,7 +434,7 @@ class UserSession(
 
     revoked_by = db.relationship(
         "User",
-        foreign_keys=[RevocationMixin.revoked_by_user_id],
+        foreign_keys="UserSession.revoked_by_user_id",
         lazy="selectin",
     )
 
@@ -440,7 +458,9 @@ class UserSession(
         """
         True if the session lifetime has elapsed.
         """
-        return datetime.now(UTC) >= self.expires_at
+        return datetime.now(UTC) >= _as_utc(
+            self.expires_at
+        )
 
     @property
     def duration(self):
@@ -569,19 +589,16 @@ class LoginAttempt(
             ondelete="CASCADE",
         ),
         nullable=True,
-        index=True,
     )
 
     email = db.Column(
         db.String(255),
         nullable=False,
-        index=True,
     )
 
     ip_address = db.Column(
         db.String(64),
         nullable=True,
-        index=True,
     )
 
     user_agent = db.Column(
@@ -593,7 +610,6 @@ class LoginAttempt(
         db.Boolean,
         nullable=False,
         default=False,
-        index=True,
     )
 
     failure_reason = db.Column(
@@ -709,8 +725,6 @@ class RefreshToken(
     jwt_id = db.Column(
         db.String(64),
         nullable=False,
-        unique=True,
-        index=True,
     )
 
     token_family = db.Column(
@@ -777,6 +791,7 @@ class RefreshToken(
     user = db.relationship(
         "User",
         back_populates="refresh_tokens",
+        foreign_keys=[user_id],
         lazy="selectin",
     )
 
@@ -801,7 +816,7 @@ class RefreshToken(
 
     revoked_by = db.relationship(
         "User",
-        foreign_keys=[RevocationMixin.revoked_by_user_id],
+        foreign_keys="RefreshToken.revoked_by_user_id",
         lazy="selectin",
     )
 
@@ -814,7 +829,9 @@ class RefreshToken(
         """
         True if the refresh token has expired.
         """
-        return datetime.now(UTC) >= self.expires_at
+        return datetime.now(UTC) >= _as_utc(
+            self.expires_at
+        )
 
     @property
     def is_active(self) -> bool:
@@ -985,6 +1002,7 @@ class PasswordResetToken(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     user = db.relationship(
         "User",
         back_populates="password_reset_tokens",
+        foreign_keys=[user_id],
         lazy="joined",
     )
 
