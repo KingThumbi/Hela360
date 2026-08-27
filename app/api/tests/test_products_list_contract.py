@@ -12,10 +12,19 @@ from app.auth.exceptions import PermissionDeniedError
 from app.extensions import db
 from app.models import (
     Brand,
+    DispensingRecord,
+    GoodsReceiptItem,
+    InventoryBatch,
+    InventoryMovement,
     Product,
     ProductCategory,
     ProductCode,
     ProductUnit,
+    SaleItem,
+    SaleRefundItem,
+    StockAdjustmentItem,
+    StockBalance,
+    StockCountItem,
     TaxCode,
     Tenant,
     UnitOfMeasure,
@@ -41,6 +50,19 @@ def app_context():
         UnitOfMeasure.__table__.create(db.engine)
         TaxCode.__table__.create(db.engine)
         Product.__table__.create(db.engine)
+
+        # Product permanent-deletion eligibility inspects every direct
+        # operational dependency even when no dependency rows exist.
+        InventoryBatch.__table__.create(db.engine)
+        StockBalance.__table__.create(db.engine)
+        InventoryMovement.__table__.create(db.engine)
+        GoodsReceiptItem.__table__.create(db.engine)
+        StockCountItem.__table__.create(db.engine)
+        StockAdjustmentItem.__table__.create(db.engine)
+        SaleItem.__table__.create(db.engine)
+        DispensingRecord.__table__.create(db.engine)
+        SaleRefundItem.__table__.create(db.engine)
+
         ProductUnit.__table__.create(db.engine)
         ProductCode.__table__.create(db.engine)
 
@@ -65,6 +87,17 @@ def app_context():
         db.session.remove()
         ProductCode.__table__.drop(db.engine)
         ProductUnit.__table__.drop(db.engine)
+
+        SaleRefundItem.__table__.drop(db.engine)
+        DispensingRecord.__table__.drop(db.engine)
+        SaleItem.__table__.drop(db.engine)
+        StockAdjustmentItem.__table__.drop(db.engine)
+        StockCountItem.__table__.drop(db.engine)
+        GoodsReceiptItem.__table__.drop(db.engine)
+        InventoryMovement.__table__.drop(db.engine)
+        StockBalance.__table__.drop(db.engine)
+        InventoryBatch.__table__.drop(db.engine)
+
         Product.__table__.drop(db.engine)
         TaxCode.__table__.drop(db.engine)
         UnitOfMeasure.__table__.drop(db.engine)
@@ -127,6 +160,8 @@ def add_product(
 
 def test_product_list_empty_envelope(client):
     response = client.get("/api/products")
+
+    print("DELETE RESPONSE:", response.status_code, response.get_json())
 
     assert response.status_code == 200
     assert response.json == {
@@ -1024,3 +1059,137 @@ def test_update_product_requires_products_edit_permission(
         response.json["error"]["code"]
         == "AUTHORIZATION_DENIED"
     )
+
+
+# ============================================================================
+# Product permanent deletion contract
+# ============================================================================
+
+
+def test_delete_product_permanently_deletes_archived_unused_product(client):
+    product = add_product(
+        "tenant-1",
+        "DELETE-API-001",
+        "Delete API Product",
+        is_active=False,
+    )
+    product_id = product.id
+
+    db.session.commit()
+
+    response = client.delete(
+        f"/api/products/{product_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json == {
+        "ok": True,
+        "message": "Product permanently deleted.",
+        "id": product_id,
+    }
+
+    db.session.expire_all()
+
+    assert db.session.get(Product, product_id) is None
+
+
+def test_delete_product_requires_archive_first(client):
+    product = add_product(
+        "tenant-1",
+        "DELETE-ACTIVE-001",
+        "Active Delete Product",
+        is_active=True,
+    )
+    product_id = product.id
+
+    db.session.commit()
+
+    response = client.delete(
+        f"/api/products/{product_id}"
+    )
+
+    assert response.status_code == 409
+    assert response.json["ok"] is False
+    assert response.json["code"] == "PRODUCT_DELETION_BLOCKED"
+    assert response.json["blockers"] == []
+
+    db.session.expire_all()
+
+    persisted = db.session.get(Product, product_id)
+
+    assert persisted is not None
+    assert persisted.is_active is True
+
+
+def test_delete_product_cannot_cross_tenant_boundary(client):
+    product = add_product(
+        "tenant-2",
+        "DELETE-OTHER-001",
+        "Other Tenant Delete Product",
+        is_active=False,
+    )
+    product_id = product.id
+
+    db.session.commit()
+
+    response = client.delete(
+        f"/api/products/{product_id}"
+    )
+
+    assert response.status_code == 404
+
+    db.session.expire_all()
+
+    persisted = db.session.get(Product, product_id)
+
+    assert persisted is not None
+    assert persisted.tenant_id == "tenant-2"
+
+
+def test_delete_product_requires_products_delete_permission(
+    app_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    identity = SimpleNamespace(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        branch_id="branch-1",
+    )
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.products.get_current_identity",
+        lambda: identity,
+    )
+
+    captured = {}
+
+    def deny_delete(*args, **kwargs):
+        captured.update(kwargs)
+
+        raise PermissionDeniedError(
+            "Permission denied."
+        )
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.authorization_service.authorize",
+        deny_delete,
+    )
+
+    response = app_context.test_client().delete(
+        "/api/products/product-1"
+    )
+
+    assert response.status_code == 403
+    assert (
+        response.json["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
+    assert captured.get("permission") == "products.delete"

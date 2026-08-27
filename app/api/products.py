@@ -19,6 +19,7 @@ from app.services.common.number_sequence_service import (
 )
 from app.services.tenant.products import (
     ProductCommandService,
+    ProductDeletionBlockedError,
     ProductNotFoundError,
     ProductValidationError,
 )
@@ -883,6 +884,75 @@ def update_product(product_id: str):
             "item": _serialize_product(product),
         }
     ), 200
+
+
+@bp.delete("/products/<product_id>")
+@require_permission("products.delete")
+def delete_product(product_id: str):
+    """
+    Permanently delete an unused archived tenant-owned product.
+
+    A product must already be archived and must have no historical or
+    non-zero stock dependencies. Product-owned configuration records and
+    zero stock projections may be cleaned up by the command service.
+    """
+
+    identity = _current_identity()
+
+    try:
+        product = ProductCommandService(
+            db.session
+        ).delete_permanently(
+            tenant_id=identity.tenant_id,
+            product_id=product_id,
+        )
+
+        deleted_product_id = str(product.id)
+
+        db.session.commit()
+
+    except ProductNotFoundError as exc:
+        db.session.rollback()
+        return _json_error(str(exc), 404)
+
+    except ProductDeletionBlockedError as exc:
+        db.session.rollback()
+
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "code": "PRODUCT_DELETION_BLOCKED",
+                    "blockers": [
+                        {
+                            "code": blocker.code,
+                            "count": blocker.count,
+                        }
+                        for blocker in exc.blockers
+                    ],
+                }
+            ),
+            409,
+        )
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to permanently delete product: {exc}",
+            500,
+        )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": "Product permanently deleted.",
+                "id": deleted_product_id,
+            }
+        ),
+        200,
+    )
 
 
 @bp.post("/products/<product_id>/archive")
