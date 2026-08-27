@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ClipboardList,
   FileClock,
+  Plus,
   RefreshCw,
   Search,
   XCircle,
@@ -29,6 +30,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  AddDiscoveredStockDialog,
+} from "@/features/inventory/components/AddDiscoveredStockDialog";
 import {
   EmptyState,
   ErrorState,
@@ -114,8 +118,33 @@ function dateLabel(value: string | null): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString();
 }
 
-function quantity(value: string | null): string {
-  if (value === null) {
+function stockCountItemIsExpired(
+  item: StockCountItem,
+): boolean {
+  if (item.batch?.is_expired) {
+    return true;
+  }
+
+  const observedExpiry =
+    item.observed_expiry_date;
+
+  if (!observedExpiry) {
+    return false;
+  }
+
+  const expiry = new Date(
+    `${observedExpiry}T23:59:59`,
+  );
+
+  if (Number.isNaN(expiry.getTime())) {
+    return false;
+  }
+
+  return expiry.getTime() < Date.now();
+}
+
+function quantity(value: string | null | undefined): string {
+  if (value == null) {
     return "Not counted";
   }
   const normalized = Number(value);
@@ -163,8 +192,10 @@ function decimalParts(value: string): {
   };
 }
 
-function varianceState(value: string | null): "uncounted" | "matched" | "over" | "short" {
-  if (value === null) {
+function varianceState(
+  value: string | null | undefined,
+): "uncounted" | "matched" | "over" | "short" {
+  if (value == null) {
     return "uncounted";
   }
   const parsed = decimalParts(value);
@@ -174,7 +205,7 @@ function varianceState(value: string | null): "uncounted" | "matched" | "over" |
   return parsed.sign > 0 ? "over" : "short";
 }
 
-function varianceLabel(value: string | null): string {
+function varianceLabel(value: string | null | undefined): string {
   const state = varianceState(value);
   if (state === "uncounted") {
     return "Not counted";
@@ -189,7 +220,7 @@ function varianceLabel(value: string | null): string {
 }
 
 function varianceBadgeVariant(
-  value: string | null,
+  value: string | null | undefined,
 ): "default" | "outline" | "secondary" {
   const state = varianceState(value);
   if (state === "matched") {
@@ -251,6 +282,10 @@ export function StockCountDetailPage() {
     setAdjustmentOpen,
   ] = useState(false);
   const [
+    discoveredOpen,
+    setDiscoveredOpen,
+  ] = useState(false);
+  const [
     adjustmentIdempotencyKey,
     setAdjustmentIdempotencyKey,
   ] = useState(createAdjustmentIdempotencyKey);
@@ -261,7 +296,7 @@ export function StockCountDetailPage() {
     Boolean(count) &&
     count?.status === "completed" &&
     canAdjustStock &&
-    count.summary.variance_items > 0 &&
+    (count.summary.variance_items ?? 0) > 0 &&
     !count.adjustment;
 
   const completeCount = () => {
@@ -363,6 +398,14 @@ export function StockCountDetailPage() {
               <Button
                 type="button"
                 variant="outline"
+                onClick={() => setDiscoveredOpen(true)}
+              >
+                <Plus />
+                Record Discovered Stock
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
                 onClick={() => setCancelOpen(true)}
                 disabled={cancelStockCount.isPending}
               >
@@ -433,6 +476,17 @@ export function StockCountDetailPage() {
           />
         ) : null}
       </PageContent>
+
+      {count?.status === "open" ? (
+        <AddDiscoveredStockDialog
+          countId={count.id}
+          open={discoveredOpen}
+          onOpenChange={setDiscoveredOpen}
+          onCreated={() => {
+            stockCountQuery.refetch();
+          }}
+        />
+      ) : null}
 
       <AlertDialog
         open={completeOpen}
@@ -622,7 +676,9 @@ function StockCountDetail({
 
       <PageSection>
         <div className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
-          Expected Qty accounts for stock movements after the count snapshot. Snapshot Qty, Expected Qty, and Variance are read-only server values.
+          {count.status === "open" && count.count_mode === "blind"
+            ? "Blind count is active. Record the physical quantities observed without reference to system stock. System quantities and variances will be revealed when the count is completed."
+            : "Expected Qty accounts for stock movements after the count snapshot. Snapshot Qty, Expected Qty, and Variance are read-only server values."}
         </div>
       </PageSection>
 
@@ -674,6 +730,21 @@ function StockCountItemsTable({
   onLineUpdated: () => void;
 }) {
   const updateItem = useUpdateStockCountItem();
+
+  const exposesSystemQuantities =
+    count.status !== "open" ||
+    count.count_mode === "visible";
+
+  const availableFilters = useMemo(
+    () =>
+      exposesSystemQuantities
+        ? ITEM_FILTERS
+        : ITEM_FILTERS.filter(
+            (option) => option.value !== "variance",
+          ),
+    [exposesSystemQuantities],
+  );
+
   const [
     search,
     setSearch,
@@ -709,17 +780,32 @@ function StockCountItemsTable({
           query.length === 0 ||
           item.product.name.toLowerCase().includes(query) ||
           item.product.internal_sku.toLowerCase().includes(query) ||
-          (item.batch?.batch_number ?? "").toLowerCase().includes(query);
+          (
+            item.batch?.batch_number ??
+            item.observed_batch_number ??
+            ""
+          )
+            .toLowerCase()
+            .includes(query);
         const matchesFilter =
           filter === "all" ||
           (filter === "uncounted" && item.counted_quantity === null) ||
-          (filter === "variance" && varianceState(item.variance_quantity) !== "matched" && item.counted_quantity !== null) ||
-          (filter === "expired" && item.batch?.is_expired === true);
+          (
+            filter === "variance" &&
+            exposesSystemQuantities &&
+            varianceState(item.variance_quantity) !== "matched" &&
+            item.counted_quantity !== null
+          ) ||
+          (
+            filter === "expired" &&
+            stockCountItemIsExpired(item)
+          );
 
         return matchesSearch && matchesFilter;
       }),
     [
       count.items,
+      exposesSystemQuantities,
       filter,
       search,
     ],
@@ -777,7 +863,7 @@ function StockCountItemsTable({
             value={filter}
             onChange={(value) => setFilter(value as ItemFilter)}
             placeholder="All"
-            options={ITEM_FILTERS}
+            options={availableFilters}
           />
         </div>
       </PageToolbar>
@@ -796,10 +882,20 @@ function StockCountItemsTable({
                 <TableHead>Product</TableHead>
                 <TableHead>Batch</TableHead>
                 <TableHead>Expiry</TableHead>
-                <TableHead className="text-right">Snapshot Qty</TableHead>
-                <TableHead className="text-right">Expected Qty</TableHead>
+                {exposesSystemQuantities ? (
+                  <>
+                    <TableHead className="text-right">
+                      Snapshot Qty
+                    </TableHead>
+                    <TableHead className="text-right">
+                      Expected Qty
+                    </TableHead>
+                  </>
+                ) : null}
                 <TableHead>Physical Count</TableHead>
-                <TableHead>Variance</TableHead>
+                {exposesSystemQuantities ? (
+                  <TableHead>Variance</TableHead>
+                ) : null}
                 <TableHead>Counted By / At</TableHead>
                 <TableHead className="text-right">Action</TableHead>
               </TableRow>
@@ -818,22 +914,43 @@ function StockCountItemsTable({
                       </div>
                     </TableCell>
                     <TableCell>
-                      {item.batch?.batch_number ?? "—"}
+                      <div className="space-y-1">
+                        <div>
+                          {item.batch?.batch_number ??
+                            item.observed_batch_number ??
+                            "—"}
+                        </div>
+                        {item.source_type === "discovered" ? (
+                          <Badge variant="outline">
+                            Discovered
+                          </Badge>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <div>{dateLabel(item.batch?.expiry_date ?? null)}</div>
+                        <div>
+                          {dateLabel(
+                            item.batch?.expiry_date ??
+                              item.observed_expiry_date ??
+                              null,
+                          )}
+                        </div>
                         {item.batch?.is_expired ? (
                           <Badge variant="outline">Expired</Badge>
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right">
-                      {quantity(item.snapshot_quantity)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {quantity(item.expected_quantity)}
-                    </TableCell>
+                    {exposesSystemQuantities ? (
+                      <>
+                        <TableCell className="text-right">
+                          {quantity(item.snapshot_quantity)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {quantity(item.expected_quantity)}
+                        </TableCell>
+                      </>
+                    ) : null}
                     <TableCell>
                       <div className="space-y-1">
                         <Label
@@ -866,11 +983,17 @@ function StockCountItemsTable({
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={varianceBadgeVariant(item.variance_quantity)}>
-                        {varianceLabel(item.variance_quantity)}
-                      </Badge>
-                    </TableCell>
+                    {exposesSystemQuantities ? (
+                      <TableCell>
+                        <Badge
+                          variant={varianceBadgeVariant(
+                            item.variance_quantity,
+                          )}
+                        >
+                          {varianceLabel(item.variance_quantity)}
+                        </Badge>
+                      </TableCell>
+                    ) : null}
                     <TableCell>
                       <div>
                         {item.counted_by?.name ??

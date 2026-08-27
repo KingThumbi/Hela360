@@ -60,6 +60,7 @@ import { createClientId } from "@/lib/clientId";
 import { PATHS } from "@/routes/routes";
 import type {
   Product,
+  StockCountMode,
 } from "@/types/entities";
 import type {
   CreateStockCountRequest,
@@ -102,6 +103,10 @@ export function CreateStockCountPage() {
     scope,
     setScope,
   ] = useState<CountScope>("full");
+  const [
+    countMode,
+    setCountMode,
+  ] = useState<StockCountMode>("blind");
   const [
     notes,
     setNotes,
@@ -189,6 +194,7 @@ export function CreateStockCountPage() {
 
     const requestBase: Omit<CreateStockCountRequest, "idempotency_key"> = {
       warehouse_id: warehouseId,
+      count_mode: countMode,
       ...(scope === "selected"
         ? {
             product_ids: selectedProducts.map((product) => product.id),
@@ -324,6 +330,41 @@ export function CreateStockCountPage() {
                   >
                     Selected Products
                   </Button>
+                </div>
+              </Field>
+
+              <Field label="Count mode">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant={
+                        countMode === "blind"
+                          ? "default"
+                          : "outline"
+                      }
+                      onClick={() => setCountMode("blind")}
+                    >
+                      Blind Count
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={
+                        countMode === "visible"
+                          ? "default"
+                          : "outline"
+                      }
+                      onClick={() => setCountMode("visible")}
+                    >
+                      Visible Count
+                    </Button>
+                  </div>
+
+                  <p className="text-sm text-muted-foreground">
+                    {countMode === "blind"
+                      ? "Recommended for physical stock takes. System quantities and variances remain hidden until the count is completed."
+                      : "System quantities remain visible while counting. Use for supervised verification or operational reconciliation."}
+                  </p>
                 </div>
               </Field>
             </div>

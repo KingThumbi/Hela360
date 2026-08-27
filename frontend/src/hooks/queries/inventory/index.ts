@@ -61,3 +61,7 @@ export {
 export {
   useUpdateStockCountItem,
 } from "./useUpdateStockCountItem";
+
+export {
+  useAddDiscoveredStockCountItem,
+} from "./useAddDiscoveredStockCountItem";

@@ -1,3 +1,12 @@
+export type StockCountMode =
+  | "blind"
+  | "visible";
+
+export type StockCountSourceType =
+  | "snapshot"
+  | "discovered";
+
+
 export interface StockCountWarehouse {
   id: string;
 
@@ -6,6 +15,7 @@ export interface StockCountWarehouse {
   name: string;
 }
 
+
 export interface StockCountUser {
   id: string;
 
@@ -13,6 +23,7 @@ export interface StockCountUser {
 
   username: string | null;
 }
+
 
 export interface StockCountProduct {
   id: string;
@@ -26,6 +37,7 @@ export interface StockCountProduct {
   track_expiry: boolean;
 }
 
+
 export interface StockCountBatch {
   id: string;
 
@@ -36,6 +48,7 @@ export interface StockCountBatch {
   is_expired: boolean;
 }
 
+
 export interface StockCountSummary {
   total_items: number;
 
@@ -43,12 +56,17 @@ export interface StockCountSummary {
 
   uncounted_items: number;
 
-  variance_items: number;
+  /*
+   * Variance fields are intentionally absent while an open
+   * blind count is in progress.
+   */
+  variance_items?: number;
 
-  positive_variance_items: number;
+  positive_variance_items?: number;
 
-  negative_variance_items: number;
+  negative_variance_items?: number;
 }
+
 
 export interface StockCountAdjustmentLink {
   id: string;
@@ -56,22 +74,39 @@ export interface StockCountAdjustmentLink {
   adjustment_number: string;
 }
 
+
 export interface StockCountItem {
   id: string;
 
   line_number: number;
 
+  source_type: StockCountSourceType;
+
   product: StockCountProduct;
 
+  /*
+   * Canonical inventory batch attached to snapshot lines.
+   *
+   * Discovered lines initially have no InventoryBatch and
+   * therefore return null here.
+   */
   batch: StockCountBatch | null;
 
-  snapshot_quantity: string;
+  observed_batch_number: string | null;
 
-  expected_quantity: string;
+  observed_expiry_date: string | null;
+
+  /*
+   * System-derived quantities are deliberately omitted from
+   * open blind-count responses.
+   */
+  snapshot_quantity?: string;
+
+  expected_quantity?: string;
 
   counted_quantity: string | null;
 
-  variance_quantity: string | null;
+  variance_quantity?: string | null;
 
   counted_at: string | null;
 
@@ -80,14 +115,22 @@ export interface StockCountItem {
   notes: string | null;
 }
 
+
 export interface StockCount {
   id: string;
 
   count_number: string;
 
-  status: "open" | "completed" | "cancelled";
+  status:
+    | "open"
+    | "completed"
+    | "cancelled";
 
-  scope_type: "full" | "selected";
+  scope_type:
+    | "full"
+    | "selected";
+
+  count_mode: StockCountMode;
 
   warehouse: StockCountWarehouse;
 

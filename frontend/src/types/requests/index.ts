@@ -27,6 +27,9 @@ export type {
   CreateStockCountRequest,
 } from "./create-stock-count-request";
 export type {
+  AddDiscoveredStockCountItemRequest,
+} from "./add-discovered-stock-count-item-request";
+export type {
   RefundSaleItemRequest,
   RefundSaleRequest,
 } from "./refund-sale-request";

@@ -3,6 +3,7 @@ import type { AxiosRequestConfig } from "axios";
 import { API_ENDPOINTS } from "@/api/endpoints";
 import BaseService from "@/services/base";
 import type {
+  AddDiscoveredStockCountItemRequest,
   CreateGoodsReceiptRequest,
   CreateStockAdjustmentFromCountRequest,
   CreateStockAdjustmentRequest,
@@ -435,6 +436,20 @@ export class InventoryService extends BaseService<InventoryStockSummary> {
   ): Promise<StockCount> {
     const response = await this.getRequest<StockCountResponse>(
       API_ENDPOINTS.INVENTORY.STOCK_COUNT(id),
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async addDiscoveredStockCountItem(
+    countId: string,
+    payload: AddDiscoveredStockCountItemRequest,
+    config?: AxiosRequestConfig,
+  ): Promise<StockCount> {
+    const response = await this.postRequest<StockCountResponse>(
+      API_ENDPOINTS.INVENTORY.DISCOVERED_STOCK_COUNT_ITEM(countId),
+      payload,
       config,
     );
 

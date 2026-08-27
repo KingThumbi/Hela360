@@ -216,6 +216,11 @@ export const API_ENDPOINTS = {
       itemId: string,
     ) => `${byId("/inventory/stock-counts", countId)}/items/${itemId}`,
 
+    DISCOVERED_STOCK_COUNT_ITEM: (
+      countId: string,
+    ) =>
+      `${byId("/inventory/stock-counts", countId)}/items/discovered`,
+
     COMPLETE_STOCK_COUNT: (id: string) =>
       `${byId("/inventory/stock-counts", id)}/complete`,
 
