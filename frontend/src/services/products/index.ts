@@ -27,3 +27,7 @@
 export {
   productService,
 } from "./productService";
+
+export type {
+  DeleteProductResponse,
+} from "./productService";

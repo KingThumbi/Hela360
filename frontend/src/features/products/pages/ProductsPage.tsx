@@ -31,6 +31,7 @@ import { useAuthorization } from "@/hooks/useAuthorization";
 import {
   useArchiveProduct,
   useCreateProduct,
+  useDeleteProduct,
   useProductByCode,
   useProducts,
   useRestoreProduct,
@@ -42,6 +43,7 @@ import type {
   UpdateProductRequest,
 } from "@/types/requests";
 
+import { ProductDeleteDialog } from "../components/ProductDeleteDialog";
 import { ProductDetailDialog } from "../components/ProductDetailDialog";
 import { ProductEditDialog } from "../components/ProductEditDialog";
 import { ProductFormDialog } from "../components/ProductFormDialog";
@@ -72,6 +74,10 @@ export function ProductsPage() {
 
   const canEdit = authorization.can(
     "products.edit",
+  );
+
+  const canDelete = authorization.can(
+    "products.delete",
   );
 
   const [
@@ -114,6 +120,11 @@ export function ProductsPage() {
   ] = useState<Product | null>(null);
 
   const [
+    deleteProductTarget,
+    setDeleteProductTarget,
+  ] = useState<Product | null>(null);
+
+  const [
     lifecycleFilter,
     setLifecycleFilter,
   ] = useState<ProductLifecycleFilter>(
@@ -145,6 +156,7 @@ export function ProductsPage() {
   const updateProduct = useUpdateProduct();
   const archiveProduct = useArchiveProduct();
   const restoreProduct = useRestoreProduct();
+  const deleteProductMutation = useDeleteProduct();
 
   const byCodeQuery = useProductByCode(
     submittedCode,
@@ -233,6 +245,29 @@ export function ProductsPage() {
         toast.error(error.message);
       },
     });
+  };
+
+  const handleDeleteConfirm = () => {
+    if (!deleteProductTarget) {
+      return;
+    }
+
+    deleteProductMutation.mutate(
+      deleteProductTarget.id,
+      {
+        onSuccess: () => {
+          toast.success(
+            "Product permanently deleted.",
+          );
+
+          setDeleteProductTarget(null);
+        },
+
+        onError: (error) => {
+          toast.error(error.message);
+        },
+      },
+    );
   };
 
   const lifecycleMutationPending =
@@ -494,10 +529,14 @@ export function ProductsPage() {
                 <ProductsTable
                   products={products}
                   canEdit={canEdit}
+                  canDelete={canDelete}
                   onView={setDetailProduct}
                   onEdit={setEditProduct}
                   onLifecycle={
                     setLifecycleProduct
+                  }
+                  onDelete={
+                    setDeleteProductTarget
                   }
                 />
               </div>
@@ -588,6 +627,23 @@ export function ProductsPage() {
           }
         }}
         onConfirm={handleLifecycleConfirm}
+      />
+
+      <ProductDeleteDialog
+        product={deleteProductTarget}
+        isPending={deleteProductMutation.isPending}
+        errorMessage={getErrorMessage(
+          deleteProductMutation.error,
+        )}
+        onOpenChange={(open) => {
+          if (
+            !open &&
+            !deleteProductMutation.isPending
+          ) {
+            setDeleteProductTarget(null);
+          }
+        }}
+        onConfirm={handleDeleteConfirm}
       />
 
       <ProductDetailDialog

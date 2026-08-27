@@ -50,6 +50,14 @@ interface ProductItemResponse {
   message?: string;
 }
 
+export interface DeleteProductResponse {
+  ok: true;
+
+  id: string;
+
+  message: string;
+}
+
 interface ProductListResponse {
   ok: true;
 
@@ -173,6 +181,21 @@ class ProductService extends BaseService<
       );
 
     return response.data.item;
+  }
+
+  async deleteProduct(
+    productId: string | number,
+    config?: AxiosRequestConfig,
+  ): Promise<DeleteProductResponse> {
+    const response =
+      await this.deleteRequest<DeleteProductResponse>(
+        API_ENDPOINTS.PRODUCTS.BY_ID(
+          String(productId),
+        ),
+        config,
+      );
+
+    return response.data;
   }
 
   async archiveProduct(

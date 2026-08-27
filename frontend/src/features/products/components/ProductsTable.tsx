@@ -3,6 +3,7 @@ import {
   Eye,
   Pencil,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -21,18 +22,22 @@ import type { Product } from "@/types/entities";
 interface ProductsTableProps {
   products: Product[];
   canEdit: boolean;
+  canDelete: boolean;
   onView: (product: Product) => void;
   onEdit: (product: Product) => void;
   onLifecycle: (product: Product) => void;
+  onDelete: (product: Product) => void;
 }
 
 
 export function ProductsTable({
   products,
   canEdit,
+  canDelete,
   onView,
   onEdit,
   onLifecycle,
+  onDelete,
 }: ProductsTableProps) {
   return (
     <Table>
@@ -127,6 +132,7 @@ export function ProductsTable({
                     Rx
                   </Badge>
                 ) : null}
+
               </div>
             </TableCell>
 
@@ -188,6 +194,24 @@ export function ProductsTable({
                       </span>
                     </Button>
                   </>
+                ) : null}
+
+                {canDelete && !product.is_active ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Permanently delete product"
+                    onClick={() =>
+                      onDelete(product)
+                    }
+                  >
+                    <Trash2 className="text-destructive" />
+
+                    <span className="sr-only">
+                      Permanently delete product
+                    </span>
+                  </Button>
                 ) : null}
               </div>
             </TableCell>

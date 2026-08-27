@@ -3,19 +3,14 @@
  * Hela360 Delete Product Mutation
  * ============================================================================
  *
- * Product delete placeholder.
+ * Permanently deletes an eligible archived Product.
  *
- * Responsibilities
- * ----------------
- * • Delete products
- * • Invalidate affected caches
- * • Preserve full TanStack Query flexibility
+ * Permanent deletion is intentionally distinct from product archival.
+ * The backend remains authoritative for deletion eligibility and rejects
+ * products that retain historical or non-zero stock dependencies.
  *
- * This hook powers:
- *
- * • Product Deletion
- * • Bulk Product Management
- * • Product Administration
+ * Tenant scope is used for cache identity only. Backend tenant ownership
+ * remains derived from the authenticated identity.
  *
  * ============================================================================
  */
@@ -24,21 +19,51 @@ import {
   useDeleteEntity,
 } from "@/hooks/queries/common";
 
+import {
+  useQueryScope,
+} from "@/hooks/useQueryScope";
+
+import {
+  invalidateProducts,
+} from "@/lib/queryInvalidation";
+
+import {
+  productService,
+} from "@/services/products";
+
+import type {
+  DeleteProductResponse,
+} from "@/services/products";
+
+
 /* ============================================================================
  * Hook
  * ============================================================================
  */
 
-/**
- * Product deletion is not supported by the verified backend API.
- */
 export function useDeleteProduct() {
-  return useDeleteEntity(
-    async (): Promise<void> => {
-      throw new Error(
-        "Product deletion is not supported by the current backend API.",
-      );
+  const {
+    tenantScope,
+  } = useQueryScope();
+
+  return useDeleteEntity<DeleteProductResponse>(
+    (id) => {
+      if (!tenantScope) {
+        throw new Error(
+          "Tenant scope is required to delete products.",
+        );
+      }
+
+      return productService.deleteProduct(id);
     },
+
+    tenantScope
+      ? (queryClient) =>
+          invalidateProducts(
+            queryClient,
+            tenantScope,
+          )
+      : undefined,
   );
 }
 

@@ -44,3 +44,7 @@ export {
 export {
   useRestoreProduct,
 } from "./useRestoreProduct";
+
+export {
+  useDeleteProduct,
+} from "./useDeleteProduct";

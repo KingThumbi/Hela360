@@ -161,8 +161,6 @@ def add_product(
 def test_product_list_empty_envelope(client):
     response = client.get("/api/products")
 
-    print("DELETE RESPONSE:", response.status_code, response.get_json())
-
     assert response.status_code == 200
     assert response.json == {
         "ok": True,
