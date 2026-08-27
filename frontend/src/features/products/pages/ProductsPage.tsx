@@ -27,6 +27,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useAuthorization } from "@/hooks/useAuthorization";
 import {
   useArchiveProduct,
@@ -50,7 +57,17 @@ import { ProductFormDialog } from "../components/ProductFormDialog";
 import { ProductLifecycleDialog } from "../components/ProductLifecycleDialog";
 import { ProductsTable } from "../components/ProductsTable";
 
-const PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 25;
+
+const PAGE_SIZE_OPTIONS = [
+  25,
+  50,
+  100,
+  200,
+] as const;
+
+type ProductPageSize =
+  (typeof PAGE_SIZE_OPTIONS)[number];
 
 type ProductLifecycleFilter =
   | "active"
@@ -84,6 +101,14 @@ export function ProductsPage() {
     page,
     setPage,
   ] = useState(1);
+
+  const [
+    pageSize,
+    setPageSize,
+  ] = useState<ProductPageSize>(
+    DEFAULT_PAGE_SIZE,
+  );
+
   const [
     searchInput,
     setSearchInput,
@@ -134,7 +159,7 @@ export function ProductsPage() {
   const params = useMemo(
     () => ({
       page,
-      per_page: PAGE_SIZE,
+      per_page: pageSize,
       search:
         submittedSearch.trim().length > 0
           ? submittedSearch.trim()
@@ -147,6 +172,7 @@ export function ProductsPage() {
     [
       lifecycleFilter,
       page,
+      pageSize,
       submittedSearch,
     ],
   );
@@ -542,13 +568,72 @@ export function ProductsPage() {
               </div>
 
               {pagination ? (
-                <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                  <span>
-                    Page {pagination.page} of{" "}
-                    {pagination.pages || 1} ·{" "}
-                    {pagination.total} products
-                  </span>
-                  <div className="flex gap-2">
+                <div className="flex flex-col gap-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span>
+                      {pagination.total > 0
+                        ? `${(
+                            (pagination.page - 1) *
+                              pagination.per_page
+                          ) + 1}-${Math.min(
+                            pagination.page *
+                              pagination.per_page,
+                            pagination.total,
+                          )} of ${pagination.total} products`
+                        : "0 products"}
+                    </span>
+
+                    <span>
+                      Page {pagination.page} of{" "}
+                      {pagination.pages || 1}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="whitespace-nowrap">
+                      Rows per page
+                    </span>
+
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(value) => {
+                        const nextPageSize =
+                          Number(value) as ProductPageSize;
+
+                        if (
+                          !PAGE_SIZE_OPTIONS.includes(
+                            nextPageSize,
+                          )
+                        ) {
+                          return;
+                        }
+
+                        setPageSize(nextPageSize);
+                        setPage(1);
+                      }}
+                      disabled={productsQuery.isFetching}
+                    >
+                      <SelectTrigger
+                        className="w-[90px]"
+                        aria-label="Rows per page"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+
+                      <SelectContent>
+                        {PAGE_SIZE_OPTIONS.map(
+                          (option) => (
+                            <SelectItem
+                              key={option}
+                              value={String(option)}
+                            >
+                              {option}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+
                     <Button
                       type="button"
                       variant="outline"
@@ -567,6 +652,7 @@ export function ProductsPage() {
                     >
                       Previous
                     </Button>
+
                     <Button
                       type="button"
                       variant="outline"
