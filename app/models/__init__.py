@@ -37,6 +37,7 @@ from app.models.pos import (
     DispensingRecord,
     PaymentMethod,
     SalePayment,
+    SaleRefundItem,
 )
 from app.models.audit import AuditLog
 from .shift import TillShift
@@ -83,6 +84,7 @@ __all__ = [
     "DispensingRecord",
     "PaymentMethod",
     "SalePayment",
+    "SaleRefundItem",
     "AuditLog",
     "UserSession",
     "RefreshToken",

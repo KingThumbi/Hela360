@@ -8,8 +8,10 @@ Responsibilities
 ----------------
 • Resolve products strictly within tenant scope
 • Update approved product master-data fields
-• Archive products without destroying historical references
-• Restore archived products
+• Archive and restore products
+• Evaluate permanent-deletion eligibility
+• Permanently delete only unused archived products
+• Preserve operational, financial and audit history
 • Keep lifecycle transitions separate from ordinary editing
 
 Important
@@ -20,6 +22,9 @@ where appropriate but does not commit them.
 Structural product identity is deliberately excluded from ordinary editing.
 Fields such as internal SKU, product type, inventory tracking strategy, base
 unit, product codes and lifecycle state require dedicated workflows.
+
+Permanent deletion is intentionally exceptional. A product that has entered
+operational history must be archived rather than physically deleted.
 """
 
 from __future__ import annotations
@@ -28,9 +33,23 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models import Product
+from app.models import (
+    DispensingRecord,
+    GoodsReceiptItem,
+    InventoryBatch,
+    InventoryMovement,
+    Product,
+    ProductCode,
+    ProductUnit,
+    SaleItem,
+    SaleRefundItem,
+    StockAdjustmentItem,
+    StockBalance,
+    StockCountItem,
+)
 
 
 class ProductCommandError(Exception):
@@ -45,10 +64,47 @@ class ProductValidationError(ProductCommandError):
     """Raised when a product command contains invalid data."""
 
 
+class ProductDeletionBlockedError(ProductCommandError):
+    """Raised when permanent deletion is prohibited by product state or history."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        blockers: tuple["ProductDeletionDependency", ...] = (),
+    ):
+        super().__init__(message)
+        self.blockers = blockers
+
+
 @dataclass(frozen=True)
 class ProductLifecycleResult:
     product: Product
     changed: bool
+
+
+@dataclass(frozen=True)
+class ProductDeletionDependency:
+    """A dependency that prevents permanent product deletion."""
+
+    code: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ProductDeletionEligibility:
+    """
+    Result of evaluating whether a product may be permanently deleted.
+
+    ``requires_archive`` distinguishes lifecycle state from historical
+    dependencies. An active but otherwise unused product must first pass
+    through the explicit archive workflow.
+    """
+
+    product: Product
+    can_delete: bool
+    requires_archive: bool
+    blockers: tuple[ProductDeletionDependency, ...]
 
 
 @dataclass(frozen=True)
@@ -153,6 +209,17 @@ class ProductCommandService:
         }
     )
 
+    HISTORICAL_DEPENDENCIES = (
+        ("inventory_batches", InventoryBatch),
+        ("inventory_movements", InventoryMovement),
+        ("goods_receipt_items", GoodsReceiptItem),
+        ("stock_count_items", StockCountItem),
+        ("stock_adjustment_items", StockAdjustmentItem),
+        ("sale_items", SaleItem),
+        ("dispensing_records", DispensingRecord),
+        ("sale_refund_items", SaleRefundItem),
+    )
+
     def __init__(self, session: Session):
         self.session = session
 
@@ -172,9 +239,7 @@ class ProductCommandService:
         )
 
         if product is None:
-            raise ProductNotFoundError(
-                "Product not found."
-            )
+            raise ProductNotFoundError("Product not found.")
 
         return product
 
@@ -256,11 +321,7 @@ class ProductCommandService:
                 continue
 
             value = str(raw_value).strip()
-            setattr(
-                product,
-                field,
-                value or None,
-            )
+            setattr(product, field, value or None)
 
         for field in (
             "category_id",
@@ -276,11 +337,7 @@ class ProductCommandService:
                 continue
 
             normalized = str(value).strip()
-            setattr(
-                product,
-                field,
-                normalized or None,
-            )
+            setattr(product, field, normalized or None)
 
         for field in (
             "requires_prescription",
@@ -326,11 +383,7 @@ class ProductCommandService:
                     f"{field} cannot be negative."
                 )
 
-            setattr(
-                product,
-                field,
-                decimal_value,
-            )
+            setattr(product, field, decimal_value)
 
         self.session.flush()
 
@@ -354,7 +407,6 @@ class ProductCommandService:
             )
 
         product.is_active = False
-
         self.session.flush()
 
         return ProductLifecycleResult(
@@ -380,10 +432,195 @@ class ProductCommandService:
             )
 
         product.is_active = True
-
         self.session.flush()
 
         return ProductLifecycleResult(
             product=product,
             changed=True,
         )
+
+    def get_deletion_eligibility(
+        self,
+        *,
+        tenant_id: str,
+        product_id: str,
+    ) -> ProductDeletionEligibility:
+        """
+        Evaluate whether a product may be permanently deleted.
+
+        Historical operational records always block deletion.
+
+        StockBalance is treated differently because it is current-state
+        projection data rather than immutable transaction history. A zero
+        balance may be cleaned up during deletion; any non-zero quantity or
+        reservation blocks deletion.
+        """
+
+        product = self.get_required_product(
+            tenant_id=tenant_id,
+            product_id=product_id,
+        )
+
+        blockers: list[ProductDeletionDependency] = []
+
+        for code, model in self.HISTORICAL_DEPENDENCIES:
+            count = (
+                self.session.query(model)
+                .filter(model.product_id == product.id)
+                .count()
+            )
+
+            if count:
+                blockers.append(
+                    ProductDeletionDependency(
+                        code=code,
+                        count=count,
+                    )
+                )
+
+        non_zero_stock_balances = (
+            self.session.query(StockBalance)
+            .filter(
+                StockBalance.product_id == product.id,
+                or_(
+                    StockBalance.quantity_on_hand != 0,
+                    StockBalance.quantity_reserved != 0,
+                    StockBalance.quantity_available != 0,
+                ),
+            )
+            .count()
+        )
+
+        if non_zero_stock_balances:
+            blockers.append(
+                ProductDeletionDependency(
+                    code="non_zero_stock_balances",
+                    count=non_zero_stock_balances,
+                )
+            )
+
+        blockers_tuple = tuple(blockers)
+        requires_archive = bool(product.is_active)
+
+        return ProductDeletionEligibility(
+            product=product,
+            can_delete=not requires_archive and not blockers_tuple,
+            requires_archive=requires_archive,
+            blockers=blockers_tuple,
+        )
+
+    def delete_permanently(
+        self,
+        *,
+        tenant_id: str,
+        product_id: str,
+    ) -> Product:
+        """
+        Permanently delete an unused archived product.
+
+        Product-owned configuration records and zero stock projections are
+        cleaned up explicitly. Historical records are never cascaded or
+        destroyed by this operation.
+
+        The returned Product instance is marked for deletion in the current
+        SQLAlchemy unit of work. The caller still owns commit/rollback.
+        """
+
+        eligibility = self.get_deletion_eligibility(
+            tenant_id=tenant_id,
+            product_id=product_id,
+        )
+
+        product = eligibility.product
+
+        if eligibility.requires_archive:
+            raise ProductDeletionBlockedError(
+                "Active products must be archived before permanent deletion."
+            )
+
+        if eligibility.blockers:
+            blocker_codes = ", ".join(
+                blocker.code
+                for blocker in eligibility.blockers
+            )
+
+            raise ProductDeletionBlockedError(
+                "Product cannot be permanently deleted because historical "
+                f"or stock dependencies exist: {blocker_codes}.",
+                blockers=eligibility.blockers,
+            )
+
+        # -------------------------------------------------------------
+        # Product-owned records
+        # -------------------------------------------------------------
+        #
+        # Use ORM-managed deletes rather than bulk Query.delete().
+        # Permanent deletion is an exceptional administrative operation,
+        # so identity-map correctness is more important than bulk-delete
+        # throughput.
+        #
+        # ProductCode must be removed before ProductUnit because codes may
+        # reference product_units through product_unit_id.
+        # -------------------------------------------------------------
+
+        product_codes = (
+            self.session.query(ProductCode)
+            .filter(
+                ProductCode.tenant_id == tenant_id,
+                ProductCode.product_id == product.id,
+            )
+            .all()
+        )
+
+        for product_code in product_codes:
+            self.session.delete(product_code)
+
+        # Flush the code removals before deleting ProductUnit records that
+        # may be referenced by product_codes.product_unit_id.
+        self.session.flush()
+
+        # -------------------------------------------------------------
+        # Zero current-state projections
+        # -------------------------------------------------------------
+
+        zero_stock_balances = (
+            self.session.query(StockBalance)
+            .filter(
+                StockBalance.tenant_id == tenant_id,
+                StockBalance.product_id == product.id,
+                StockBalance.quantity_on_hand == 0,
+                StockBalance.quantity_reserved == 0,
+                StockBalance.quantity_available == 0,
+            )
+            .all()
+        )
+
+        for stock_balance in zero_stock_balances:
+            self.session.delete(stock_balance)
+
+        # -------------------------------------------------------------
+        # Product units
+        # -------------------------------------------------------------
+
+        product_units = (
+            self.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id == tenant_id,
+                ProductUnit.product_id == product.id,
+            )
+            .all()
+        )
+
+        for product_unit in product_units:
+            self.session.delete(product_unit)
+
+        self.session.flush()
+
+        # -------------------------------------------------------------
+        # Product
+        # -------------------------------------------------------------
+
+        self.session.delete(product)
+        self.session.flush()
+
+        return product
