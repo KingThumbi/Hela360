@@ -1679,3 +1679,110 @@ def test_discovered_stock_count_api_requires_inventory_count_permission(
         captured["kwargs"]["permission"]
         == "inventory.count"
     )
+
+
+# ============================================================================
+# Selected Stock Count discovered-item scope
+# ============================================================================
+
+
+def test_selected_stock_count_rejects_discovered_product_outside_scope(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": NON_BATCH_PRODUCT_ID,
+            "counted_quantity": "5",
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        "selected" in
+        error_message(response).lower()
+    )
+    assert (
+        "scope" in
+        error_message(response).lower()
+    )
+
+    assert (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=NON_BATCH_PRODUCT_ID,
+            source_type="discovered",
+        )
+        .count()
+        == 0
+    )
+
+
+def test_selected_stock_count_allows_new_batch_for_in_scope_product(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "SELECTED-FOUND-001",
+            "expiry_date": "2029-12-31",
+            "counted_quantity": "7",
+        },
+    )
+
+    assert response.status_code == 201
+
+    item = response.get_json()["item"]
+
+    discovered = next(
+        line
+        for line in item["items"]
+        if (
+            line["source_type"] == "discovered"
+            and
+            line["observed_batch_number"]
+            == "SELECTED-FOUND-001"
+        )
+    )
+
+    assert (
+        discovered["product"]["id"]
+        == BATCH_PRODUCT_ID
+    )
+    assert (
+        discovered["counted_quantity"]
+        == "7.0000"
+    )
+    assert discovered["batch"] is None

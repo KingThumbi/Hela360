@@ -290,6 +290,28 @@ class StockCountService:
             )
             product = products[request.product_id]
 
+            if count.scope_type == "selected":
+                scoped_product_ids = {
+                    str(product_id)
+                    for (product_id,) in (
+                        self.session.query(
+                            StockCountItem.product_id
+                        )
+                        .filter(
+                            StockCountItem.stock_count_id
+                            == str(count.id)
+                        )
+                        .distinct()
+                        .all()
+                    )
+                }
+
+                if str(product.id) not in scoped_product_ids:
+                    raise ValidationError(
+                        "This product is outside the "
+                        "selected Stock Count scope."
+                    )
+
             tracks_batches = bool(product.track_batches)
             tracks_expiry = bool(product.track_expiry)
 
