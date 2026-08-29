@@ -9,6 +9,7 @@ from app.models import (
     StockAdjustment,
     StockCount,
     StockCountItem,
+    StockCountScopeProduct,
     Warehouse,
 )
 
@@ -216,6 +217,53 @@ def serialize_stock_count_item(
     return serialized
 
 
+def serialize_stock_count_scope_product(
+    scope_product: StockCountScopeProduct,
+    *,
+    product: Product,
+    physical_line_count: int,
+    no_stock_confirmed_by: dict | None,
+) -> dict:
+    """
+    Serialize one explicitly selected Product in a Stock Count scope.
+
+    Scope membership is independent of physical StockCountItem lines.
+    """
+
+    if scope_product.no_stock_confirmed_at is not None:
+        resolution_status = "no_stock_confirmed"
+    elif physical_line_count > 0:
+        resolution_status = "physical_lines"
+    else:
+        resolution_status = "unresolved"
+
+    return {
+        "product": {
+            "id": str(product.id),
+            "internal_sku": product.internal_sku,
+            "name": product.name,
+            "track_batches": bool(
+                product.track_batches
+            ),
+            "track_expiry": bool(
+                product.track_expiry
+            ),
+        },
+        "resolution_status":
+            resolution_status,
+        "physical_line_count":
+            physical_line_count,
+        "no_stock_confirmed_at":
+            _timestamp(
+                scope_product.no_stock_confirmed_at
+            ),
+        "no_stock_confirmed_by":
+            _user(
+                no_stock_confirmed_by
+            ),
+    }
+
+
 def serialize_stock_count(
     count: StockCount,
     *,
@@ -228,6 +276,14 @@ def serialize_stock_count(
             StockCountItem,
             Product,
             InventoryBatch | None,
+            dict | None,
+        ]
+    ],
+    scope_products: list[
+        tuple[
+            StockCountScopeProduct,
+            Product,
+            int,
             dict | None,
         ]
     ],
@@ -257,6 +313,21 @@ def serialize_stock_count(
             batch,
             counted_by,
         ) in items
+    ]
+
+    serialized_scope_products = [
+        serialize_stock_count_scope_product(
+            scope_product,
+            product=product,
+            physical_line_count=physical_line_count,
+            no_stock_confirmed_by=no_stock_confirmed_by,
+        )
+        for (
+            scope_product,
+            product,
+            physical_line_count,
+            no_stock_confirmed_by,
+        ) in scope_products
     ]
 
     counted_items = [
@@ -368,6 +439,8 @@ def serialize_stock_count(
                     expose_system_quantities
                 ),
             ),
+        "scope_products":
+            serialized_scope_products,
         "items":
             serialized_items,
         "created_at":

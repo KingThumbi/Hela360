@@ -24,6 +24,7 @@ from app.models import (
     StockBalance,
     StockCount,
     StockCountItem,
+    StockCountScopeProduct,
     Tenant,
     User,
     UserRole,
@@ -74,6 +75,7 @@ def app_context():
         InventoryMovement.__table__.create(db.engine)
         StockCount.__table__.create(db.engine)
         StockCountItem.__table__.create(db.engine)
+        StockCountScopeProduct.__table__.create(db.engine)
         StockAdjustment.__table__.create(db.engine)
         StockAdjustmentItem.__table__.create(db.engine)
 

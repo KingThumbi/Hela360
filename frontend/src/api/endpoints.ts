@@ -221,6 +221,12 @@ export const API_ENDPOINTS = {
     ) =>
       `${byId("/inventory/stock-counts", countId)}/items/discovered`,
 
+    CONFIRM_STOCK_COUNT_NO_STOCK: (
+      countId: string,
+      productId: string,
+    ) =>
+      `${byId("/inventory/stock-counts", countId)}/scope-products/${productId}/confirm-no-stock`,
+
     COMPLETE_STOCK_COUNT: (id: string) =>
       `${byId("/inventory/stock-counts", id)}/complete`,
 

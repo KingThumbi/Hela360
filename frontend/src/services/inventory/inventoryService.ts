@@ -471,6 +471,23 @@ export class InventoryService extends BaseService<InventoryStockSummary> {
     return response.data.item;
   }
 
+  async confirmStockCountNoStock(
+    countId: string,
+    productId: string,
+    config?: AxiosRequestConfig,
+  ): Promise<StockCount> {
+    const response = await this.postRequest<StockCountResponse>(
+      API_ENDPOINTS.INVENTORY.CONFIRM_STOCK_COUNT_NO_STOCK(
+        countId,
+        productId,
+      ),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
   async completeStockCount(
     id: string,
     config?: AxiosRequestConfig,

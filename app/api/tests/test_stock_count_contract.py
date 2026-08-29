@@ -2129,3 +2129,187 @@ def test_discovered_line_clears_prior_no_stock_confirmation(
     )
 
     assert len(lines) == 1
+
+
+# ============================================================================
+# Selected Product scope serialization
+# ============================================================================
+
+
+def test_selected_empty_batch_product_serializes_as_unresolved_scope(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+
+    item = created.get_json()["item"]
+
+    assert item["items"] == []
+    assert len(item["scope_products"]) == 1
+
+    scope_product = item["scope_products"][0]
+
+    assert (
+        scope_product["product"]["id"]
+        == EMPTY_BATCH_PRODUCT_ID
+    )
+    assert (
+        scope_product["resolution_status"]
+        == "unresolved"
+    )
+    assert scope_product["physical_line_count"] == 0
+    assert scope_product["no_stock_confirmed_at"] is None
+    assert scope_product["no_stock_confirmed_by"] is None
+
+
+def test_selected_product_with_snapshot_lines_serializes_physical_lines(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+
+    item = created.get_json()["item"]
+
+    scope_product = next(
+        scope
+        for scope in item["scope_products"]
+        if (
+            scope["product"]["id"]
+            == BATCH_PRODUCT_ID
+        )
+    )
+
+    assert (
+        scope_product["resolution_status"]
+        == "physical_lines"
+    )
+    assert scope_product["physical_line_count"] > 0
+    assert scope_product["no_stock_confirmed_at"] is None
+    assert scope_product["no_stock_confirmed_by"] is None
+
+
+def test_confirm_no_stock_serializes_scope_resolution_and_audit_user(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    confirmed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/scope-products/"
+            f"{EMPTY_BATCH_PRODUCT_ID}/confirm-no-stock"
+        )
+    )
+
+    assert confirmed.status_code == 200
+
+    scope_product = (
+        confirmed
+        .get_json()["item"]["scope_products"][0]
+    )
+
+    assert (
+        scope_product["resolution_status"]
+        == "no_stock_confirmed"
+    )
+    assert scope_product["physical_line_count"] == 0
+    assert scope_product["no_stock_confirmed_at"] is not None
+    assert (
+        scope_product["no_stock_confirmed_by"]["id"]
+        == USER_ID
+    )
+
+
+def test_discovered_stock_changes_scope_resolution_to_physical_lines(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    confirmed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/scope-products/"
+            f"{EMPTY_BATCH_PRODUCT_ID}/confirm-no-stock"
+        )
+    )
+
+    assert confirmed.status_code == 200
+
+    discovered = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": EMPTY_BATCH_PRODUCT_ID,
+            "batch_number": "SERIALIZED-FOUND-001",
+            "expiry_date": "2031-06-30",
+            "counted_quantity": "2",
+        },
+    )
+
+    assert discovered.status_code == 201
+
+    scope_product = (
+        discovered
+        .get_json()["item"]["scope_products"][0]
+    )
+
+    assert (
+        scope_product["resolution_status"]
+        == "physical_lines"
+    )
+    assert scope_product["physical_line_count"] == 1
+    assert scope_product["no_stock_confirmed_at"] is None
+    assert scope_product["no_stock_confirmed_by"] is None
+
+
+def test_full_stock_count_serializes_empty_scope_products(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+    assert (
+        created.get_json()["item"]["scope_products"]
+        == []
+    )

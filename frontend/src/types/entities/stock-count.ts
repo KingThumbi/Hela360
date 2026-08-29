@@ -38,6 +38,31 @@ export interface StockCountProduct {
 }
 
 
+export type StockCountScopeResolutionStatus =
+  | "unresolved"
+  | "physical_lines"
+  | "no_stock_confirmed";
+
+
+export interface StockCountScopeProduct {
+  product: StockCountProduct;
+
+  resolution_status: StockCountScopeResolutionStatus;
+
+  /*
+   * Number of physical Stock Count identities currently represented
+   * by snapshot or discovered lines for this selected Product.
+   *
+   * This is a line count, not a stock quantity.
+   */
+  physical_line_count: number;
+
+  no_stock_confirmed_at: string | null;
+
+  no_stock_confirmed_by: StockCountUser | null;
+}
+
+
 export interface StockCountBatch {
   id: string;
 
@@ -153,6 +178,13 @@ export interface StockCount {
   adjustment: StockCountAdjustmentLink | null;
 
   summary: StockCountSummary;
+
+  /*
+   * Explicit selected Product membership.
+   *
+   * Full Warehouse counts return an empty array.
+   */
+  scope_products: StockCountScopeProduct[];
 
   items: StockCountItem[];
 

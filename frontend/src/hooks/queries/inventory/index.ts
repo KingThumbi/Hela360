@@ -11,6 +11,10 @@ export {
 } from "./useCompleteStockCount";
 
 export {
+  useConfirmStockCountNoStock,
+} from "./useConfirmStockCountNoStock";
+
+export {
   useCreateStockAdjustment,
 } from "./useCreateStockAdjustment";
 

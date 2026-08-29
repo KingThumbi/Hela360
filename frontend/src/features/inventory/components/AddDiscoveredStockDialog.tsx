@@ -30,6 +30,7 @@ import {
 } from "@/hooks/queries/products";
 import type {
   Product,
+  StockCountScopeProduct,
 } from "@/types/entities";
 
 
@@ -62,6 +63,10 @@ function productLabel(product: Product): string {
 interface AddDiscoveredStockDialogProps {
   countId: string;
 
+  scopeType: "full" | "selected";
+
+  scopeProducts: StockCountScopeProduct[];
+
   open: boolean;
 
   onOpenChange: (open: boolean) => void;
@@ -72,6 +77,8 @@ interface AddDiscoveredStockDialogProps {
 
 export function AddDiscoveredStockDialog({
   countId,
+  scopeType,
+  scopeProducts,
   open,
   onOpenChange,
   onCreated,
@@ -126,14 +133,37 @@ export function AddDiscoveredStockDialog({
   const addDiscoveredItem =
     useAddDiscoveredStockCountItem();
 
+  const allowedProductIds = useMemo(
+    () =>
+      scopeType === "selected"
+        ? new Set(
+            scopeProducts.map(
+              (scopeProduct) =>
+                scopeProduct.product.id,
+            ),
+          )
+        : null,
+    [
+      scopeProducts,
+      scopeType,
+    ],
+  );
+
   const eligibleProducts = useMemo(
     () =>
       (productsQuery.data?.items ?? []).filter(
         (product) =>
           product.is_active &&
-          product.track_inventory,
+          product.track_inventory &&
+          (
+            allowedProductIds === null ||
+            allowedProductIds.has(product.id)
+          ),
       ),
-    [productsQuery.data?.items],
+    [
+      allowedProductIds,
+      productsQuery.data?.items,
+    ],
   );
 
   const selectedProduct = useMemo(
@@ -338,7 +368,9 @@ export function AddDiscoveredStockDialog({
                 placeholder={
                   productsQuery.isLoading
                     ? "Loading Products"
-                    : "Select inventory Product"
+                    : scopeType === "selected"
+                      ? "Select a Product in this count"
+                      : "Select inventory Product"
                 }
                 options={eligibleProducts.map(
                   (product) => ({

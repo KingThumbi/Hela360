@@ -65,6 +65,7 @@ import {
 import {
   useCancelStockCount,
   useCompleteStockCount,
+  useConfirmStockCountNoStock,
   useCreateStockAdjustmentFromCount,
   useStockCount,
   useUpdateStockCountItem,
@@ -77,6 +78,7 @@ import { PATHS } from "@/routes/routes";
 import type {
   StockCount,
   StockCountItem,
+  StockCountScopeProduct,
 } from "@/types/entities";
 
 type ItemFilter =
@@ -301,6 +303,20 @@ export function StockCountDetailPage() {
   ] = useState(createAdjustmentIdempotencyKey);
 
   const count = stockCountQuery.data;
+
+  const unresolvedScopeProductCount =
+    count?.scope_type === "selected"
+      ? count.scope_products.filter(
+          (scopeProduct) =>
+            scopeProduct.resolution_status === "unresolved",
+        ).length
+      : 0;
+
+  const isReadyToComplete =
+    Boolean(count) &&
+    count?.summary.uncounted_items === 0 &&
+    unresolvedScopeProductCount === 0;
+
   const canAdjustStock = authorization.can("inventory.adjust");
   const canPostAdjustment =
     Boolean(count) &&
@@ -427,7 +443,7 @@ export function StockCountDetailPage() {
                 onClick={() => setCompleteOpen(true)}
                 disabled={
                   completeStockCount.isPending ||
-                  count.summary.uncounted_items > 0
+                  !isReadyToComplete
                 }
               >
                 <CheckCircle2 />
@@ -482,6 +498,7 @@ export function StockCountDetailPage() {
           <StockCountDetail
             count={count}
             onLineUpdated={() => stockCountQuery.refetch()}
+            onScopeUpdated={() => stockCountQuery.refetch()}
             canAdjustStock={canAdjustStock}
           />
         ) : null}
@@ -490,6 +507,8 @@ export function StockCountDetailPage() {
       {count?.status === "open" ? (
         <AddDiscoveredStockDialog
           countId={count.id}
+          scopeType={count.scope_type}
+          scopeProducts={count.scope_products}
           open={discoveredOpen}
           onOpenChange={setDiscoveredOpen}
           onCreated={() => {
@@ -586,10 +605,12 @@ export function StockCountDetailPage() {
 function StockCountDetail({
   count,
   onLineUpdated,
+  onScopeUpdated,
   canAdjustStock,
 }: {
   count: StockCount;
   onLineUpdated: () => void;
+  onScopeUpdated: () => void;
   canAdjustStock: boolean;
 }) {
   const isOpen = count.status === "open";
@@ -606,6 +627,18 @@ function StockCountDetail({
             100,
         )
       : 100;
+
+  const unresolvedScopeProducts =
+    count.scope_type === "selected"
+      ? count.scope_products.filter(
+          (scopeProduct) =>
+            scopeProduct.resolution_status === "unresolved",
+        )
+      : [];
+
+  const isReadyToComplete =
+    count.summary.uncounted_items === 0 &&
+    unresolvedScopeProducts.length === 0;
 
   return (
     <>
@@ -707,14 +740,22 @@ function StockCountDetail({
           <SummaryBlock
             label="Readiness"
             value={
-              count.summary.uncounted_items === 0
+              isReadyToComplete
                 ? "Ready to complete"
-                : `${count.summary.uncounted_items} uncounted`
+                : count.summary.uncounted_items > 0
+                  ? `${count.summary.uncounted_items} uncounted`
+                  : `${unresolvedScopeProducts.length} Product${
+                      unresolvedScopeProducts.length === 1
+                        ? ""
+                        : "s"
+                    } still needs review`
             }
             detail={
-              exposesSystemQuantities
-                ? "Count variance does not change inventory until an adjustment is posted."
-                : "System quantities and differences remain hidden during this blind count."
+              unresolvedScopeProducts.length > 0
+                ? "Each selected Product must have physical stock recorded or be explicitly confirmed as no stock found."
+                : exposesSystemQuantities
+                  ? "Count variance does not change inventory until an adjustment is posted."
+                  : "System quantities and differences remain hidden during this blind count."
             }
           />
         </div>
@@ -763,6 +804,15 @@ function StockCountDetail({
         </PageSection>
       ) : null}
 
+      {count.scope_type === "selected" ? (
+        <PageSection>
+          <SelectedStockCountScope
+            count={count}
+            onScopeUpdated={onScopeUpdated}
+          />
+        </PageSection>
+      ) : null}
+
       <PageSection>
         <StockCountItemsTable
           key={count.id}
@@ -774,6 +824,261 @@ function StockCountDetail({
     </>
   );
 }
+
+function SelectedStockCountScope({
+  count,
+  onScopeUpdated,
+}: {
+  count: StockCount;
+  onScopeUpdated: () => void;
+}) {
+  const confirmNoStock =
+    useConfirmStockCountNoStock();
+
+  const [
+    confirmationTarget,
+    setConfirmationTarget,
+  ] = useState<StockCountScopeProduct | null>(
+    null,
+  );
+
+  const confirm = () => {
+    if (!confirmationTarget) {
+      return;
+    }
+
+    confirmNoStock.mutate(
+      {
+        countId: count.id,
+        productId:
+          confirmationTarget.product.id,
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            "No stock found confirmed.",
+          );
+          setConfirmationTarget(null);
+          onScopeUpdated();
+        },
+
+        onError: (error) => {
+          toast.error(
+            errorMessage(error),
+          );
+          onScopeUpdated();
+        },
+      },
+    );
+  };
+
+  const statusLabel = (
+    scopeProduct: StockCountScopeProduct,
+  ): string => {
+    if (
+      scopeProduct.resolution_status ===
+      "no_stock_confirmed"
+    ) {
+      return "No stock found";
+    }
+
+    if (
+      scopeProduct.resolution_status ===
+      "physical_lines"
+    ) {
+      return "Physical stock recorded";
+    }
+
+    return "Needs review";
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="font-medium">
+          Selected Products
+        </div>
+        <div className="text-sm text-muted-foreground">
+          Every selected Product must either have physical stock
+          recorded or be explicitly confirmed as not found before
+          this Stock Count can be completed.
+        </div>
+      </div>
+
+      {count.scope_products.length === 0 ? (
+        <EmptyState
+          title="No selected Products"
+          description="This Stock Count has no persisted selected Product scope."
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Product</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Physical Lines</TableHead>
+                <TableHead>Confirmation</TableHead>
+                <TableHead className="text-right">
+                  Action
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+
+            <TableBody>
+              {count.scope_products.map(
+                (scopeProduct) => (
+                  <TableRow
+                    key={scopeProduct.product.id}
+                  >
+                    <TableCell>
+                      <div className="font-medium">
+                        {scopeProduct.product.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {
+                          scopeProduct.product
+                            .internal_sku
+                        }
+                      </div>
+                    </TableCell>
+
+                    <TableCell>
+                      <Badge
+                        variant={
+                          scopeProduct.resolution_status ===
+                          "unresolved"
+                            ? "outline"
+                            : "secondary"
+                        }
+                      >
+                        {statusLabel(scopeProduct)}
+                      </Badge>
+                    </TableCell>
+
+                    <TableCell>
+                      {
+                        scopeProduct
+                          .physical_line_count
+                      }
+                    </TableCell>
+
+                    <TableCell>
+                      {scopeProduct.no_stock_confirmed_at ? (
+                        <div className="text-sm">
+                          <div>
+                            {dateTimeLabel(
+                              scopeProduct
+                                .no_stock_confirmed_at,
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {
+                              scopeProduct
+                                .no_stock_confirmed_by
+                                ?.name ??
+                              scopeProduct
+                                .no_stock_confirmed_by
+                                ?.username ??
+                              "Unknown user"
+                            }
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          —
+                        </span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-right">
+                      {count.status === "open" &&
+                      scopeProduct.resolution_status ===
+                        "unresolved" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setConfirmationTarget(
+                              scopeProduct,
+                            )
+                          }
+                          disabled={
+                            confirmNoStock.isPending
+                          }
+                        >
+                          Confirm no stock found
+                        </Button>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          Resolved
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ),
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      <AlertDialog
+        open={Boolean(confirmationTarget)}
+        onOpenChange={(open) => {
+          if (
+            !open &&
+            !confirmNoStock.isPending
+          ) {
+            setConfirmationTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Confirm no stock found
+            </AlertDialogTitle>
+
+            <AlertDialogDescription>
+              Confirm that no physical stock was found for{" "}
+              <strong>
+                {
+                  confirmationTarget?.product
+                    .name
+                }
+              </strong>
+              . This confirmation is recorded with your user and
+              timestamp and will allow this selected Product to be
+              resolved without creating a physical count line.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                confirmNoStock.isPending
+              }
+            >
+              Keep reviewing
+            </AlertDialogCancel>
+
+            <AlertDialogAction
+              onClick={confirm}
+              disabled={
+                confirmNoStock.isPending
+              }
+            >
+              Confirm no stock found
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 
 function StockCountItemsTable({
   count,

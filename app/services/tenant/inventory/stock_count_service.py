@@ -838,6 +838,9 @@ class StockCountService:
             "completed_by": self._user_context(count.completed_by),
             "cancelled_by": self._user_context(count.cancelled_by),
             "items": self._item_context(str(count.id)),
+            "scope_products": self._scope_product_context(
+                str(count.id)
+            ),
             "adjustment": self._adjustment_for_count(
                 tenant_id=str(count.tenant_id),
                 count_id=str(count.id),
@@ -1143,6 +1146,85 @@ class StockCountService:
 
         movement_delta = _q4(query.scalar() or Decimal("0"))
         return _q4(item.snapshot_quantity + movement_delta)
+
+    def _scope_product_context(
+        self,
+        count_id: str,
+    ) -> list[
+        tuple[
+            StockCountScopeProduct,
+            Product,
+            int,
+            dict | None,
+        ]
+    ]:
+        """
+        Return explicit selected Product scope independently of physical
+        StockCountItem lines.
+
+        physical_line_count represents how many snapshot/discovered physical
+        identities currently exist for the selected Product.
+        """
+
+        scope_rows = (
+            self.session.query(
+                StockCountScopeProduct,
+                Product,
+            )
+            .join(
+                Product,
+                Product.id
+                == StockCountScopeProduct.product_id,
+            )
+            .filter(
+                StockCountScopeProduct.stock_count_id
+                == count_id,
+            )
+            .order_by(
+                Product.name.asc(),
+                Product.internal_sku.asc(),
+                Product.id.asc(),
+            )
+            .all()
+        )
+
+        if not scope_rows:
+            return []
+
+        line_counts = {
+            str(product_id): int(line_count)
+            for product_id, line_count in (
+                self.session.query(
+                    StockCountItem.product_id,
+                    func.count(
+                        StockCountItem.id
+                    ),
+                )
+                .filter(
+                    StockCountItem.stock_count_id
+                    == count_id,
+                )
+                .group_by(
+                    StockCountItem.product_id
+                )
+                .all()
+            )
+        }
+
+        return [
+            (
+                scope_product,
+                product,
+                line_counts.get(
+                    str(product.id),
+                    0,
+                ),
+                self._user_context(
+                    scope_product.no_stock_confirmed_by
+                ),
+            )
+            for scope_product, product in scope_rows
+        ]
 
     def _item_context(
         self,

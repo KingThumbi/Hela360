@@ -39,6 +39,8 @@ export type {
   StockCountItem,
   StockCountMode,
   StockCountProduct,
+  StockCountScopeProduct,
+  StockCountScopeResolutionStatus,
   StockCountSourceType,
   StockCountSummary,
   StockCountUser,
