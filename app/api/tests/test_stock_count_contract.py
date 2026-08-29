@@ -36,6 +36,7 @@ OTHER_TENANT_WAREHOUSE_ID = "warehouse-c"
 BATCH_PRODUCT_ID = "product-batch"
 NON_BATCH_PRODUCT_ID = "product-loose"
 ZERO_PRODUCT_ID = "product-zero"
+EMPTY_BATCH_PRODUCT_ID = "product-empty-batch"
 BATCH_ID = "batch-current"
 EXPIRED_BATCH_ID = "batch-expired"
 ZERO_BATCH_ID = "batch-zero"
@@ -144,6 +145,16 @@ def seed_data():
                 tenant_id=TENANT_ID,
                 internal_sku="AMOX-500",
                 name="Amoxicillin 500mg",
+                track_inventory=True,
+                track_batches=True,
+                track_expiry=True,
+                is_active=True,
+            ),
+            Product(
+                id=EMPTY_BATCH_PRODUCT_ID,
+                tenant_id=TENANT_ID,
+                internal_sku="EMPTY-BATCH-001",
+                name="Empty Batch Product",
                 track_inventory=True,
                 track_batches=True,
                 track_expiry=True,
@@ -1911,3 +1922,210 @@ def test_selected_scope_membership_is_independent_of_snapshot_lines(
         discovered["observed_batch_number"]
         == "SCOPE-FOUND-001"
     )
+
+
+# ============================================================================
+# Selected Product with no known system batch
+# ============================================================================
+
+
+def test_selected_batch_product_without_system_batch_can_start_count(
+    client,
+):
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert response.status_code == 201
+
+    item = response.get_json()["item"]
+
+    assert item["scope_type"] == "selected"
+    assert item["items"] == []
+
+    scope_product = (
+        StockCountScopeProduct.query
+        .filter_by(
+            stock_count_id=item["id"],
+            product_id=EMPTY_BATCH_PRODUCT_ID,
+        )
+        .one()
+    )
+
+    assert scope_product.no_stock_confirmed_at is None
+    assert scope_product.no_stock_confirmed_by is None
+
+
+def test_selected_empty_batch_product_requires_explicit_no_stock_confirmation(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    completed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/complete"
+        )
+    )
+
+    assert completed.status_code == 400
+
+    message = error_message(completed).lower()
+
+    assert "selected product" in message
+    assert "no stock" in message
+
+
+def test_selected_empty_batch_product_can_confirm_no_stock_and_complete(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    confirmed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/scope-products/"
+            f"{EMPTY_BATCH_PRODUCT_ID}/confirm-no-stock"
+        )
+    )
+
+    assert confirmed.status_code == 200
+
+    scope_product = (
+        StockCountScopeProduct.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=EMPTY_BATCH_PRODUCT_ID,
+        )
+        .one()
+    )
+
+    assert scope_product.no_stock_confirmed_at is not None
+    assert scope_product.no_stock_confirmed_by == USER_ID
+
+    completed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/complete"
+        )
+    )
+
+    assert completed.status_code == 200
+    assert completed.get_json()["item"]["status"] == "completed"
+
+
+def test_no_stock_confirmation_rejects_product_with_physical_lines(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/scope-products/"
+            f"{BATCH_PRODUCT_ID}/confirm-no-stock"
+        )
+    )
+
+    assert response.status_code == 409
+    assert "count lines" in error_message(response).lower()
+
+
+def test_discovered_line_clears_prior_no_stock_confirmation(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                EMPTY_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    confirmed = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/scope-products/"
+            f"{EMPTY_BATCH_PRODUCT_ID}/confirm-no-stock"
+        )
+    )
+
+    assert confirmed.status_code == 200
+
+    discovered = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": EMPTY_BATCH_PRODUCT_ID,
+            "batch_number": "PHYSICAL-FOUND-001",
+            "expiry_date": "2030-12-31",
+            "counted_quantity": "3",
+        },
+    )
+
+    assert discovered.status_code == 201
+
+    scope_product = (
+        StockCountScopeProduct.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=EMPTY_BATCH_PRODUCT_ID,
+        )
+        .one()
+    )
+
+    assert scope_product.no_stock_confirmed_at is None
+    assert scope_product.no_stock_confirmed_by is None
+
+    lines = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=EMPTY_BATCH_PRODUCT_ID,
+            source_type="discovered",
+        )
+        .all()
+    )
+
+    assert len(lines) == 1

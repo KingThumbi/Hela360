@@ -203,8 +203,10 @@ class StockCountService:
                 warehouse_id=str(warehouse.id),
                 selected_products=products,
             )
-            if not rows:
-                raise ValidationError("Stock count scope has no countable stock lines.")
+            if not rows and not request.product_ids:
+                raise ValidationError(
+                    "Stock count scope has no countable stock lines."
+                )
 
             count = StockCount(
                 tenant_id=tenant_id,
@@ -362,6 +364,26 @@ class StockCountService:
                 .with_for_update()
                 .all()
             )
+
+            if count.scope_type == "selected":
+                scope_product = (
+                    self.session.query(
+                        StockCountScopeProduct
+                    )
+                    .filter(
+                        StockCountScopeProduct.stock_count_id
+                        == str(count.id),
+                        StockCountScopeProduct.product_id
+                        == str(product.id),
+                    )
+                    .with_for_update()
+                    .first()
+                )
+
+                if scope_product:
+                    scope_product.no_stock_confirmed_at = None
+                    scope_product.no_stock_confirmed_by = None
+                    scope_product.updated_at = now
 
             if not tracks_batches and not tracks_expiry:
                 if existing_lines:
@@ -614,6 +636,92 @@ class StockCountService:
             self.session.rollback()
             raise
 
+    def confirm_no_stock(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        count_id: str,
+        product_id: str,
+        confirmed_by: str,
+    ) -> StockCount:
+        """
+        Confirm that no physical stock was found for one selected Product
+        that currently has no Stock Count lines.
+        """
+
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        now = _now()
+
+        try:
+            count = self._locked_count(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                count_id=count_id,
+            )
+            self._ensure_open(count)
+
+            if count.scope_type != "selected":
+                raise ValidationError(
+                    "No-stock confirmation is only available for "
+                    "Selected Products Stock Counts."
+                )
+
+            scope_product = (
+                self.session.query(
+                    StockCountScopeProduct
+                )
+                .filter(
+                    StockCountScopeProduct.stock_count_id
+                    == str(count.id),
+                    StockCountScopeProduct.product_id
+                    == product_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not scope_product:
+                raise ValidationError(
+                    "This product is outside the selected "
+                    "Stock Count scope."
+                )
+
+            existing_line = (
+                self.session.query(
+                    StockCountItem.id
+                )
+                .filter(
+                    StockCountItem.stock_count_id
+                    == str(count.id),
+                    StockCountItem.product_id
+                    == product_id,
+                )
+                .first()
+            )
+
+            if existing_line:
+                raise ConflictError(
+                    "This product already has Stock Count lines. "
+                    "Count those physical lines instead."
+                )
+
+            scope_product.no_stock_confirmed_at = now
+            scope_product.no_stock_confirmed_by = confirmed_by
+            scope_product.updated_at = now
+            count.updated_at = now
+
+            self.session.commit()
+            return count
+
+        except Exception:
+            self.session.rollback()
+            raise
+
     def complete_stock_count(
         self,
         *,
@@ -642,7 +750,42 @@ class StockCountService:
                 .scalar()
             )
             if uncounted:
-                raise ValidationError("All stock count items must be counted before completion.")
+                raise ValidationError(
+                    "All stock count items must be counted before completion."
+                )
+
+            if count.scope_type == "selected":
+                unresolved_scope_products = (
+                    self.session.query(
+                        func.count(
+                            StockCountScopeProduct.id
+                        )
+                    )
+                    .filter(
+                        StockCountScopeProduct.stock_count_id
+                        == str(count.id),
+                        StockCountScopeProduct.no_stock_confirmed_at
+                        .is_(None),
+                        ~self.session.query(
+                            StockCountItem.id
+                        )
+                        .filter(
+                            StockCountItem.stock_count_id
+                            == str(count.id),
+                            StockCountItem.product_id
+                            == StockCountScopeProduct.product_id,
+                        )
+                        .exists(),
+                    )
+                    .scalar()
+                )
+
+                if unresolved_scope_products:
+                    raise ValidationError(
+                        "Every selected product must either have "
+                        "physical Stock Count lines or be explicitly "
+                        "confirmed as no stock found before completion."
+                    )
 
             count.status = COMPLETED_STATUS
             count.completed_at = now
@@ -879,9 +1022,8 @@ class StockCountService:
             if product_id in seen_products:
                 continue
             if product.track_batches or product.track_expiry:
-                raise ValidationError(
-                    "Batch-tracked products without system batches require a later adjustment discovery workflow."
-                )
+                continue
+
             rows.append(
                 {
                     "product": product,

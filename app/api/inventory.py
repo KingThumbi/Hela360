@@ -454,6 +454,38 @@ def update_stock_count_item(count_id: str, item_id: str):
     )
 
 
+@bp.post(
+    "/inventory/stock-counts/<count_id>/"
+    "scope-products/<product_id>/confirm-no-stock"
+)
+@require_permission("inventory.count")
+def confirm_stock_count_no_stock(
+    count_id: str,
+    product_id: str,
+):
+    identity = _current_identity()
+    service = StockCountService(db.session)
+
+    count = service.confirm_no_stock(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        count_id=count_id,
+        product_id=product_id,
+        confirmed_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "No stock found confirmed successfully.",
+            "item": serialize_stock_count(
+                count,
+                **service.serialization_context(count),
+            ),
+        }
+    )
+
+
 @bp.post("/inventory/stock-counts/<count_id>/complete")
 @require_permission("inventory.count")
 def complete_stock_count(count_id: str):

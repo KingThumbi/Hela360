@@ -207,6 +207,14 @@ class StockCountScopeProduct(
         nullable=False,
         index=True,
     )
+    no_stock_confirmed_at = db.Column(
+        db.DateTime(timezone=True),
+    )
+    no_stock_confirmed_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
 
 class StockCountItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     __tablename__ = "stock_count_items"
