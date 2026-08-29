@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, jsonify, request
@@ -14,13 +13,12 @@ from app.models import (
     TaxCode,
     UnitOfMeasure,
 )
-from app.services.common.number_sequence_service import (
-    NumberSequenceService,
-)
 from app.services.tenant.products import (
     ProductCommandService,
     ProductDeletionBlockedError,
+    ProductIdentityService,
     ProductNotFoundError,
+    ProductSkuConflictError,
     ProductValidationError,
 )
 from app.auth.jwt import get_current_identity
@@ -406,60 +404,19 @@ def create_product():
     if not name:
         return _json_error("name is required.")
 
-    if internal_sku:
-        existing = Product.query.filter_by(
-            tenant_id=tenant_id,
-            internal_sku=internal_sku,
-        ).first()
-
-        if existing:
-            return _json_error(
-                "A product with that internal_sku already exists.",
-                409,
-            )
-
     try:
         # -------------------------------------------------------------
         # Internal SKU
         # -------------------------------------------------------------
-        #
-        # A manually supplied SKU is preserved.
-        #
-        # When omitted, Hela360 allocates the next tenant-wide product
-        # sequence and combines it with the tenant business code and the
-        # current year:
-        #
-        #     DPL-2026-000001
-        #
-        # The sequence itself does NOT reset annually. Only the year
-        # portion of the formatted SKU changes.
-        #
-        # Existing manually-created SKUs are skipped safely if they happen
-        # to collide with a generated sequence candidate.
 
-        if not internal_sku:
-            sequence_service = NumberSequenceService(
-                db.session,
-            )
+        identity_service = ProductIdentityService(
+            db.session
+        )
 
-            for _ in range(100):
-                candidate = sequence_service.next_product_sku(
-                    tenant_id=tenant_id,
-                    generated_at=datetime.now(UTC),
-                )
-
-                collision = Product.query.filter_by(
-                    tenant_id=tenant_id,
-                    internal_sku=candidate,
-                ).first()
-
-                if collision is None:
-                    internal_sku = candidate
-                    break
-            else:
-                raise ValidationError(
-                    "Unable to allocate a unique product SKU."
-                )
+        internal_sku = identity_service.resolve_internal_sku(
+            tenant_id=tenant_id,
+            supplied_sku=internal_sku,
+        )
 
         # -------------------------------------------------------------
         # Tax Code
@@ -736,6 +693,10 @@ def create_product():
                 )
 
         db.session.commit()
+
+    except ProductSkuConflictError as exc:
+        db.session.rollback()
+        return _json_error(str(exc), 409)
 
     except (ValueError, ValidationError) as exc:
         db.session.rollback()

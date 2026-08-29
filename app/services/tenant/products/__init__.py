@@ -13,6 +13,10 @@ from .product_command_service import (
     ProductUpdate,
     ProductValidationError,
 )
+from .product_identity_service import (
+    ProductIdentityService,
+    ProductSkuConflictError,
+)
 
 __all__ = [
     "ProductCommandError",
@@ -20,8 +24,10 @@ __all__ = [
     "ProductDeletionBlockedError",
     "ProductDeletionDependency",
     "ProductDeletionEligibility",
+    "ProductIdentityService",
     "ProductLifecycleResult",
     "ProductNotFoundError",
+    "ProductSkuConflictError",
     "ProductUpdate",
     "ProductValidationError",
 ]

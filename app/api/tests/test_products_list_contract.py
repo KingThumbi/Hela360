@@ -1191,3 +1191,31 @@ def test_delete_product_requires_products_delete_permission(
         == "AUTHORIZATION_DENIED"
     )
     assert captured.get("permission") == "products.delete"
+
+
+def test_create_product_duplicate_internal_sku_returns_conflict(client):
+    first = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "DUPLICATE-CREATE-001",
+            "name": "First Duplicate Test Product",
+        },
+    )
+
+    assert first.status_code == 201
+    assert first.json["ok"] is True
+
+    second = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "DUPLICATE-CREATE-001",
+            "name": "Second Duplicate Test Product",
+        },
+    )
+
+    assert second.status_code == 409
+    assert second.json["ok"] is False
+    assert (
+        second.json["error"]
+        == "A product with that internal_sku already exists."
+    )
