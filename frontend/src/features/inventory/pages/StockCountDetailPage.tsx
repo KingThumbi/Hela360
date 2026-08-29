@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -78,7 +79,12 @@ import type {
   StockCountItem,
 } from "@/types/entities";
 
-type ItemFilter = "all" | "uncounted" | "variance" | "expired";
+type ItemFilter =
+  | "all"
+  | "counted"
+  | "uncounted"
+  | "variance"
+  | "expired";
 
 const ITEM_FILTERS: Array<{
   value: ItemFilter;
@@ -87,6 +93,10 @@ const ITEM_FILTERS: Array<{
   {
     value: "all",
     label: "All",
+  },
+  {
+    value: "counted",
+    label: "Counted",
   },
   {
     value: "uncounted",
@@ -368,7 +378,7 @@ export function StockCountDetailPage() {
         <div>
           <PageTitle>Stock Count</PageTitle>
           <PageDescription>
-            Snapshot, expected quantity, physical count, and server-derived variance.
+            Record and review physical stock observations.
           </PageDescription>
         </div>
 
@@ -584,6 +594,19 @@ function StockCountDetail({
 }) {
   const isOpen = count.status === "open";
 
+  const exposesSystemQuantities =
+    count.status !== "open" ||
+    count.count_mode === "visible";
+
+  const progressPercentage =
+    count.summary.total_items > 0
+      ? Math.round(
+          (count.summary.counted_items /
+            count.summary.total_items) *
+            100,
+        )
+      : 100;
+
   return (
     <>
       <PageSection>
@@ -603,6 +626,14 @@ function StockCountDetail({
           <DetailBlock
             label="Scope"
             value={count.scope_type === "selected" ? "Selected Products" : "Full Warehouse"}
+          />
+          <DetailBlock
+            label="Count Mode"
+            value={
+              count.count_mode === "blind"
+                ? "Blind Count"
+                : "Visible Count"
+            }
           />
           <DetailBlock
             label="Snapshot"
@@ -652,16 +683,27 @@ function StockCountDetail({
       </PageSection>
 
       <PageSection>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div
+          className={
+            exposesSystemQuantities
+              ? "grid gap-3 md:grid-cols-3"
+              : "grid gap-3 md:grid-cols-2"
+          }
+        >
           <SummaryBlock
             label="Counted"
             value={`${count.summary.counted_items} / ${count.summary.total_items}`}
+            detail={`${progressPercentage}% complete`}
           />
-          <SummaryBlock
-            label="Variance Lines"
-            value={`${count.summary.variance_items}`}
-            detail={`${count.summary.positive_variance_items} over · ${count.summary.negative_variance_items} short`}
-          />
+
+          {exposesSystemQuantities ? (
+            <SummaryBlock
+              label="Variance Lines"
+              value={`${count.summary.variance_items ?? 0}`}
+              detail={`${count.summary.positive_variance_items ?? 0} over · ${count.summary.negative_variance_items ?? 0} short`}
+            />
+          ) : null}
+
           <SummaryBlock
             label="Readiness"
             value={
@@ -669,7 +711,20 @@ function StockCountDetail({
                 ? "Ready to complete"
                 : `${count.summary.uncounted_items} uncounted`
             }
-            detail="Count variance is not an inventory adjustment."
+            detail={
+              exposesSystemQuantities
+                ? "Count variance does not change inventory until an adjustment is posted."
+                : "System quantities and differences remain hidden during this blind count."
+            }
+          />
+        </div>
+
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full bg-foreground transition-[width]"
+            style={{
+              width: `${progressPercentage}%`,
+            }}
           />
         </div>
       </PageSection>
@@ -772,6 +827,10 @@ function StockCountItemsTable({
     setPendingItemId,
   ] = useState<string | null>(null);
 
+  const physicalCountInputRefs = useRef<
+    Record<string, HTMLInputElement | null>
+  >({});
+
   const visibleItems = useMemo(
     () =>
       count.items.filter((item) => {
@@ -789,7 +848,14 @@ function StockCountItemsTable({
             .includes(query);
         const matchesFilter =
           filter === "all" ||
-          (filter === "uncounted" && item.counted_quantity === null) ||
+          (
+            filter === "counted" &&
+            item.counted_quantity !== null
+          ) ||
+          (
+            filter === "uncounted" &&
+            item.counted_quantity === null
+          ) ||
           (
             filter === "variance" &&
             exposesSystemQuantities &&
@@ -811,7 +877,49 @@ function StockCountItemsTable({
     ],
   );
 
-  const saveItem = (item: StockCountItem) => {
+  const nextUncountedItemId = (
+    currentItemId: string,
+  ): string | null => {
+    const currentIndex = visibleItems.findIndex(
+      (item) => item.id === currentItemId,
+    );
+
+    if (currentIndex < 0) {
+      return null;
+    }
+
+    const nextItem = visibleItems
+      .slice(currentIndex + 1)
+      .find(
+        (item) =>
+          item.counted_quantity === null,
+      );
+
+    return nextItem?.id ?? null;
+  };
+
+  const focusPhysicalCountInput = (
+    itemId: string,
+  ) => {
+    window.requestAnimationFrame(() => {
+      const input =
+        physicalCountInputRefs.current[itemId];
+
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.select();
+    });
+  };
+
+  const saveItem = (
+    item: StockCountItem,
+    options?: {
+      focusNextUncounted?: boolean;
+    },
+  ) => {
     const draft = (drafts[item.id] ?? "").trim();
     if (!draft) {
       toast.error("Enter a Physical Count before saving. Blank means not counted.");
@@ -822,7 +930,13 @@ function StockCountItemsTable({
       return;
     }
 
+    const nextItemId =
+      options?.focusNextUncounted
+        ? nextUncountedItemId(item.id)
+        : null;
+
     setPendingItemId(item.id);
+
     updateItem.mutate(
       {
         countId: count.id,
@@ -833,9 +947,17 @@ function StockCountItemsTable({
       },
       {
         onSuccess: () => {
-          toast.success("Count line saved.");
+          if (!options?.focusNextUncounted) {
+            toast.success("Count line saved.");
+          }
+
           setPendingItemId(null);
-          onLineUpdated();
+
+          if (nextItemId) {
+            focusPhysicalCountInput(
+              nextItemId,
+            );
+          }
         },
         onError: (error) => {
           toast.error(errorMessage(error));
@@ -936,7 +1058,7 @@ function StockCountItemsTable({
                               null,
                           )}
                         </div>
-                        {item.batch?.is_expired ? (
+                        {stockCountItemIsExpired(item) ? (
                           <Badge variant="outline">Expired</Badge>
                         ) : null}
                       </div>
@@ -960,6 +1082,11 @@ function StockCountItemsTable({
                           Physical Count for {item.product.name}
                         </Label>
                         <Input
+                          ref={(element) => {
+                            physicalCountInputRefs.current[
+                              item.id
+                            ] = element;
+                          }}
                           id={`physical-count-${item.id}`}
                           inputMode="decimal"
                           value={drafts[item.id] ?? ""}
@@ -970,9 +1097,16 @@ function StockCountItemsTable({
                             }))
                           }
                           onKeyDown={(event) => {
-                            if (event.key === "Enter" && isOpen) {
+                            if (
+                              event.key === "Enter" &&
+                              isOpen &&
+                              !isPending
+                            ) {
                               event.preventDefault();
-                              saveItem(item);
+
+                              saveItem(item, {
+                                focusNextUncounted: true,
+                              });
                             }
                           }}
                           placeholder="Not counted"
