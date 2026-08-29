@@ -43,12 +43,25 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     __tablename__ = "products"
     __table_args__ = (
         db.UniqueConstraint("tenant_id", "internal_sku", name="uq_products_tenant_internal_sku"),
+        db.Index(
+            "ix_products_one_master_item_per_tenant",
+            "tenant_id",
+            "master_item_id",
+            unique=True,
+            postgresql_where=db.text("master_item_id IS NOT NULL"),
+        ),
     )
 
     tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
     category_id = db.Column(db.String(36), db.ForeignKey("product_categories.id"), index=True)
     brand_id = db.Column(db.String(36), db.ForeignKey("brands.id"), index=True)
     unit_id = db.Column(db.String(36), db.ForeignKey("units_of_measure.id"), index=True)
+
+    master_item_id = db.Column(
+        db.String(36),
+        db.ForeignKey("master_items.id"),
+        index=True,
+    )
 
     internal_sku = db.Column(db.String(60), nullable=False)
     supplier_sku = db.Column(db.String(60))

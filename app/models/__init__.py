@@ -15,6 +15,12 @@ from app.models.auth import (
     UserRole,
 )
 from app.models.product import ProductCategory, Brand, UnitOfMeasure, Product, ProductUnit, ProductCode
+from app.models.master_catalogue import (
+    MasterItem,
+    CatalogueSupplier,
+    MasterItemSupplierMapping,
+    SupplierItemPrice,
+)
 from app.models.customer import Customer
 from app.models.supplier import Supplier
 from app.models.inventory import (
@@ -65,6 +71,10 @@ __all__ = [
     "Product",
     "ProductUnit",
     "ProductCode",
+    "MasterItem",
+    "CatalogueSupplier",
+    "MasterItemSupplierMapping",
+    "SupplierItemPrice",
     "Customer",
     "Supplier",
     "Warehouse",
