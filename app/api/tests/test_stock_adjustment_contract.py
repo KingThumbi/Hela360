@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from flask import Flask
+from sqlalchemy import func
 
 from app.api.errors import register_error_handlers
 from app.api.inventory import bp as inventory_bp
@@ -581,3 +582,415 @@ def test_stock_adjustment_list_and_detail_are_branch_scoped(client):
     assert response.json["items"][0]["adjustment_number"].startswith("SA-")
     assert detail.status_code == 200
     assert detail.json["item"]["items"][0]["product"]["id"] == NON_BATCH_PRODUCT_ID
+
+
+# ============================================================================
+# Discovered Stock Count batch reconciliation
+# ============================================================================
+
+
+def _completed_discovered_count(
+    *,
+    count_id: str,
+    count_number: str,
+    items: list[dict],
+) -> StockCount:
+    now = datetime.now(timezone.utc)
+
+    count = StockCount(
+        id=count_id,
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number=count_number,
+        idempotency_key=f"{count_id}-key",
+        request_fingerprint=f"{count_id}-fingerprint",
+        scope_type="full",
+        count_mode="blind",
+        status="completed",
+        snapshot_at=now,
+        started_at=now,
+        started_by=USER_ID,
+        completed_at=now,
+        completed_by=USER_ID,
+        created_at=now,
+        updated_at=now,
+    )
+    db.session.add(count)
+    db.session.flush()
+
+    for line_number, values in enumerate(
+        items,
+        start=1,
+    ):
+        counted = Decimal(
+            str(values["counted_quantity"])
+        )
+
+        db.session.add(
+            StockCountItem(
+                id=values["id"],
+                stock_count_id=str(count.id),
+                product_id=BATCH_PRODUCT_ID,
+                batch_id=None,
+                source_type="discovered",
+                observed_batch_number=values[
+                    "batch_number"
+                ],
+                observed_expiry_date=values[
+                    "expiry_date"
+                ],
+                line_number=line_number,
+                snapshot_quantity=Decimal(
+                    "0.0000"
+                ),
+                expected_quantity=Decimal(
+                    "0.0000"
+                ),
+                counted_quantity=counted,
+                variance_quantity=counted,
+                counted_at=now,
+                counted_by=USER_ID,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    db.session.commit()
+    return count
+
+
+def test_stock_count_adjustment_creates_canonical_discovered_batch(
+    client,
+):
+    count_id = (
+        "10101010-1010-4010-8010-101010101010"
+    )
+    expiry = date.today().replace(
+        year=date.today().year + 2
+    )
+
+    _completed_discovered_count(
+        count_id=count_id,
+        count_number="SC-DISCOVERED-NEW",
+        items=[
+            {
+                "id": (
+                    "11111111-aaaa-4111-8111-"
+                    "111111111111"
+                ),
+                "batch_number": "FOUND-001",
+                "expiry_date": expiry,
+                "counted_quantity": "6",
+            }
+        ],
+    )
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/adjust"
+        ),
+        json=count_payload(
+            idempotency_key=(
+                "discovered-new-batch"
+            )
+        ),
+    )
+
+    assert response.status_code == 201
+
+    batch = InventoryBatch.query.filter_by(
+        tenant_id=TENANT_ID,
+        warehouse_id=WAREHOUSE_ID,
+        product_id=BATCH_PRODUCT_ID,
+        batch_number="FOUND-001",
+    ).one()
+
+    assert batch.expiry_date == expiry
+    assert batch.unit_cost is None
+    assert (
+        batch.quantity_on_hand
+        == Decimal("6.0000")
+    )
+
+    item = StockAdjustmentItem.query.filter_by(
+        stock_count_item_id=(
+            "11111111-aaaa-4111-8111-"
+            "111111111111"
+        )
+    ).one()
+
+    assert item.batch_id == batch.id
+
+    movement = InventoryMovement.query.filter_by(
+        reference_id=response.json["item"]["id"]
+    ).one()
+
+    assert movement.batch_id == batch.id
+    assert movement.quantity == Decimal("6.0000")
+
+
+def test_stock_count_adjustment_resolves_existing_discovered_batch(
+    client,
+):
+    count_id = (
+        "20202020-2020-4020-8020-202020202020"
+    )
+    existing = db.session.get(
+        InventoryBatch,
+        BATCH_ID,
+    )
+
+    _completed_discovered_count(
+        count_id=count_id,
+        count_number="SC-DISCOVERED-EXISTING",
+        items=[
+            {
+                "id": (
+                    "22222222-aaaa-4222-8222-"
+                    "222222222222"
+                ),
+                # Case difference is intentional.
+                "batch_number": "b-1",
+                "expiry_date": (
+                    existing.expiry_date
+                ),
+                "counted_quantity": "3",
+            }
+        ],
+    )
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/adjust"
+        ),
+        json=count_payload(
+            idempotency_key=(
+                "discovered-existing-batch"
+            )
+        ),
+    )
+
+    assert response.status_code == 201
+
+    refreshed = db.session.get(
+        InventoryBatch,
+        BATCH_ID,
+    )
+    assert (
+        refreshed.quantity_on_hand
+        == Decimal("11.0000")
+    )
+
+    assert (
+        InventoryBatch.query.filter(
+            InventoryBatch.product_id
+            == BATCH_PRODUCT_ID,
+            func.lower(
+                InventoryBatch.batch_number
+            )
+            == "b-1",
+        ).count()
+        == 1
+    )
+
+
+def test_stock_count_adjustment_rejects_discovered_expiry_conflict(
+    client,
+):
+    count_id = (
+        "30303030-3030-4030-8030-303030303030"
+    )
+    existing = db.session.get(
+        InventoryBatch,
+        BATCH_ID,
+    )
+
+    conflicting_expiry = existing.expiry_date.replace(
+        year=existing.expiry_date.year + 1
+    )
+
+    _completed_discovered_count(
+        count_id=count_id,
+        count_number="SC-DISCOVERED-CONFLICT",
+        items=[
+            {
+                "id": (
+                    "33333333-aaaa-4333-8333-"
+                    "333333333333"
+                ),
+                "batch_number": "B-1",
+                "expiry_date": conflicting_expiry,
+                "counted_quantity": "2",
+            }
+        ],
+    )
+
+    before_quantity = (
+        existing.quantity_on_hand
+    )
+    before_batch_count = (
+        InventoryBatch.query.count()
+    )
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/adjust"
+        ),
+        json=count_payload(
+            idempotency_key=(
+                "discovered-expiry-conflict"
+            )
+        ),
+    )
+
+    assert response.status_code == 409
+
+    payload = response.get_json()
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "CONFLICT"
+    assert (
+        "expiry" in
+        payload["error"]["message"].lower()
+    )
+
+    assert StockAdjustment.query.filter_by(
+        source_type="stock_count",
+        source_id=count_id,
+    ).count() == 0
+
+    assert (
+        InventoryBatch.query.count()
+        == before_batch_count
+    )
+    assert (
+        db.session.get(
+            InventoryBatch,
+            BATCH_ID,
+        ).quantity_on_hand
+        == before_quantity
+    )
+
+
+def test_stock_count_adjustment_posts_multiple_discovered_batches(
+    client,
+):
+    count_id = (
+        "40404040-4040-4040-8040-404040404040"
+    )
+
+    _completed_discovered_count(
+        count_id=count_id,
+        count_number="SC-DISCOVERED-MULTI",
+        items=[
+            {
+                "id": (
+                    "44444444-aaaa-4444-8444-"
+                    "444444444441"
+                ),
+                "batch_number": "FOUND-X",
+                "expiry_date": date(
+                    2027,
+                    5,
+                    31,
+                ),
+                "counted_quantity": "100",
+            },
+            {
+                "id": (
+                    "44444444-aaaa-4444-8444-"
+                    "444444444442"
+                ),
+                "batch_number": "FOUND-Y",
+                "expiry_date": date(
+                    2028,
+                    6,
+                    30,
+                ),
+                "counted_quantity": "50",
+            },
+            {
+                "id": (
+                    "44444444-aaaa-4444-8444-"
+                    "444444444443"
+                ),
+                "batch_number": "FOUND-Z",
+                "expiry_date": date(
+                    2029,
+                    1,
+                    31,
+                ),
+                "counted_quantity": "50",
+            },
+        ],
+    )
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/adjust"
+        ),
+        json=count_payload(
+            idempotency_key=(
+                "discovered-multiple-batches"
+            )
+        ),
+    )
+
+    assert response.status_code == 201
+
+    batches = (
+        InventoryBatch.query
+        .filter(
+            InventoryBatch.product_id
+            == BATCH_PRODUCT_ID,
+            InventoryBatch.batch_number.in_(
+                [
+                    "FOUND-X",
+                    "FOUND-Y",
+                    "FOUND-Z",
+                ]
+            ),
+        )
+        .order_by(
+            InventoryBatch.batch_number.asc()
+        )
+        .all()
+    )
+
+    assert [
+        batch.batch_number
+        for batch in batches
+    ] == [
+        "FOUND-X",
+        "FOUND-Y",
+        "FOUND-Z",
+    ]
+
+    assert [
+        batch.quantity_on_hand
+        for batch in batches
+    ] == [
+        Decimal("100.0000"),
+        Decimal("50.0000"),
+        Decimal("50.0000"),
+    ]
+
+    adjustment_items = (
+        StockAdjustmentItem.query
+        .filter_by(
+            stock_adjustment_id=(
+                response.json["item"]["id"]
+            )
+        )
+        .all()
+    )
+
+    assert len(adjustment_items) == 3
+    assert all(
+        item.batch_id
+        for item in adjustment_items
+    )

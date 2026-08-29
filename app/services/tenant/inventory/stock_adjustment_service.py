@@ -295,16 +295,51 @@ class StockAdjustmentService:
             if not rows:
                 raise ConflictError("Stock Count has no variance to adjust.")
 
-            lines = [
-                AdjustmentLine(
-                    product_id=str(item.product_id),
-                    batch_id=str(item.batch_id) if item.batch_id else None,
-                    quantity_delta=_q4(item.variance_quantity),
-                    reason=f"Variance from Stock Count {count.count_number}.",
-                    stock_count_item_id=str(item.id),
+            products = self._load_products(
+                tenant_id=tenant_id,
+                product_ids=[
+                    str(item.product_id)
+                    for item in rows
+                ],
+            )
+
+            lines: list[AdjustmentLine] = []
+
+            for item in rows:
+                product = products[
+                    str(item.product_id)
+                ]
+
+                batch_id = (
+                    self._resolve_stock_count_batch_id(
+                        tenant_id=tenant_id,
+                        warehouse_id=str(
+                            count.warehouse_id
+                        ),
+                        product=product,
+                        item=item,
+                        now=_now(),
+                    )
                 )
-                for item in rows
-            ]
+
+                lines.append(
+                    AdjustmentLine(
+                        product_id=str(
+                            item.product_id
+                        ),
+                        batch_id=batch_id,
+                        quantity_delta=_q4(
+                            item.variance_quantity
+                        ),
+                        reason=(
+                            "Variance from Stock Count "
+                            f"{count.count_number}."
+                        ),
+                        stock_count_item_id=str(
+                            item.id
+                        ),
+                    )
+                )
 
             return self._post_adjustment(
                 tenant_id=tenant_id,
@@ -475,6 +510,192 @@ class StockAdjustmentService:
             "source_count": source_count,
             "items": items,
         }
+
+    def _resolve_stock_count_batch_id(
+        self,
+        *,
+        tenant_id: str,
+        warehouse_id: str,
+        product: Product,
+        item: StockCountItem,
+        now: datetime,
+    ) -> str | None:
+        """
+        Resolve a completed Stock Count line to its canonical batch.
+
+        Snapshot lines already carry their canonical ``batch_id``.
+
+        Discovered physical lines deliberately do not create or mutate an
+        InventoryBatch while counting. Reconciliation happens here, at the
+        authorized Stock Adjustment boundary.
+
+        A discovered batch may:
+
+        * attach to an existing canonical batch;
+        * populate a previously unknown expiry on that batch;
+        * create a zero-on-hand canonical batch when none exists.
+
+        Conflicting physical and canonical expiry information is rejected
+        rather than silently rewritten.
+        """
+
+        tracks_batch_identity = bool(
+            product.track_batches
+        )
+        tracks_expiry = bool(
+            product.track_expiry
+        )
+
+        if not (
+            tracks_batch_identity or
+            tracks_expiry
+        ):
+            if item.batch_id:
+                raise ValidationError(
+                    "Non-batch Stock Count lines "
+                    "must not reference a batch."
+                )
+            return None
+
+        # Existing snapshot lines already point at the canonical batch.
+        if item.batch_id:
+            return str(item.batch_id)
+
+        if item.source_type != "discovered":
+            raise ValidationError(
+                "Batch-tracked Stock Count line "
+                "does not reference a canonical batch."
+            )
+
+        observed_batch_number = _optional_text(
+            item.observed_batch_number
+        )
+        observed_expiry_date = (
+            item.observed_expiry_date
+        )
+
+        if (
+            tracks_batch_identity and
+            not observed_batch_number
+        ):
+            raise ValidationError(
+                "Discovered batch-tracked Stock Count "
+                "line is missing its observed batch number."
+            )
+
+        if (
+            tracks_expiry and
+            observed_expiry_date is None
+        ):
+            raise ValidationError(
+                "Discovered expiry-tracked Stock Count "
+                "line is missing its observed expiry date."
+            )
+
+        query = (
+            self.session.query(InventoryBatch)
+            .filter(
+                InventoryBatch.tenant_id
+                == tenant_id,
+                InventoryBatch.warehouse_id
+                == warehouse_id,
+                InventoryBatch.product_id
+                == product.id,
+            )
+        )
+
+        if tracks_batch_identity:
+            normalized_batch_number = (
+                observed_batch_number.casefold()
+            )
+
+            matches = (
+                query.filter(
+                    func.lower(
+                        InventoryBatch.batch_number
+                    )
+                    == normalized_batch_number
+                )
+                .with_for_update()
+                .all()
+            )
+        else:
+            # Expiry-only tracking has no batch-number identity.
+            matches = (
+                query.filter(
+                    InventoryBatch.batch_number.is_(
+                        None
+                    ),
+                    InventoryBatch.expiry_date
+                    == observed_expiry_date,
+                )
+                .with_for_update()
+                .all()
+            )
+
+        if len(matches) > 1:
+            raise ConflictError(
+                "Stock Count batch reconciliation is "
+                "ambiguous. Multiple canonical batches "
+                "match the physical observation."
+            )
+
+        if matches:
+            batch = matches[0]
+
+            canonical_expiry = batch.expiry_date
+
+            if (
+                canonical_expiry is not None and
+                observed_expiry_date is not None and
+                canonical_expiry
+                != observed_expiry_date
+            ):
+                raise ConflictError(
+                    "Observed expiry date conflicts with "
+                    "the existing inventory batch. Review "
+                    "the Stock Count before posting an "
+                    "adjustment."
+                )
+
+            if (
+                canonical_expiry is None and
+                observed_expiry_date is not None
+            ):
+                batch.expiry_date = (
+                    observed_expiry_date
+                )
+                batch.updated_at = now
+                self.session.flush()
+
+            return str(batch.id)
+
+        batch = InventoryBatch(
+            tenant_id=tenant_id,
+            warehouse_id=warehouse_id,
+            product_id=str(product.id),
+            batch_number=(
+                observed_batch_number
+                if tracks_batch_identity
+                else None
+            ),
+            expiry_date=observed_expiry_date,
+            unit_cost=None,
+            quantity_on_hand=Decimal(
+                "0.0000"
+            ),
+            quantity_reserved=Decimal(
+                "0.0000"
+            ),
+            status="available",
+            created_at=now,
+            updated_at=now,
+        )
+
+        self.session.add(batch)
+        self.session.flush()
+
+        return str(batch.id)
 
     def _post_adjustment(
         self,
