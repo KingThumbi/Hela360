@@ -169,6 +169,45 @@ class StockCount(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     notes = db.Column(db.Text)
 
 
+class StockCountScopeProduct(
+    UUIDPrimaryKeyMixin,
+    TimestampMixin,
+    db.Model,
+):
+    """
+    Persist one Product explicitly selected into a Stock Count scope.
+
+    This is scope metadata, not physical inventory evidence.
+
+    Snapshot and discovered quantities remain represented exclusively by
+    StockCountItem.
+    """
+
+    __tablename__ = "stock_count_scope_products"
+    __table_args__ = (
+        db.UniqueConstraint(
+            "stock_count_id",
+            "product_id",
+            name=(
+                "uq_stock_count_scope_products_"
+                "count_product"
+            ),
+        ),
+    )
+
+    stock_count_id = db.Column(
+        db.String(36),
+        db.ForeignKey("stock_counts.id"),
+        nullable=False,
+        index=True,
+    )
+    product_id = db.Column(
+        db.String(36),
+        db.ForeignKey("products.id"),
+        nullable=False,
+        index=True,
+    )
+
 class StockCountItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     __tablename__ = "stock_count_items"
     __table_args__ = (

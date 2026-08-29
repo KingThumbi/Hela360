@@ -27,6 +27,7 @@ from app.models.inventory import (
     StockAdjustmentItem,
     StockCount,
     StockCountItem,
+    StockCountScopeProduct,
     Warehouse,
 )
 from app.models.pos import (
@@ -75,6 +76,7 @@ __all__ = [
     "StockAdjustmentItem",
     "StockCount",
     "StockCountItem",
+    "StockCountScopeProduct",
     "InventoryMovement",
     "Till",
     "TillShift",

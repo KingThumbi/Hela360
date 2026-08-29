@@ -18,6 +18,7 @@ from app.models import (
     StockBalance,
     StockCount,
     StockCountItem,
+    StockCountScopeProduct,
     Tenant,
     User,
     Warehouse,
@@ -62,6 +63,9 @@ def app_context():
         StockBalance.__table__.create(db.engine)
         InventoryMovement.__table__.create(db.engine)
         StockCount.__table__.create(db.engine)
+        StockCountScopeProduct.__table__.create(
+            db.engine
+        )
         StockCountItem.__table__.create(db.engine)
         seed_data()
 
@@ -69,6 +73,9 @@ def app_context():
 
         db.session.remove()
         StockCountItem.__table__.drop(db.engine)
+        StockCountScopeProduct.__table__.drop(
+            db.engine
+        )
         StockCount.__table__.drop(db.engine)
         InventoryMovement.__table__.drop(db.engine)
         StockBalance.__table__.drop(db.engine)
@@ -1786,3 +1793,121 @@ def test_selected_stock_count_allows_new_batch_for_in_scope_product(
         == "7.0000"
     )
     assert discovered["batch"] is None
+
+
+# ============================================================================
+# Persisted selected Product scope
+# ============================================================================
+
+
+def test_selected_stock_count_persists_exact_product_scope(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+                NON_BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    scope_product_ids = {
+        row.product_id
+        for row in (
+            StockCountScopeProduct.query
+            .filter_by(
+                stock_count_id=count_id,
+            )
+            .all()
+        )
+    }
+
+    assert scope_product_ids == {
+        BATCH_PRODUCT_ID,
+        NON_BATCH_PRODUCT_ID,
+    }
+
+
+def test_full_stock_count_does_not_create_selected_scope_rows(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    assert (
+        StockCountScopeProduct.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .count()
+        == 0
+    )
+
+
+def test_selected_scope_membership_is_independent_of_snapshot_lines(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            product_ids=[
+                BATCH_PRODUCT_ID,
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    count_id = created.get_json()["item"]["id"]
+
+    # Simulate a count where physical snapshot lines are not the source
+    # of truth for selected Product membership.
+    (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .delete(
+            synchronize_session=False
+        )
+    )
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count_id}/items/discovered"
+        ),
+        json={
+            "product_id": BATCH_PRODUCT_ID,
+            "batch_number": "SCOPE-FOUND-001",
+            "expiry_date": "2030-06-30",
+            "counted_quantity": "4",
+        },
+    )
+
+    assert response.status_code == 201
+
+    discovered = next(
+        line
+        for line in response.get_json()["item"]["items"]
+        if line["source_type"] == "discovered"
+    )
+
+    assert (
+        discovered["product"]["id"]
+        == BATCH_PRODUCT_ID
+    )
+    assert (
+        discovered["observed_batch_number"]
+        == "SCOPE-FOUND-001"
+    )

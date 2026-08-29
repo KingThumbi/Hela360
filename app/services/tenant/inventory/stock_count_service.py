@@ -17,6 +17,7 @@ from app.models import (
     StockAdjustment,
     StockCount,
     StockCountItem,
+    StockCountScopeProduct,
     User,
     Warehouse,
 )
@@ -226,6 +227,16 @@ class StockCountService:
             self.session.flush()
             count.count_number = self._count_number(count, now)
 
+            for product_id in request.product_ids:
+                self.session.add(
+                    StockCountScopeProduct(
+                        stock_count_id=str(count.id),
+                        product_id=product_id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
             for line_number, row in enumerate(rows, start=1):
                 self.session.add(
                     StockCountItem(
@@ -291,22 +302,20 @@ class StockCountService:
             product = products[request.product_id]
 
             if count.scope_type == "selected":
-                scoped_product_ids = {
-                    str(product_id)
-                    for (product_id,) in (
-                        self.session.query(
-                            StockCountItem.product_id
-                        )
-                        .filter(
-                            StockCountItem.stock_count_id
-                            == str(count.id)
-                        )
-                        .distinct()
-                        .all()
+                scope_member = (
+                    self.session.query(
+                        StockCountScopeProduct.id
                     )
-                }
+                    .filter(
+                        StockCountScopeProduct.stock_count_id
+                        == str(count.id),
+                        StockCountScopeProduct.product_id
+                        == str(product.id),
+                    )
+                    .first()
+                )
 
-                if str(product.id) not in scoped_product_ids:
+                if not scope_member:
                     raise ValidationError(
                         "This product is outside the "
                         "selected Stock Count scope."
