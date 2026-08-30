@@ -18,6 +18,7 @@ from app.services.tenant.products import (
     ProductDeletionBlockedError,
     ProductIdentityService,
     ProductNotFoundError,
+    ProductReferenceService,
     ProductSkuConflictError,
     ProductValidationError,
 )
@@ -201,74 +202,42 @@ def _serialize_product_unit(product_unit: ProductUnit) -> dict:
     }
 
 
-def _get_or_create_brand(tenant_id: str, brand_name: str | None):
-    if not brand_name:
-        return None
-    brand_name = brand_name.strip()
-    if not brand_name:
-        return None
-
-    brand = Brand.query.filter_by(tenant_id=tenant_id, name=brand_name).first()
-    if brand:
-        return brand
-
-    brand = Brand(
+def _get_or_create_brand(
+    tenant_id: str,
+    brand_name: str | None,
+):
+    return ProductReferenceService(
+        db.session
+    ).resolve_brand(
         tenant_id=tenant_id,
-        name=brand_name,
-        is_active=True,
+        brand_name=brand_name,
     )
-    db.session.add(brand)
-    db.session.flush()
-    return brand
 
 
-def _get_or_create_category(tenant_id: str, category_name: str | None):
-    if not category_name:
-        return None
-    category_name = category_name.strip()
-    if not category_name:
-        return None
-
-    category = ProductCategory.query.filter_by(tenant_id=tenant_id, name=category_name).first()
-    if category:
-        return category
-
-    category = ProductCategory(
+def _get_or_create_category(
+    tenant_id: str,
+    category_name: str | None,
+):
+    return ProductReferenceService(
+        db.session
+    ).resolve_category(
         tenant_id=tenant_id,
-        name=category_name,
-        is_active=True,
+        category_name=category_name,
     )
-    db.session.add(category)
-    db.session.flush()
-    return category
 
 
-def _get_or_create_unit(tenant_id: str, unit_code: str | None, unit_name: str | None):
-    if not unit_code and not unit_name:
-        return None
-
-    if unit_code:
-        existing = UnitOfMeasure.query.filter_by(
-            tenant_id=tenant_id,
-            code=unit_code.strip(),
-        ).first()
-        if existing:
-            return existing
-
-    if not unit_code:
-        raise ValueError("unit_code is required when creating a new unit.")
-    if not unit_name:
-        raise ValueError("unit_name is required when creating a new unit.")
-
-    unit = UnitOfMeasure(
+def _get_or_create_unit(
+    tenant_id: str,
+    unit_code: str | None,
+    unit_name: str | None,
+):
+    return ProductReferenceService(
+        db.session
+    ).resolve_unit(
         tenant_id=tenant_id,
-        code=unit_code.strip(),
-        name=unit_name.strip(),
-        base_factor=Decimal("1"),
+        unit_code=unit_code,
+        unit_name=unit_name,
     )
-    db.session.add(unit)
-    db.session.flush()
-    return unit
 
 
 @bp.get("/products")

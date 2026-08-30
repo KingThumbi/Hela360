@@ -17,6 +17,9 @@ from .product_identity_service import (
     ProductIdentityService,
     ProductSkuConflictError,
 )
+from .product_reference_service import (
+    ProductReferenceService,
+)
 
 __all__ = [
     "ProductCommandError",
@@ -25,6 +28,7 @@ __all__ = [
     "ProductDeletionDependency",
     "ProductDeletionEligibility",
     "ProductIdentityService",
+    "ProductReferenceService",
     "ProductLifecycleResult",
     "ProductNotFoundError",
     "ProductSkuConflictError",
