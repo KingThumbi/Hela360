@@ -249,6 +249,12 @@ class SupplierItemPrice(
         index=True,
     )
 
+    source_offer_key = db.Column(
+        db.String(60),
+        unique=True,
+        index=True,
+    )
+
     price_type = db.Column(
         db.String(40),
         nullable=False,
