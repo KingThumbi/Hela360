@@ -78,6 +78,10 @@ class AuditAction(StrEnum):
     PRODUCT_UPDATED = "PRODUCT_UPDATED"
     PRODUCT_DELETED = "PRODUCT_DELETED"
 
+    MASTER_CATALOGUE_ITEM_ADOPTED = (
+        "MASTER_CATALOGUE_ITEM_ADOPTED"
+    )
+
     PRICE_CHANGED = "PRICE_CHANGED"
 
     # ==========================================================
