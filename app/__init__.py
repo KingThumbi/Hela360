@@ -72,6 +72,7 @@ def register_blueprints(app: Flask) -> None:
 
     from app.api.health import bp as health_bp
     from app.api.products import bp as products_bp
+    from app.api.catalogue import bp as catalogue_bp
     from app.api.payment_methods import bp as payment_methods_bp
     from app.api.inventory import bp as inventory_bp
     from app.api.tills import bp as tills_bp
@@ -86,6 +87,7 @@ def register_blueprints(app: Flask) -> None:
 
     app.register_blueprint(health_bp, url_prefix="/api")
     app.register_blueprint(products_bp, url_prefix="/api")
+    app.register_blueprint(catalogue_bp, url_prefix="/api")
     app.register_blueprint(payment_methods_bp, url_prefix="/api")
     app.register_blueprint(inventory_bp, url_prefix="/api")
     app.register_blueprint(tills_bp, url_prefix="/api")
