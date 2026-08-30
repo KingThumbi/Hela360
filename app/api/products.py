@@ -117,6 +117,7 @@ def _serialize_product(product: Product) -> dict:
     return {
         "id": product.id,
         "tenant_id": product.tenant_id,
+        "master_item_id": product.master_item_id,
         "internal_sku": product.internal_sku,
         "supplier_sku": product.supplier_sku,
         "name": product.name,

@@ -16,6 +16,7 @@ from app.models import (
     GoodsReceiptItem,
     InventoryBatch,
     InventoryMovement,
+    MasterItem,
     Product,
     ProductCategory,
     ProductCode,
@@ -49,6 +50,7 @@ def app_context():
         Brand.__table__.create(db.engine)
         UnitOfMeasure.__table__.create(db.engine)
         TaxCode.__table__.create(db.engine)
+        MasterItem.__table__.create(db.engine)
         Product.__table__.create(db.engine)
 
         # Product permanent-deletion eligibility inspects every direct
@@ -99,6 +101,7 @@ def app_context():
         InventoryBatch.__table__.drop(db.engine)
 
         Product.__table__.drop(db.engine)
+        MasterItem.__table__.drop(db.engine)
         TaxCode.__table__.drop(db.engine)
         UnitOfMeasure.__table__.drop(db.engine)
         Brand.__table__.drop(db.engine)
@@ -1218,4 +1221,36 @@ def test_create_product_duplicate_internal_sku_returns_conflict(client):
     assert (
         second.json["error"]
         == "A product with that internal_sku already exists."
+    )
+
+
+def test_product_detail_exposes_master_item_lineage(client):
+    master_item = MasterItem(
+        master_code="HMI-PRODUCT-LINEAGE",
+        canonical_name="Catalogue Linked Product",
+        review_status="approved",
+        is_active=True,
+    )
+
+    db.session.add(master_item)
+    db.session.flush()
+
+    product = add_product(
+        tenant_id="tenant-1",
+        sku="MASTER-LINK-001",
+        name="Catalogue Linked Product",
+    )
+
+    product.master_item_id = master_item.id
+
+    db.session.commit()
+
+    response = client.get(
+        f"/api/products/{product.id}"
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json["item"]["master_item_id"]
+        == master_item.id
     )

@@ -10,7 +10,18 @@ from app.api.catalogue import bp as catalogue_bp
 from app.api.errors import register_error_handlers
 from app.auth.exceptions import PermissionDeniedError
 from app.extensions import db
-from app.models import MasterItem, Product, Tenant
+from app.services.common.audit_service import AuditService
+from app.models import (
+    AuditLog,
+    Brand,
+    MasterItem,
+    NumberSequence,
+    Product,
+    ProductCategory,
+    ProductUnit,
+    Tenant,
+    UnitOfMeasure,
+)
 
 
 @pytest.fixture()
@@ -31,8 +42,14 @@ def app_context():
 
     with app.app_context():
         Tenant.__table__.create(db.engine)
+        NumberSequence.__table__.create(db.engine)
+        ProductCategory.__table__.create(db.engine)
+        Brand.__table__.create(db.engine)
+        UnitOfMeasure.__table__.create(db.engine)
         MasterItem.__table__.create(db.engine)
         Product.__table__.create(db.engine)
+        ProductUnit.__table__.create(db.engine)
+        AuditLog.__table__.create(db.engine)
 
         db.session.add_all(
             [
@@ -59,8 +76,14 @@ def app_context():
 
         db.session.remove()
 
+        AuditLog.__table__.drop(db.engine)
+        ProductUnit.__table__.drop(db.engine)
         Product.__table__.drop(db.engine)
         MasterItem.__table__.drop(db.engine)
+        UnitOfMeasure.__table__.drop(db.engine)
+        Brand.__table__.drop(db.engine)
+        ProductCategory.__table__.drop(db.engine)
+        NumberSequence.__table__.drop(db.engine)
         Tenant.__table__.drop(db.engine)
 
 
@@ -95,6 +118,14 @@ def client(
         "app.services.tenant.auth.decorators."
         "authorization_service.authorize",
         lambda *args, **kwargs: None,
+    )
+
+    monkeypatch.setattr(
+        AuditService,
+        "log",
+        lambda self, **kwargs: SimpleNamespace(
+            id="audit-test-1"
+        ),
     )
 
     return app_context.test_client()
@@ -488,6 +519,299 @@ def test_catalogue_list_requires_products_view_permission(
 
     response = app_context.test_client().get(
         "/api/catalogue/items"
+    )
+
+    assert response.status_code == 403
+    assert (
+        response.json["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
+
+
+def test_catalogue_adoption_creates_tenant_product(client):
+    item = _master_item(
+        code="HMI-API-ADOPT-001",
+        name="Amoxicillin 500 mg Capsules",
+        generic_name="Amoxicillin",
+        category_name="Antibiotics",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json={
+            "internal_sku": "CAT-001",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json["ok"] is True
+
+    product_data = response.json["item"]
+
+    assert product_data["tenant_id"] == "tenant-1"
+    assert product_data["master_item_id"] == item.id
+    assert product_data["internal_sku"] == "CAT-001"
+    assert (
+        product_data["name"]
+        == "Amoxicillin 500 mg Capsules"
+    )
+    assert (
+        product_data["generic_name"]
+        == "Amoxicillin"
+    )
+
+    product = (
+        db.session.query(Product)
+        .filter(
+            Product.tenant_id == "tenant-1",
+            Product.master_item_id == item.id,
+        )
+        .one()
+    )
+
+    assert product.id == product_data["id"]
+
+
+def test_catalogue_adoption_uses_generated_sku_when_omitted(
+    client,
+):
+    item = _master_item(
+        code="HMI-API-ADOPT-002",
+        name="Generated SKU Product",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json={},
+    )
+
+    assert response.status_code == 201
+
+    sku = response.json["item"]["internal_sku"]
+
+    assert sku
+    assert sku != item.master_code
+
+
+def test_catalogue_adoption_returns_existing_product_on_duplicate(
+    client,
+):
+    item = _master_item(
+        code="HMI-API-ADOPT-003",
+        name="Duplicate Adoption Product",
+    )
+
+    product = _product(
+        tenant_id="tenant-1",
+        master_item_id=item.id,
+        sku="EXISTING-001",
+        name="Existing Product",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json={
+            "internal_sku": "NEW-SKU",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json["ok"] is False
+    assert (
+        response.json["code"]
+        == "master_item_already_adopted"
+    )
+
+    assert response.json["product"] == {
+        "id": product.id,
+        "master_item_id": item.id,
+        "internal_sku": "EXISTING-001",
+        "name": "Existing Product",
+        "is_active": True,
+    }
+
+
+def test_catalogue_adoption_rejects_duplicate_explicit_sku(
+    client,
+):
+    existing_master = _master_item(
+        code="HMI-SKU-EXISTING",
+        name="Existing SKU Master",
+    )
+
+    new_master = _master_item(
+        code="HMI-SKU-NEW",
+        name="New SKU Master",
+    )
+
+    _product(
+        tenant_id="tenant-1",
+        master_item_id=existing_master.id,
+        sku="DUP-SKU-001",
+        name="Existing SKU Product",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{new_master.id}/adopt",
+        json={
+            "internal_sku": "DUP-SKU-001",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json == {
+        "ok": False,
+        "error": (
+            "A product with that internal_sku "
+            "already exists."
+        ),
+    }
+
+
+def test_catalogue_adoption_returns_404_for_draft_item(
+    client,
+):
+    item = _master_item(
+        code="HMI-DRAFT-ADOPT",
+        name="Draft Adoption Product",
+        review_status="draft",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json={
+            "internal_sku": "DRAFT-001",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json == {
+        "ok": False,
+        "error": (
+            "Catalogue item is not available "
+            "for adoption."
+        ),
+    }
+
+
+def test_catalogue_adoption_creates_explicit_base_unit(
+    client,
+):
+    item = _master_item(
+        code="HMI-UNIT-ADOPT",
+        name="Unit Adoption Product",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json={
+            "internal_sku": "UNIT-API-001",
+            "unit_code": "TAB",
+            "unit_name": "Tablet",
+        },
+    )
+
+    assert response.status_code == 201
+
+    product_id = response.json["item"]["id"]
+
+    product = db.session.get(
+        Product,
+        product_id,
+    )
+
+    assert product.unit_id is not None
+
+    unit = db.session.get(
+        UnitOfMeasure,
+        product.unit_id,
+    )
+
+    assert unit.code == "TAB"
+    assert unit.name == "Tablet"
+
+    product_unit = (
+        db.session.query(ProductUnit)
+        .filter(
+            ProductUnit.product_id == product.id,
+            ProductUnit.is_base.is_(True),
+        )
+        .one()
+    )
+
+    assert product_unit.unit_id == unit.id
+
+
+def test_catalogue_adoption_rejects_non_object_payload(
+    client,
+):
+    item = _master_item(
+        code="HMI-BAD-PAYLOAD",
+        name="Bad Payload Product",
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        f"/api/catalogue/items/{item.id}/adopt",
+        json=["not", "an", "object"],
+    )
+
+    assert response.status_code == 400
+    assert response.json == {
+        "ok": False,
+        "error": (
+            "A catalogue adoption object is required."
+        ),
+    }
+
+
+def test_catalogue_adoption_requires_products_create_permission(
+    app_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    identity = SimpleNamespace(
+        user_id="user-1",
+        tenant_id="tenant-1",
+        branch_id="branch-1",
+        session_id="session-1",
+    )
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "get_current_identity",
+        lambda: identity,
+    )
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        lambda *args, **kwargs: (
+            _ for _ in ()
+        ).throw(
+            PermissionDeniedError(
+                "Permission denied."
+            )
+        ),
+    )
+
+    response = app_context.test_client().post(
+        "/api/catalogue/items/"
+        "00000000-0000-0000-0000-000000000000"
+        "/adopt",
+        json={},
     )
 
     assert response.status_code == 403
