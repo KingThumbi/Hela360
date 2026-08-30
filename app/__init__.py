@@ -213,6 +213,90 @@ def register_commands(app: Flask) -> None:
         db.session.commit()
         click.echo("Initial seed completed successfully.")
 
+    @app.cli.command(
+        "seed-master-catalogue"
+    )
+    @click.option(
+        "--file",
+        "seed_file",
+        required=True,
+        type=click.Path(
+            exists=True,
+            dir_okay=False,
+            path_type=str,
+        ),
+        help=(
+            "Path to a versioned Hela360 "
+            "Master Catalogue JSON seed."
+        ),
+    )
+    def seed_master_catalogue(
+        seed_file: str,
+    ) -> None:
+        """
+        Synchronize the platform-owned Master Catalogue.
+        """
+
+        from app.services.platform import (
+            MasterCatalogueSeedError,
+            MasterCatalogueSeedService,
+        )
+
+        try:
+            result = (
+                MasterCatalogueSeedService(
+                    db.session
+                )
+                .import_file(
+                    seed_file
+                )
+            )
+
+            db.session.commit()
+
+        except MasterCatalogueSeedError as exc:
+            db.session.rollback()
+
+            raise click.ClickException(
+                str(exc)
+            ) from exc
+
+        except Exception:
+            db.session.rollback()
+            raise
+
+        click.echo(
+            "Master Catalogue synchronized."
+        )
+
+        click.echo(
+            "Master items: "
+            f"{result.master_items.created} created, "
+            f"{result.master_items.updated} updated, "
+            f"{result.master_items.unchanged} unchanged."
+        )
+
+        click.echo(
+            "Suppliers: "
+            f"{result.suppliers.created} created, "
+            f"{result.suppliers.updated} updated, "
+            f"{result.suppliers.unchanged} unchanged."
+        )
+
+        click.echo(
+            "Mappings: "
+            f"{result.mappings.created} created, "
+            f"{result.mappings.updated} updated, "
+            f"{result.mappings.unchanged} unchanged."
+        )
+
+        click.echo(
+            "Prices: "
+            f"{result.prices.created} created, "
+            f"{result.prices.updated} updated, "
+            f"{result.prices.unchanged} unchanged."
+        )
+
 
 # =============================================================================
 # Application Factory

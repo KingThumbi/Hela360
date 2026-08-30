@@ -96,3 +96,6 @@ frontend/dist/
 
 # Local/reference documents accidentally generated inside frontend source
 frontend/src/**/*.pdf
+
+# Curated catalogue source evidence
+data/catalogue/*.xlsx
