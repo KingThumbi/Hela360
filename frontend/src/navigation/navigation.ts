@@ -12,6 +12,7 @@ import {
   CreditCard,
   FileBarChart2,
   LayoutDashboard,
+  Library,
   Package,
   Receipt,
   Settings,
@@ -86,6 +87,17 @@ export const navigation: NavigationSection[] = [
         permission:
           ROUTE_PERMISSION_REQUIREMENTS[
             PATHS.PRODUCTS.ROOT
+          ].permission,
+      },
+      {
+        id:
+          NAVIGATION_ITEM_IDS.PRODUCT_CATALOGUE,
+        title: "Master Catalogue",
+        href: PATHS.PRODUCTS.CATALOGUE,
+        icon: Library,
+        permission:
+          ROUTE_PERMISSION_REQUIREMENTS[
+            PATHS.PRODUCTS.CATALOGUE
           ].permission,
       },
       {

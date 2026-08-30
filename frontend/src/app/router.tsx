@@ -23,7 +23,10 @@ import {
   StockCountDetailPage,
   StockCountsPage,
 } from "@/features/inventory";
-import { ProductsPage } from "@/features/products";
+import {
+  MasterCataloguePage,
+  ProductsPage,
+} from "@/features/products";
 import {
   PosPage,
   RefundsPage,
@@ -111,6 +114,21 @@ export const router = createBrowserRouter([
             }
           >
             <ProductsPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.PRODUCTS.CATALOGUE,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.PRODUCTS.CATALOGUE
+              ].permission
+            }
+          >
+            <MasterCataloguePage />
           </ProtectedRoute>
         ),
       },

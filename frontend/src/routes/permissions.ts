@@ -46,6 +46,10 @@ export const ROUTE_PERMISSION_REQUIREMENTS = {
     permission: "products.view",
   },
 
+  [PATHS.PRODUCTS.CATALOGUE]: {
+    permission: "products.view",
+  },
+
   [PATHS.CUSTOMERS.ROOT]: {
     permission: "customers.view",
   },

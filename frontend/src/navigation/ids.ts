@@ -29,6 +29,7 @@ export const NAVIGATION_ITEM_IDS = {
   SALES_HISTORY: "sales-history",
   REFUNDS: "refunds",
   PRODUCTS: "products",
+  PRODUCT_CATALOGUE: "product-catalogue",
   INVENTORY: "inventory",
   INVENTORY_WAREHOUSES: "inventory-warehouses",
   STOCK_ADJUSTMENTS: "stock-adjustments",

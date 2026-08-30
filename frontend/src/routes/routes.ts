@@ -21,6 +21,7 @@ export const PATHS = {
 
   PRODUCTS: {
     ROOT: "/products",
+    CATALOGUE: "/products/catalogue",
   },
 
   CUSTOMERS: {
