@@ -75,3 +75,8 @@ export type {
 export type {
   Supplier,
 } from "./supplier";
+export type {
+  CatalogueAdoptedProduct,
+  CatalogueItem,
+  CatalogueItemAdoption,
+} from "./catalogue-item";

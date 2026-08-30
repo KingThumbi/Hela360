@@ -113,6 +113,22 @@ export async function invalidateProducts(
   ]);
 }
 
+
+/**
+ * Refreshes tenant-visible Master Catalogue caches.
+ *
+ * Although MasterItem itself is platform-owned, catalogue
+ * responses contain tenant-specific Product adoption state.
+ */
+export async function invalidateCatalogue(
+  client: QueryClient,
+  scope: TenantQueryScope,
+): Promise<void> {
+  await invalidateMany(client, [
+    QUERY_KEYS.catalogue.root(scope),
+  ]);
+}
+
 /**
  * Refreshes customer caches.
  */

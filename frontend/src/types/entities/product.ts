@@ -14,6 +14,7 @@
 export interface Product {
   id: string;
   tenant_id: string;
+  master_item_id: string | null;
   internal_sku: string;
   supplier_sku: string | null;
   name: string;

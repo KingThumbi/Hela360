@@ -99,3 +99,10 @@ export type {
 export type {
   UpdateStockCountItemRequest,
 } from "./update-stock-count-item-request";
+export type {
+  AdoptCatalogueItemRequest,
+} from "./adopt-catalogue-item-request";
+export type {
+  CatalogueAdoptionStatus,
+  ListCatalogueItemsRequest,
+} from "./list-catalogue-items-request";

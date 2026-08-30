@@ -19,6 +19,7 @@ import type {
   ListInventoryRequest,
   ListStockAdjustmentsRequest,
   ListStockCountsRequest,
+  ListCatalogueItemsRequest,
   ListProductsRequest,
   PaginationRequest,
 } from "@/types/requests";
@@ -173,6 +174,64 @@ function normalizePaginationRequest(
     ...(q ? { q } : {}),
   });
 }
+
+interface NormalizedListCatalogueItemsRequest {
+  readonly page: number;
+
+  readonly per_page: number;
+
+  readonly search?: string;
+
+  readonly item_class?: string;
+
+  readonly category?: string;
+
+  readonly dosage_form?: string;
+
+  readonly adoption_status?:
+    ListCatalogueItemsRequest["adoption_status"];
+}
+
+function normalizeListCatalogueItemsRequest(
+  params?: ListCatalogueItemsRequest,
+): NormalizedListCatalogueItemsRequest {
+  const search = params?.search?.trim();
+
+  const itemClass =
+    params?.item_class?.trim();
+
+  const category =
+    params?.category?.trim();
+
+  const dosageForm =
+    params?.dosage_form?.trim();
+
+  return Object.freeze({
+    page: params?.page ?? 1,
+
+    per_page: params?.per_page ?? 25,
+
+    ...(search ? { search } : {}),
+
+    ...(itemClass
+      ? { item_class: itemClass }
+      : {}),
+
+    ...(category ? { category } : {}),
+
+    ...(dosageForm
+      ? { dosage_form: dosageForm }
+      : {}),
+
+    ...(params?.adoption_status
+      ? {
+          adoption_status:
+            params.adoption_status,
+        }
+      : {}),
+  });
+}
+
 
 function normalizeListProductsRequest(
   params?: ListProductsRequest,
@@ -459,6 +518,60 @@ export const QUERY_KEYS = {
       [
         ...QUERY_KEYS.products.root(scope),
         "tax-codes",
+      ] as const,
+  },
+
+  /* ==========================================================================
+   * Master Catalogue
+   * ==========================================================================
+   */
+
+  catalogue: {
+    root: (scope: TenantQueryScope) =>
+      createTenantQueryKey(
+        scope,
+        "catalogue",
+      ),
+
+    disabled: (
+      ...segments: readonly QueryKeySegment[]
+    ) =>
+      createIdentityQueryKey(
+        "disabled",
+        "catalogue",
+        ...segments,
+      ),
+
+    lists: (scope: TenantQueryScope) =>
+      [
+        ...QUERY_KEYS.catalogue.root(scope),
+        "list",
+      ] as const,
+
+    list: (
+      scope: TenantQueryScope,
+      params?: ListCatalogueItemsRequest,
+    ) =>
+      [
+        ...QUERY_KEYS.catalogue.lists(scope),
+        normalizeListCatalogueItemsRequest(
+          params,
+        ),
+      ] as const,
+
+    details: (scope: TenantQueryScope) =>
+      [
+        ...QUERY_KEYS.catalogue.root(scope),
+        "detail",
+      ] as const,
+
+    detail: (
+      scope: TenantQueryScope,
+      masterItemId: string,
+    ) =>
+      [
+        ...QUERY_KEYS.catalogue.details(scope),
+        masterItemId.trim(),
       ] as const,
   },
 
