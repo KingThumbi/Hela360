@@ -35,6 +35,9 @@ import {
   AddDiscoveredStockDialog,
 } from "@/features/inventory/components/AddDiscoveredStockDialog";
 import {
+  RecordSelectedStockProductDialog,
+} from "@/features/inventory/components/RecordSelectedStockProductDialog";
+import {
   EmptyState,
   ErrorState,
   LoadingState,
@@ -78,6 +81,7 @@ import { PATHS } from "@/routes/routes";
 import type {
   StockCount,
   StockCountItem,
+  StockCountProduct,
   StockCountScopeProduct,
 } from "@/types/entities";
 
@@ -298,6 +302,10 @@ export function StockCountDetailPage() {
     setDiscoveredOpen,
   ] = useState(false);
   const [
+    selectedScopeProduct,
+    setSelectedScopeProduct,
+  ] = useState<StockCountProduct | null>(null);
+  const [
     adjustmentIdempotencyKey,
     setAdjustmentIdempotencyKey,
   ] = useState(createAdjustmentIdempotencyKey);
@@ -499,10 +507,31 @@ export function StockCountDetailPage() {
             count={count}
             onLineUpdated={() => stockCountQuery.refetch()}
             onScopeUpdated={() => stockCountQuery.refetch()}
+            onRecordPhysicalStock={(product) => {
+              setSelectedScopeProduct(product);
+            }}
             canAdjustStock={canAdjustStock}
           />
         ) : null}
       </PageContent>
+
+      {count?.status === "open" && selectedScopeProduct ? (
+        <RecordSelectedStockProductDialog
+          key={selectedScopeProduct.id}
+          countId={count.id}
+          product={selectedScopeProduct}
+          open={Boolean(selectedScopeProduct)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedScopeProduct(null);
+            }
+          }}
+          onCreated={() => {
+            setSelectedScopeProduct(null);
+            stockCountQuery.refetch();
+          }}
+        />
+      ) : null}
 
       {count?.status === "open" ? (
         <AddDiscoveredStockDialog
@@ -606,11 +635,15 @@ function StockCountDetail({
   count,
   onLineUpdated,
   onScopeUpdated,
+  onRecordPhysicalStock,
   canAdjustStock,
 }: {
   count: StockCount;
   onLineUpdated: () => void;
   onScopeUpdated: () => void;
+  onRecordPhysicalStock: (
+    product: StockCountProduct,
+  ) => void;
   canAdjustStock: boolean;
 }) {
   const isOpen = count.status === "open";
@@ -809,6 +842,7 @@ function StockCountDetail({
           <SelectedStockCountScope
             count={count}
             onScopeUpdated={onScopeUpdated}
+            onRecordPhysicalStock={onRecordPhysicalStock}
           />
         </PageSection>
       ) : null}
@@ -828,9 +862,13 @@ function StockCountDetail({
 function SelectedStockCountScope({
   count,
   onScopeUpdated,
+  onRecordPhysicalStock,
 }: {
   count: StockCount;
   onScopeUpdated: () => void;
+  onRecordPhysicalStock: (
+    product: StockCountProduct,
+  ) => void;
 }) {
   const confirmNoStock =
     useConfirmStockCountNoStock();
@@ -901,7 +939,9 @@ function SelectedStockCountScope({
         <div className="text-sm text-muted-foreground">
           Every selected Product must either have physical stock
           recorded or be explicitly confirmed as not found before
-          this Stock Count can be completed.
+          this Stock Count can be completed. Products without an
+          existing system stock balance can be counted here as
+          opening stock.
         </div>
       </div>
 
@@ -992,24 +1032,63 @@ function SelectedStockCountScope({
                     </TableCell>
 
                     <TableCell className="text-right">
-                      {count.status === "open" &&
-                      scopeProduct.resolution_status ===
-                        "unresolved" ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setConfirmationTarget(
-                              scopeProduct,
-                            )
-                          }
-                          disabled={
-                            confirmNoStock.isPending
-                          }
-                        >
-                          Confirm no stock found
-                        </Button>
+                      {count.status === "open" ? (
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {scopeProduct.resolution_status ===
+                          "unresolved" ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() =>
+                                  onRecordPhysicalStock(
+                                    scopeProduct.product,
+                                  )
+                                }
+                              >
+                                Record physical stock
+                              </Button>
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setConfirmationTarget(
+                                    scopeProduct,
+                                  )
+                                }
+                                disabled={
+                                  confirmNoStock.isPending
+                                }
+                              >
+                                Confirm no stock found
+                              </Button>
+                            </>
+                          ) : scopeProduct.resolution_status ===
+                              "physical_lines" &&
+                            (
+                              scopeProduct.product.track_batches ||
+                              scopeProduct.product.track_expiry
+                            ) ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                onRecordPhysicalStock(
+                                  scopeProduct.product,
+                                )
+                              }
+                            >
+                              Add another batch
+                            </Button>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              Resolved
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-sm text-muted-foreground">
                           Resolved
