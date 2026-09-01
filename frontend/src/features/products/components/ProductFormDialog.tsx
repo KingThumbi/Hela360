@@ -8,6 +8,9 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
+  CountrySelect,
+} from "@/components/ui/country-select";
+import {
   useProductTaxCodes,
 } from "@/hooks/queries/products";
 import {
@@ -376,10 +379,32 @@ export function ProductFormDialog({
               <Label htmlFor="country_of_origin">
                 Country of Origin
               </Label>
-              <Input
-                id="country_of_origin"
-                autoComplete="country-name"
-                {...register("country_of_origin")}
+
+              <Controller
+                control={control}
+                name="country_of_origin"
+                render={({ field }) => (
+                  <CountrySelect
+                    id="country_of_origin"
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    onBlur={field.onBlur}
+                    disabled={isSubmitting}
+                    aria-invalid={
+                      errors.country_of_origin
+                        ? true
+                        : undefined
+                    }
+                    placeholder="Select country of origin"
+                  />
+                )}
+              />
+
+              <FieldError
+                message={
+                  errors.country_of_origin
+                    ?.message
+                }
               />
             </div>
           </div>

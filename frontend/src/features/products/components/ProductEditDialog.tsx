@@ -3,6 +3,7 @@ import {
 } from "react";
 
 import {
+  Controller,
   useForm,
 } from "react-hook-form";
 
@@ -13,6 +14,10 @@ import {
 import {
   Button,
 } from "@/components/ui/button";
+
+import {
+  CountrySelect,
+} from "@/components/ui/country-select";
 
 import {
   Dialog,
@@ -46,6 +51,10 @@ import type {
 import type {
   UpdateProductRequest,
 } from "@/types/requests";
+
+import {
+  canonicalCountryName,
+} from "@/lib/countries";
 
 
 interface ProductEditDialogProps {
@@ -126,6 +135,7 @@ export function ProductEditDialog({
   const taxCodesQuery = useProductTaxCodes();
 
   const {
+    control,
     register,
     handleSubmit,
     reset,
@@ -214,7 +224,9 @@ export function ProductEditDialog({
         product.manufacturer ?? "",
 
       country_of_origin:
-        product.country_of_origin ?? "",
+        canonicalCountryName(
+          product.country_of_origin,
+        ),
 
       image_url:
         product.image_url ?? "",
@@ -282,7 +294,11 @@ export function ProductEditDialog({
         nullableString(values.manufacturer),
 
       country_of_origin:
-        nullableString(values.country_of_origin),
+        nullableString(
+          canonicalCountryName(
+            values.country_of_origin,
+          ),
+        ),
 
       image_url:
         nullableString(values.image_url),
@@ -390,10 +406,19 @@ export function ProductEditDialog({
                 Country of Origin
               </Label>
 
-              <Input
-                id="edit-country-origin"
-                disabled={isSubmitting}
-                {...register("country_of_origin")}
+              <Controller
+                control={control}
+                name="country_of_origin"
+                render={({ field }) => (
+                  <CountrySelect
+                    id="edit-country-origin"
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    onBlur={field.onBlur}
+                    disabled={isSubmitting}
+                    placeholder="Select country of origin"
+                  />
+                )}
               />
             </div>
           </div>
