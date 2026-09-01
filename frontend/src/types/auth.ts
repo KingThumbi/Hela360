@@ -40,6 +40,8 @@ export interface Identity {
 
   isOwner: boolean;
 
+  isPlatformAdmin: boolean;
+
   /**
    * Tenant
    */

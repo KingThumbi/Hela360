@@ -243,6 +243,7 @@ export class AuthService {
         isActive: session.user.is_active,
         isLocked: session.user.is_locked,
         isOwner: session.user.is_owner,
+        isPlatformAdmin: session.user.is_platform_admin,
         tenantId: session.tenant.id,
         tenantName: session.tenant.name,
       },

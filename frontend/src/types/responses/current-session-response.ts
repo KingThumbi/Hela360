@@ -14,6 +14,7 @@ export interface CurrentSessionUserResponse {
   is_active: boolean;
   is_locked: boolean;
   is_owner: boolean;
+  is_platform_admin: boolean;
 }
 
 export interface CurrentSessionTenantResponse {
