@@ -96,7 +96,10 @@ class CurrentSessionService:
         )
 
         return CurrentSessionResponse(
-            user=self._serialize_user(user),
+            user=self._serialize_user(
+                user,
+                is_platform_admin=context.is_platform_admin,
+            ),
             tenant=self._serialize_tenant(tenant),
             roles=self._serialize_roles(user),
             permissions=sorted(context.permissions),
@@ -242,6 +245,8 @@ class CurrentSessionService:
     def _serialize_user(
         self,
         user: User,
+        *,
+        is_platform_admin: bool,
     ) -> CurrentSessionUserResponse:
         return CurrentSessionUserResponse(
             id=str(user.id),
@@ -252,6 +257,7 @@ class CurrentSessionService:
             is_active=bool(getattr(user, "is_active", False)),
             is_locked=bool(getattr(user, "is_locked", False)),
             is_owner=bool(getattr(user, "is_owner", False)),
+            is_platform_admin=bool(is_platform_admin),
         )
 
     def _serialize_tenant(

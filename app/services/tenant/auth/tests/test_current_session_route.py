@@ -75,6 +75,7 @@ def session_response() -> CurrentSessionResponse:
             is_active=True,
             is_locked=False,
             is_owner=False,
+            is_platform_admin=False,
         ),
         tenant=CurrentSessionTenantResponse(
             id="tenant-1",

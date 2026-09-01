@@ -41,6 +41,7 @@ class FakeUser:
     is_active: bool = True
     is_locked: bool = False
     is_owner: bool = False
+    is_platform_admin: bool = False
     roles: list[FakeRole] = field(default_factory=list)
 
 
@@ -206,6 +207,7 @@ def test_active_user_receives_session_response(
     response = svc.get_current_session(identity())
 
     assert response.user.id == "user-1"
+    assert response.user.is_platform_admin is False
     assert response.tenant.id == "tenant-1"
     assert [role.code for role in response.roles] == [
         "cashier",
@@ -217,6 +219,24 @@ def test_active_user_receives_session_response(
     ]
     assert response.branches[0].id == "branch-1"
     assert response.default_branch_id is None
+
+
+def test_platform_administrator_status_is_exposed_from_authorization_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = FakeUser(
+        is_platform_admin=True,
+    )
+    svc = service(
+        FakeAuthorizer(
+            user=user,
+        )
+    )
+    prepare(svc, monkeypatch)
+
+    response = svc.get_current_session(identity())
+
+    assert response.user.is_platform_admin is True
 
 
 def test_password_and_security_fields_are_not_exposed(

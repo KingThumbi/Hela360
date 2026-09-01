@@ -206,6 +206,7 @@ class CurrentSessionUserResponse:
     is_active: bool
     is_locked: bool
     is_owner: bool
+    is_platform_admin: bool
 
 
 @dataclass(slots=True)
