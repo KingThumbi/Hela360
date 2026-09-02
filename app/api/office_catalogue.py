@@ -123,6 +123,53 @@ def list_master_items():
     )
 
 
+@bp.get(
+    "/office/catalogue/master-items/<master_item_id>"
+)
+def get_master_item(
+    master_item_id: str,
+):
+    """
+    Retrieve one platform-owned MasterItem for Office inspection.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    try:
+        item = (
+            PlatformMasterItemQueryService(
+                db.session
+            ).get_item(
+                master_item_id=master_item_id
+            )
+        )
+
+    except ValidationError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    if item is None:
+        return _json_error(
+            "Master item not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "item": item,
+        }
+    )
+
+
 __all__ = [
     "bp",
 ]

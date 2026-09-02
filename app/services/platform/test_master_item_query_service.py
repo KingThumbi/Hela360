@@ -114,3 +114,104 @@ def test_master_item_serialization_contains_no_tenant_adoption():
     assert result["is_active"] is False
     assert "adoption" not in result
     assert "tenant_id" not in result
+
+
+class _FakeQuery:
+    def __init__(
+        self,
+        item,
+    ):
+        self.item = item
+
+    def filter(
+        self,
+        *_args,
+    ):
+        return self
+
+    def first(self):
+        return self.item
+
+
+class _FakeSession:
+    def __init__(
+        self,
+        item,
+    ):
+        self.item = item
+
+    def query(
+        self,
+        _model,
+    ):
+        return _FakeQuery(
+            self.item
+        )
+
+
+def test_get_item_returns_platform_projection():
+    item = SimpleNamespace(
+        id="master-detail-1",
+        master_code="HMI-DETAIL-001",
+        canonical_name="Detail Item",
+        brand_name="Example Brand",
+        generic_name="Example Generic",
+        strength="10mg",
+        dosage_form="Tablet",
+        pack_quantity=Decimal("30"),
+        pack_unit="tablet",
+        pack_type="box",
+        item_class="medicine",
+        category_name="Example Category",
+        subcategory_name="Example Subcategory",
+        manufacturer="Example Manufacturer",
+        country_of_origin="Kenya",
+        cold_chain=False,
+        restricted_item=False,
+        requires_prescription=True,
+        tax_classification="standard",
+        review_status="draft",
+        is_active=False,
+    )
+
+    service = PlatformMasterItemQueryService(
+        _FakeSession(item)
+    )
+
+    result = service.get_item(
+        master_item_id="master-detail-1"
+    )
+
+    assert result is not None
+    assert result["id"] == "master-detail-1"
+    assert result["review_status"] == "draft"
+    assert result["is_active"] is False
+    assert result["requires_prescription"] is True
+    assert "adoption" not in result
+    assert "tenant_id" not in result
+
+
+def test_get_item_returns_none_when_missing():
+    service = PlatformMasterItemQueryService(
+        _FakeSession(None)
+    )
+
+    result = service.get_item(
+        master_item_id="missing-master-item"
+    )
+
+    assert result is None
+
+
+def test_get_item_requires_identifier():
+    service = PlatformMasterItemQueryService(
+        _FakeSession(None)
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="Master item id is required",
+    ):
+        service.get_item(
+            master_item_id=""
+        )

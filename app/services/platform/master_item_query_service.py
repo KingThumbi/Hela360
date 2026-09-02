@@ -270,6 +270,35 @@ class PlatformMasterItemQueryService:
             ),
         )
 
+    def get_item(
+        self,
+        *,
+        master_item_id: str,
+    ) -> dict | None:
+        """
+        Return one platform-owned MasterItem for Office inspection.
+        """
+
+        if not master_item_id:
+            raise ValidationError(
+                "Master item id is required."
+            )
+
+        item = (
+            self.session.query(MasterItem)
+            .filter(
+                MasterItem.id
+                == master_item_id
+            )
+            .first()
+        )
+
+        if item is None:
+            return None
+
+        return self._serialize_item(item)
+
+
     @staticmethod
     def _serialize_item(
         item: MasterItem,

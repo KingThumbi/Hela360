@@ -189,3 +189,116 @@ def test_invalid_office_filter_returns_400(
         payload["error"]
         == "is_active must be true or false."
     )
+
+
+def test_office_master_item_detail_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        rule.rule
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert (
+        "/api/office/catalogue/master-items/"
+        "<master_item_id>"
+        in rules
+    )
+
+
+def test_platform_admin_receives_master_item_detail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue.PlatformMasterItemQueryService,
+        "get_item",
+        lambda _self, *, master_item_id: (
+            master_item()
+            if master_item_id == "master-1"
+            else None
+        ),
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/master-1"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert payload["item"]["id"] == "master-1"
+    assert "adoption" not in payload["item"]
+
+
+def test_office_master_item_detail_returns_404(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue.PlatformMasterItemQueryService,
+        "get_item",
+        lambda _self, *, master_item_id: None,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/missing"
+    )
+
+    assert response.status_code == 404
+
+    payload = response.get_json()
+
+    assert payload == {
+        "ok": False,
+        "error": "Master item not found.",
+    }
+
+
+def test_non_platform_user_cannot_read_master_item_detail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/master-1"
+    )
+
+    assert response.status_code == 403
