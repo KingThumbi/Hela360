@@ -3,8 +3,8 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from flask import Flask
 
-from app import create_app
 from app.extensions import db
 from app.models import MasterItem, Product, Tenant
 from app.services.tenant.catalogue import (
@@ -15,9 +15,28 @@ from app.services.tenant.catalogue import (
 
 @pytest.fixture()
 def app():
-    app = create_app()
-    app.config.update(TESTING=True)
-    return app
+    app = Flask(__name__)
+
+    app.config.update(
+        SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        TESTING=True,
+    )
+
+    db.init_app(app)
+
+    with app.app_context():
+        Tenant.__table__.create(db.engine)
+        MasterItem.__table__.create(db.engine)
+        Product.__table__.create(db.engine)
+
+        yield app
+
+        db.session.remove()
+
+        Product.__table__.drop(db.engine)
+        MasterItem.__table__.drop(db.engine)
+        Tenant.__table__.drop(db.engine)
 
 
 def _tenant(
