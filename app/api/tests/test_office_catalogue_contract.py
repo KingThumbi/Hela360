@@ -302,3 +302,187 @@ def test_non_platform_user_cannot_read_master_item_detail(
     )
 
     assert response.status_code == 403
+
+
+def supplier_evidence():
+    return {
+        "master_item_id": "master-1",
+        "master_code": "HMI-000001",
+        "canonical_name": (
+            "Paracetamol 500mg Tablets"
+        ),
+        "mapping_count": 1,
+        "price_observation_count": 2,
+        "comparable_observation_count": 1,
+        "mappings": [
+            {
+                "id": "mapping-1",
+                "supplier": {
+                    "id": "supplier-1",
+                    "name": "Test Supplier",
+                    "country": "Kenya",
+                    "is_active": True,
+                },
+                "supplier_item_code": None,
+                "supplier_item_name": (
+                    "PARACETAMOL 500MG"
+                ),
+                "source_description": None,
+                "is_active": True,
+                "latest_comparable_price": {
+                    "id": "price-1",
+                    "source_offer_key": (
+                        "offer-1"
+                    ),
+                    "price_type": (
+                        "Wholesale Price"
+                    ),
+                    "amount": "95.00",
+                    "currency": "KES",
+                    "discount_percent": None,
+                    "vat_source": "0%",
+                    "effective_date": (
+                        "2026-09-01"
+                    ),
+                    "source_document": (
+                        "test.pdf"
+                    ),
+                    "source_location": "p.1",
+                    "is_comparable_procurement": (
+                        True
+                    ),
+                },
+                "prices": [],
+            }
+        ],
+    }
+
+
+def test_office_supplier_evidence_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        rule.rule
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert (
+        "/api/office/catalogue/master-items/"
+        "<master_item_id>/supplier-evidence"
+        in rules
+    )
+
+
+def test_platform_admin_receives_supplier_evidence(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformMasterItemSupplierEvidenceService,
+        "get_evidence",
+        lambda _self, *, master_item_id: (
+            supplier_evidence()
+            if master_item_id == "master-1"
+            else None
+        ),
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/"
+        "master-1/supplier-evidence"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert (
+        payload["evidence"]["mapping_count"]
+        == 1
+    )
+    assert (
+        payload["evidence"][
+            "price_observation_count"
+        ]
+        == 2
+    )
+    assert (
+        payload["evidence"]["mappings"][0][
+            "latest_comparable_price"
+        ]["amount"]
+        == "95.00"
+    )
+
+
+def test_supplier_evidence_returns_404_for_missing_master(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformMasterItemSupplierEvidenceService,
+        "get_evidence",
+        lambda _self, *, master_item_id: None,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/"
+        "missing/supplier-evidence"
+    )
+
+    assert response.status_code == 404
+
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Master item not found.",
+    }
+
+
+def test_non_platform_user_cannot_read_supplier_evidence(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/"
+        "master-1/supplier-evidence"
+    )
+
+    assert response.status_code == 403

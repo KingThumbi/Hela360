@@ -17,6 +17,9 @@ from app.services.platform.master_item_query_service import (
     PlatformMasterItemListFilters,
     PlatformMasterItemQueryService,
 )
+from app.services.platform.master_item_supplier_evidence_service import (
+    PlatformMasterItemSupplierEvidenceService,
+)
 from app.services.tenant.auth.authorization_service import (
     authorization_service,
 )
@@ -166,6 +169,54 @@ def get_master_item(
         {
             "ok": True,
             "item": item,
+        }
+    )
+
+
+@bp.get(
+    "/office/catalogue/master-items/"
+    "<master_item_id>/supplier-evidence"
+)
+def get_master_item_supplier_evidence(
+    master_item_id: str,
+):
+    """
+    Retrieve supplier mappings and price evidence for one MasterItem.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    try:
+        evidence = (
+            PlatformMasterItemSupplierEvidenceService(
+                db.session
+            ).get_evidence(
+                master_item_id=master_item_id
+            )
+        )
+
+    except ValidationError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    if evidence is None:
+        return _json_error(
+            "Master item not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "evidence": evidence,
         }
     )
 
