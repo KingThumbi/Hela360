@@ -1,6 +1,18 @@
 import {
+  Eye,
+} from "lucide-react";
+
+import {
+  Link,
+} from "react-router-dom";
+
+import {
   Badge,
 } from "@/components/ui/badge";
+
+import {
+  buttonVariants,
+} from "@/components/ui/button";
 
 import {
   Table,
@@ -10,6 +22,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+import {
+  OFFICE_PATHS,
+} from "@/routes/officeRoutes";
 
 import type {
   OfficeMasterItem,
@@ -105,6 +121,10 @@ export function MasterItemsTable({
             <TableHead>
               Lifecycle
             </TableHead>
+
+            <TableHead className="text-right">
+              Action
+            </TableHead>
           </TableRow>
         </TableHeader>
 
@@ -167,6 +187,24 @@ export function MasterItemsTable({
                     ? "Active"
                     : "Inactive"}
                 </Badge>
+              </TableCell>
+
+
+              <TableCell className="text-right">
+                <Link
+                  to={
+                    OFFICE_PATHS.CATALOGUE.masterItemDetail(
+                      item.id,
+                    )
+                  }
+                  className={buttonVariants({
+                    variant: "outline",
+                    size: "sm",
+                  })}
+                >
+                  <Eye />
+                  View
+                </Link>
               </TableCell>
             </TableRow>
           ))}

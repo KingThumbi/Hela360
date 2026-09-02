@@ -612,6 +612,21 @@ export const QUERY_KEYS = {
             params,
           ),
         ] as const,
+
+
+      details: () =>
+        [
+          ...QUERY_KEYS.office.masterItems.root(),
+          "detail",
+        ] as const,
+
+      detail: (
+        masterItemId: string,
+      ) =>
+        [
+          ...QUERY_KEYS.office.masterItems.details(),
+          masterItemId.trim(),
+        ] as const,
     },
   },
 

@@ -43,6 +43,25 @@ class OfficeMasterItemService extends BaseService<
     );
   }
 
+  async getItem(
+    masterItemId: string,
+    config?: AxiosRequestConfig,
+  ): Promise<OfficeMasterItem> {
+    const response =
+      await this.getRequest<{
+        ok: true;
+        item: OfficeMasterItem;
+      }>(
+        API_ENDPOINTS.OFFICE_CATALOGUE.MASTER_ITEM(
+          masterItemId,
+        ),
+        config,
+      );
+
+    return response.data.item;
+  }
+
+
   async listItems(
     params?: ListOfficeMasterItemsRequest,
     config?: AxiosRequestConfig,

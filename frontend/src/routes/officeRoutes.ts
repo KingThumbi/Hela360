@@ -15,6 +15,12 @@ export const OFFICE_PATHS = {
   CATALOGUE: {
     ROOT: "/office/catalogue",
     MASTER_ITEMS: "/office/catalogue/master-items",
+    MASTER_ITEM_DETAIL:
+      "/office/catalogue/master-items/:masterItemId",
+    masterItemDetail: (
+      masterItemId: string,
+    ) =>
+      `/office/catalogue/master-items/${masterItemId}`,
     REVIEW_QUEUE: "/office/catalogue/review-queue",
     CATEGORIES: "/office/catalogue/categories",
     BRANDS: "/office/catalogue/brands",

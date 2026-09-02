@@ -195,6 +195,12 @@ export const API_ENDPOINTS = {
 
   OFFICE_CATALOGUE: {
     MASTER_ITEMS: "/office/catalogue/master-items",
+
+    MASTER_ITEM: (id: string) =>
+      byId(
+        "/office/catalogue/master-items",
+        id,
+      ),
   },
 
   /**

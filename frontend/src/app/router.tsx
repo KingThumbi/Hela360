@@ -16,6 +16,7 @@ import {
   BrandsPage,
   CategoriesPage,
   DataQualityPage,
+  MasterItemDetailPage,
   MasterItemsPage,
   ReviewQueuePage,
 } from "@/features/office/catalogue";
@@ -489,6 +490,10 @@ export const router = createBrowserRouter([
       {
         path: OFFICE_PATHS.CATALOGUE.MASTER_ITEMS,
         element: <MasterItemsPage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.MASTER_ITEM_DETAIL,
+        element: <MasterItemDetailPage />,
       },
       {
         path: OFFICE_PATHS.CATALOGUE.REVIEW_QUEUE,
