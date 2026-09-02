@@ -486,3 +486,139 @@ def test_non_platform_user_cannot_read_supplier_evidence(
     )
 
     assert response.status_code == 403
+
+
+def catalogue_supplier():
+    return {
+        "id": "supplier-1",
+        "name": "Comparable Supplier",
+        "country": "Kenya",
+        "is_active": True,
+        "mapping_count": 10,
+        "price_observation_count": 12,
+        "comparable_observation_count": 11,
+        "non_comparable_observation_count": 1,
+        "latest_effective_date": "2026-09-01",
+        "procurement_comparable": True,
+    }
+
+
+def test_office_catalogue_suppliers_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        rule.rule
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert (
+        "/api/office/catalogue/suppliers"
+        in rules
+    )
+
+
+def test_platform_admin_receives_catalogue_suppliers(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformCatalogueSupplierQueryService,
+        "list_suppliers",
+        lambda _self, *, filters: (
+            [catalogue_supplier()],
+            {
+                "page": 1,
+                "per_page": 25,
+                "total": 1,
+                "pages": 1,
+                "has_prev": False,
+                "has_next": False,
+            },
+        ),
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    assert (
+        payload["suppliers"][0]["name"]
+        == "Comparable Supplier"
+    )
+    assert (
+        payload["suppliers"][0][
+            "procurement_comparable"
+        ]
+        is True
+    )
+
+
+def test_non_platform_user_cannot_read_catalogue_suppliers(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers"
+    )
+
+    assert response.status_code == 403
+
+
+def test_invalid_catalogue_supplier_filter_returns_400(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers"
+        "?is_active=not-a-boolean"
+    )
+
+    assert response.status_code == 400
+
+    assert response.get_json() == {
+        "ok": False,
+        "error": "is_active must be true or false.",
+    }

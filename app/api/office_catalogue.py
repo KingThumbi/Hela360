@@ -13,6 +13,10 @@ from app.auth.exceptions import AuthenticationError
 from app.auth.jwt import get_current_identity
 from app.errors import ValidationError
 from app.extensions import db
+from app.services.platform.catalogue_supplier_query_service import (
+    CatalogueSupplierListFilters,
+    PlatformCatalogueSupplierQueryService,
+)
 from app.services.platform.master_item_query_service import (
     PlatformMasterItemListFilters,
     PlatformMasterItemQueryService,
@@ -80,6 +84,50 @@ def _has_office_access(
     )
 
     return context.is_platform_admin is True
+
+
+@bp.get("/office/catalogue/suppliers")
+def list_catalogue_suppliers():
+    """
+    List platform-owned CatalogueSuppliers with supplier-evidence metrics.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    try:
+        filters = (
+            CatalogueSupplierListFilters
+            .from_query(request.args)
+        )
+
+        suppliers, pagination = (
+            PlatformCatalogueSupplierQueryService(
+                db.session
+            ).list_suppliers(
+                filters=filters
+            )
+        )
+
+    except ValidationError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "count": pagination["total"],
+            "pagination": pagination,
+            "suppliers": suppliers,
+        }
+    )
 
 
 @bp.get("/office/catalogue/master-items")
