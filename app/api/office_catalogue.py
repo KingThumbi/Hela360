@@ -130,6 +130,54 @@ def list_catalogue_suppliers():
     )
 
 
+@bp.get(
+    "/office/catalogue/suppliers/<supplier_id>"
+)
+def get_catalogue_supplier(
+    supplier_id: str,
+):
+    """
+    Retrieve one platform-owned CatalogueSupplier with mapped
+    Master Items and supplier evidence summary metrics.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    try:
+        supplier = (
+            PlatformCatalogueSupplierQueryService(
+                db.session
+            ).get_supplier(
+                supplier_id=supplier_id
+            )
+        )
+
+    except ValidationError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    if supplier is None:
+        return _json_error(
+            "Catalogue supplier not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "supplier": supplier,
+        }
+    )
+
+
 @bp.get("/office/catalogue/master-items")
 def list_master_items():
     """

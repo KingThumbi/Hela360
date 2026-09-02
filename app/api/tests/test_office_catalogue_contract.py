@@ -622,3 +622,174 @@ def test_invalid_catalogue_supplier_filter_returns_400(
         "ok": False,
         "error": "is_active must be true or false.",
     }
+
+
+def catalogue_supplier_detail():
+    return {
+        "id": "supplier-1",
+        "name": "Comparable Supplier",
+        "country": "Kenya",
+        "is_active": True,
+        "mapping_count": 1,
+        "price_observation_count": 2,
+        "comparable_observation_count": 2,
+        "non_comparable_observation_count": 0,
+        "latest_effective_date": "2026-09-01",
+        "procurement_comparable": True,
+        "mappings": [
+            {
+                "id": "mapping-1",
+                "supplier_item_code": "COMP-001",
+                "supplier_item_name": (
+                    "SUPPLIER TEST MEDICINE"
+                ),
+                "source_description": None,
+                "is_active": True,
+                "master_item": {
+                    "id": "master-item-1",
+                    "master_code": "TEST-HMI-SUPPLIER",
+                    "canonical_name": (
+                        "Supplier Test Medicine"
+                    ),
+                    "review_status": "draft",
+                    "is_active": True,
+                },
+                "price_observation_count": 2,
+                "comparable_observation_count": 2,
+                "non_comparable_observation_count": 0,
+                "latest_comparable_price": {
+                    "id": "price-2",
+                    "source_offer_key": "TEST-COMP-2",
+                    "price_type": "Wholesale Price",
+                    "amount": "95.00",
+                    "currency": "KES",
+                    "discount_percent": None,
+                    "vat_source": None,
+                    "effective_date": "2026-09-01",
+                    "source_document": None,
+                    "source_location": None,
+                    "is_comparable_procurement": True,
+                },
+            },
+        ],
+    }
+
+
+def test_office_catalogue_supplier_detail_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        rule.rule
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert (
+        "/api/office/catalogue/suppliers/<supplier_id>"
+        in rules
+    )
+
+
+def test_platform_admin_receives_catalogue_supplier_detail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformCatalogueSupplierQueryService,
+        "get_supplier",
+        lambda _self, *, supplier_id: (
+            catalogue_supplier_detail()
+        ),
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers/supplier-1"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+
+    assert (
+        payload["supplier"]["name"]
+        == "Comparable Supplier"
+    )
+
+    assert (
+        payload["supplier"]["mappings"][0][
+            "latest_comparable_price"
+        ]["amount"]
+        == "95.00"
+    )
+
+
+def test_catalogue_supplier_detail_returns_404_when_missing(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformCatalogueSupplierQueryService,
+        "get_supplier",
+        lambda _self, *, supplier_id: None,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers/missing"
+    )
+
+    assert response.status_code == 404
+
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Catalogue supplier not found.",
+    }
+
+
+def test_non_platform_user_cannot_read_catalogue_supplier_detail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/suppliers/supplier-1"
+    )
+
+    assert response.status_code == 403

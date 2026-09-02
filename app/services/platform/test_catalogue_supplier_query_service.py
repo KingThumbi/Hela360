@@ -361,3 +361,209 @@ def test_search_filter(
         == "Comparable Supplier"
         for item in items
     )
+
+
+def test_supplier_detail_projection(
+    catalogue_session,
+):
+    _seed_supplier_data(
+        catalogue_session
+    )
+
+    supplier = (
+        catalogue_session.query(
+            CatalogueSupplier
+        )
+        .filter(
+            CatalogueSupplier.normalized_name
+            == "comparable supplier"
+        )
+        .one()
+    )
+
+    detail = (
+        PlatformCatalogueSupplierQueryService(
+            catalogue_session
+        ).get_supplier(
+            supplier_id=supplier.id
+        )
+    )
+
+    assert detail is not None
+
+    assert detail["id"] == supplier.id
+    assert (
+        detail["name"]
+        == "Comparable Supplier"
+    )
+    assert detail["country"] == "Kenya"
+    assert detail["is_active"] is True
+
+    assert detail["mapping_count"] == 1
+
+    assert (
+        detail["price_observation_count"]
+        == 2
+    )
+
+    assert (
+        detail[
+            "comparable_observation_count"
+        ]
+        == 2
+    )
+
+    assert (
+        detail[
+            "non_comparable_observation_count"
+        ]
+        == 0
+    )
+
+    assert (
+        detail["latest_effective_date"]
+        == "2026-09-01"
+    )
+
+    assert (
+        detail["procurement_comparable"]
+        is True
+    )
+
+    mapping = detail["mappings"][0]
+
+    assert (
+        mapping["supplier_item_code"]
+        == "COMP-001"
+    )
+
+    assert (
+        mapping["master_item"][
+            "master_code"
+        ]
+        == "TEST-HMI-SUPPLIER"
+    )
+
+    assert (
+        mapping["price_observation_count"]
+        == 2
+    )
+
+    assert (
+        mapping[
+            "comparable_observation_count"
+        ]
+        == 2
+    )
+
+    latest = (
+        mapping[
+            "latest_comparable_price"
+        ]
+    )
+
+    assert latest is not None
+
+    assert (
+        latest["amount"]
+        == "95.00"
+    )
+
+    assert (
+        latest["effective_date"]
+        == "2026-09-01"
+    )
+
+
+def test_evidence_only_supplier_has_no_latest_comparable_price(
+    catalogue_session,
+):
+    _seed_supplier_data(
+        catalogue_session
+    )
+
+    supplier = (
+        catalogue_session.query(
+            CatalogueSupplier
+        )
+        .filter(
+            CatalogueSupplier.normalized_name
+            == "evidence supplier"
+        )
+        .one()
+    )
+
+    detail = (
+        PlatformCatalogueSupplierQueryService(
+            catalogue_session
+        ).get_supplier(
+            supplier_id=supplier.id
+        )
+    )
+
+    assert detail is not None
+
+    assert (
+        detail["price_observation_count"]
+        == 1
+    )
+
+    assert (
+        detail[
+            "comparable_observation_count"
+        ]
+        == 0
+    )
+
+    assert (
+        detail[
+            "non_comparable_observation_count"
+        ]
+        == 1
+    )
+
+    assert (
+        detail["procurement_comparable"]
+        is False
+    )
+
+    mapping = detail["mappings"][0]
+
+    assert (
+        mapping[
+            "latest_comparable_price"
+        ]
+        is None
+    )
+
+
+def test_supplier_detail_returns_none_when_not_found(
+    catalogue_session,
+):
+    detail = (
+        PlatformCatalogueSupplierQueryService(
+            catalogue_session
+        ).get_supplier(
+            supplier_id=(
+                "00000000-0000-0000-0000-000000000000"
+            )
+        )
+    )
+
+    assert detail is None
+
+
+def test_supplier_detail_requires_id(
+    catalogue_session,
+):
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "Catalogue supplier id is required"
+        ),
+    ):
+        PlatformCatalogueSupplierQueryService(
+            catalogue_session
+        ).get_supplier(
+            supplier_id=""
+        )
