@@ -11,4 +11,13 @@
 export const OFFICE_PATHS = {
   ROOT: "/office",
   DASHBOARD: "/office/dashboard",
+
+  CATALOGUE: {
+    ROOT: "/office/catalogue",
+    MASTER_ITEMS: "/office/catalogue/master-items",
+    REVIEW_QUEUE: "/office/catalogue/review-queue",
+    CATEGORIES: "/office/catalogue/categories",
+    BRANDS: "/office/catalogue/brands",
+    DATA_QUALITY: "/office/catalogue/data-quality",
+  },
 } as const;

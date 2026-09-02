@@ -12,6 +12,13 @@ import {
   ShellProvider,
 } from "@/providers";
 import { LoginPage } from "@/features/auth/LoginPage";
+import {
+  BrandsPage,
+  CategoriesPage,
+  DataQualityPage,
+  MasterItemsPage,
+  ReviewQueuePage,
+} from "@/features/office/catalogue";
 import { OfficeDashboardPage } from "@/features/office/dashboard/OfficeDashboardPage";
 import { CustomersPage } from "@/features/customers";
 import { DashboardPage } from "@/features/dashboard";
@@ -469,6 +476,35 @@ export const router = createBrowserRouter([
       {
         path: OFFICE_PATHS.DASHBOARD,
         element: <OfficeDashboardPage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.ROOT,
+        element: (
+          <Navigate
+            to={OFFICE_PATHS.CATALOGUE.MASTER_ITEMS}
+            replace
+          />
+        ),
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.MASTER_ITEMS,
+        element: <MasterItemsPage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.REVIEW_QUEUE,
+        element: <ReviewQueuePage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.CATEGORIES,
+        element: <CategoriesPage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.BRANDS,
+        element: <BrandsPage />,
+      },
+      {
+        path: OFFICE_PATHS.CATALOGUE.DATA_QUALITY,
+        element: <DataQualityPage />,
       },
     ],
   },
