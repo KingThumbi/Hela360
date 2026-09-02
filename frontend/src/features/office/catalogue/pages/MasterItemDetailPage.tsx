@@ -34,6 +34,7 @@ import {
 
 import {
   useOfficeMasterItem,
+  useOfficeMasterItemSupplierEvidence,
 } from "@/hooks/queries/office";
 
 import {
@@ -43,6 +44,10 @@ import {
 import type {
   OfficeMasterItem,
 } from "@/types/officeCatalogue";
+
+import {
+  MasterItemSupplierEvidence,
+} from "../components/MasterItemSupplierEvidence";
 
 
 function errorMessage(
@@ -121,6 +126,12 @@ export function MasterItemDetailPage() {
       masterItemId,
     );
 
+
+  const supplierEvidenceQuery =
+    useOfficeMasterItemSupplierEvidence(
+      masterItemId,
+    );
+
   return (
     <Page>
       <PageHeader>
@@ -176,6 +187,9 @@ export function MasterItemDetailPage() {
         ) : masterItemQuery.data ? (
           <MasterItemDetail
             item={masterItemQuery.data}
+            supplierEvidenceQuery={
+              supplierEvidenceQuery
+            }
           />
         ) : null}
       </PageContent>
@@ -184,10 +198,18 @@ export function MasterItemDetailPage() {
 }
 
 
+type SupplierEvidenceQuery =
+  ReturnType<
+    typeof useOfficeMasterItemSupplierEvidence
+  >;
+
+
 function MasterItemDetail({
   item,
+  supplierEvidenceQuery,
 }: {
   item: OfficeMasterItem;
+  supplierEvidenceQuery: SupplierEvidenceQuery;
 }) {
   return (
     <>
@@ -335,6 +357,47 @@ function MasterItemDetail({
               item.requires_prescription,
             )}
           />
+        </div>
+      </PageSection>
+
+
+      <PageSection>
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold">
+            Supplier Intelligence
+          </h2>
+
+          <p className="text-sm text-muted-foreground">
+            Review supplier catalogue mappings, procurement-comparable
+            prices, source evidence, and price history for this Master Item.
+          </p>
+        </div>
+
+        <div className="mt-4">
+          {supplierEvidenceQuery.isLoading ? (
+            <LoadingState
+              title="Loading supplier evidence"
+            />
+          ) : supplierEvidenceQuery.isError ? (
+            <ErrorState
+              title="Supplier evidence unavailable"
+              description={errorMessage(
+                supplierEvidenceQuery.error,
+              )}
+            />
+          ) : supplierEvidenceQuery.data &&
+            supplierEvidenceQuery.data.mapping_count > 0 ? (
+            <MasterItemSupplierEvidence
+              evidence={
+                supplierEvidenceQuery.data
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No supplier evidence"
+              description="No supplier catalogue mappings or price evidence are currently linked to this Master Item."
+            />
+          )}
         </div>
       </PageSection>
     </>

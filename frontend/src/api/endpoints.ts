@@ -201,6 +201,15 @@ export const API_ENDPOINTS = {
         "/office/catalogue/master-items",
         id,
       ),
+
+
+    MASTER_ITEM_SUPPLIER_EVIDENCE: (
+      id: string,
+    ) =>
+      `${byId(
+        "/office/catalogue/master-items",
+        id,
+      )}/supplier-evidence`,
   },
 
   /**

@@ -15,6 +15,7 @@ import type {
 import type {
   ListOfficeMasterItemsRequest,
   OfficeMasterItem,
+  OfficeMasterItemSupplierEvidence,
 } from "@/types/officeCatalogue";
 
 interface OfficeMasterItemListResponse {
@@ -42,6 +43,26 @@ class OfficeMasterItemService extends BaseService<
       API_ENDPOINTS.OFFICE_CATALOGUE.MASTER_ITEMS,
     );
   }
+
+  async getSupplierEvidence(
+    masterItemId: string,
+    config?: AxiosRequestConfig,
+  ): Promise<OfficeMasterItemSupplierEvidence> {
+    const response =
+      await this.getRequest<{
+        ok: true;
+        evidence: OfficeMasterItemSupplierEvidence;
+      }>(
+        API_ENDPOINTS.OFFICE_CATALOGUE
+          .MASTER_ITEM_SUPPLIER_EVIDENCE(
+            masterItemId,
+          ),
+        config,
+      );
+
+    return response.data.evidence;
+  }
+
 
   async getItem(
     masterItemId: string,

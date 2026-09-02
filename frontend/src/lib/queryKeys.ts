@@ -627,6 +627,17 @@ export const QUERY_KEYS = {
           ...QUERY_KEYS.office.masterItems.details(),
           masterItemId.trim(),
         ] as const,
+
+
+      supplierEvidence: (
+        masterItemId: string,
+      ) =>
+        [
+          ...QUERY_KEYS.office.masterItems.detail(
+            masterItemId,
+          ),
+          "supplier-evidence",
+        ] as const,
     },
   },
 
