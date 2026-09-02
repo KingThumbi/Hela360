@@ -12,6 +12,12 @@ export const OFFICE_PATHS = {
   ROOT: "/office",
   DASHBOARD: "/office/dashboard",
 
+  SUPPLIER_INTELLIGENCE: {
+    ROOT: "/office/supplier-intelligence",
+    CATALOGUE_SUPPLIERS:
+      "/office/supplier-intelligence/catalogue-suppliers",
+  },
+
   CATALOGUE: {
     ROOT: "/office/catalogue",
     MASTER_ITEMS: "/office/catalogue/master-items",

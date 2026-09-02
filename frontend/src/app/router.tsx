@@ -21,6 +21,9 @@ import {
   ReviewQueuePage,
 } from "@/features/office/catalogue";
 import { OfficeDashboardPage } from "@/features/office/dashboard/OfficeDashboardPage";
+import {
+  CatalogueSuppliersPage,
+} from "@/features/office/suppliers";
 import { CustomersPage } from "@/features/customers";
 import { DashboardPage } from "@/features/dashboard";
 import {
@@ -510,6 +513,29 @@ export const router = createBrowserRouter([
       {
         path: OFFICE_PATHS.CATALOGUE.DATA_QUALITY,
         element: <DataQualityPage />,
+      },
+      {
+        path:
+          OFFICE_PATHS
+            .SUPPLIER_INTELLIGENCE
+            .ROOT,
+        element: (
+          <Navigate
+            to={
+              OFFICE_PATHS
+                .SUPPLIER_INTELLIGENCE
+                .CATALOGUE_SUPPLIERS
+            }
+            replace
+          />
+        ),
+      },
+      {
+        path:
+          OFFICE_PATHS
+            .SUPPLIER_INTELLIGENCE
+            .CATALOGUE_SUPPLIERS,
+        element: <CatalogueSuppliersPage />,
       },
     ],
   },

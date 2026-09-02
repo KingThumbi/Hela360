@@ -5,6 +5,7 @@ import {
   Shapes,
   ShieldCheck,
   Tags,
+  Truck,
 } from "lucide-react";
 
 import { OFFICE_PATHS } from "@/routes/officeRoutes";
@@ -62,6 +63,25 @@ export const officeNavigation: OfficeNavigationSection[] = [
         title: "Data Quality",
         href: OFFICE_PATHS.CATALOGUE.DATA_QUALITY,
         icon: ShieldCheck,
+      },
+    ],
+  },
+  {
+    id:
+      OFFICE_NAVIGATION_SECTION_IDS
+        .SUPPLIER_INTELLIGENCE,
+    title: "Supplier Intelligence",
+    items: [
+      {
+        id:
+          OFFICE_NAVIGATION_ITEM_IDS
+            .SUPPLIER_INTELLIGENCE_CATALOGUE_SUPPLIERS,
+        title: "Catalogue Suppliers",
+        href:
+          OFFICE_PATHS
+            .SUPPLIER_INTELLIGENCE
+            .CATALOGUE_SUPPLIERS,
+        icon: Truck,
       },
     ],
   },

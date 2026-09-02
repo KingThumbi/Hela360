@@ -26,6 +26,10 @@ import type {
 import type {
   ListOfficeMasterItemsRequest,
 } from "@/types/officeCatalogue";
+
+import type {
+  ListOfficeCatalogueSuppliersRequest,
+} from "@/types/officeSupplier";
 import {
   createBranchQueryKey,
   createIdentityQueryKey,
@@ -177,6 +181,35 @@ function normalizePaginationRequest(
     ...(q ? { q } : {}),
   });
 }
+
+interface NormalizedListOfficeCatalogueSuppliersRequest {
+  readonly page: number;
+  readonly per_page: number;
+  readonly search?: string;
+  readonly is_active?: boolean;
+}
+
+
+function normalizeListOfficeCatalogueSuppliersRequest(
+  params?: ListOfficeCatalogueSuppliersRequest,
+): NormalizedListOfficeCatalogueSuppliersRequest {
+  const search =
+    params?.search?.trim();
+
+  return Object.freeze({
+    page: params?.page ?? 1,
+    per_page: params?.per_page ?? 25,
+
+    ...(search
+      ? { search }
+      : {}),
+
+    ...(params?.is_active !== undefined
+      ? { is_active: params.is_active }
+      : {}),
+  });
+}
+
 
 interface NormalizedListOfficeMasterItemsRequest {
   readonly page: number;
@@ -590,6 +623,30 @@ export const QUERY_KEYS = {
    */
 
   office: {
+    catalogueSuppliers: {
+      root: () =>
+        createIdentityQueryKey(
+          "office",
+          "catalogue-suppliers",
+        ),
+
+      lists: () =>
+        [
+          ...QUERY_KEYS.office.catalogueSuppliers.root(),
+          "list",
+        ] as const,
+
+      list: (
+        params?: ListOfficeCatalogueSuppliersRequest,
+      ) =>
+        [
+          ...QUERY_KEYS.office.catalogueSuppliers.lists(),
+          normalizeListOfficeCatalogueSuppliersRequest(
+            params,
+          ),
+        ] as const,
+    },
+
     masterItems: {
       root: () =>
         createIdentityQueryKey(

@@ -9,3 +9,7 @@ export {
 export {
   useOfficeMasterItems,
 } from "./useOfficeMasterItems";
+
+export {
+  useOfficeCatalogueSuppliers,
+} from "./useOfficeCatalogueSuppliers";
