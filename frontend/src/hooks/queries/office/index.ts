@@ -13,3 +13,7 @@ export {
 export {
   useOfficeCatalogueSuppliers,
 } from "./useOfficeCatalogueSuppliers";
+
+export {
+  useOfficeCatalogueSupplier,
+} from "./useOfficeCatalogueSupplier";

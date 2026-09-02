@@ -15,6 +15,7 @@ import type {
 import type {
   ListOfficeCatalogueSuppliersRequest,
   OfficeCatalogueSupplier,
+  OfficeCatalogueSupplierDetail,
 } from "@/types/officeSupplier";
 
 
@@ -43,6 +44,25 @@ class OfficeCatalogueSupplierService extends BaseService<
     super(
       API_ENDPOINTS.OFFICE_CATALOGUE.SUPPLIERS,
     );
+  }
+
+
+  async getSupplier(
+    supplierId: string,
+    config?: AxiosRequestConfig,
+  ): Promise<OfficeCatalogueSupplierDetail> {
+    const response =
+      await this.getRequest<{
+        ok: true;
+        supplier: OfficeCatalogueSupplierDetail;
+      }>(
+        API_ENDPOINTS.OFFICE_CATALOGUE.SUPPLIER(
+          supplierId,
+        ),
+        config,
+      );
+
+    return response.data.supplier;
   }
 
 

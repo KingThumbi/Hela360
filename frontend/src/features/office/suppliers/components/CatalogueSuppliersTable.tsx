@@ -1,4 +1,8 @@
 import {
+  Link,
+} from "react-router-dom";
+
+import {
   Badge,
 } from "@/components/ui/badge";
 
@@ -10,6 +14,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+import {
+  OFFICE_PATHS,
+} from "@/routes/officeRoutes";
 
 import type {
   OfficeCatalogueSupplier,
@@ -81,9 +89,18 @@ export function CatalogueSuppliersTable({
             <TableRow key={supplier.id}>
               <TableCell>
                 <div className="min-w-52">
-                  <p className="font-medium">
+                  <Link
+                    to={
+                      OFFICE_PATHS
+                        .SUPPLIER_INTELLIGENCE
+                        .catalogueSupplierDetail(
+                          supplier.id,
+                        )
+                    }
+                    className="font-medium hover:underline"
+                  >
                     {supplier.name}
-                  </p>
+                  </Link>
 
                   <p className="text-xs text-muted-foreground">
                     {supplier.country ??

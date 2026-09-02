@@ -22,6 +22,7 @@ import {
 } from "@/features/office/catalogue";
 import { OfficeDashboardPage } from "@/features/office/dashboard/OfficeDashboardPage";
 import {
+  CatalogueSupplierDetailPage,
   CatalogueSuppliersPage,
 } from "@/features/office/suppliers";
 import { CustomersPage } from "@/features/customers";
@@ -536,6 +537,13 @@ export const router = createBrowserRouter([
             .SUPPLIER_INTELLIGENCE
             .CATALOGUE_SUPPLIERS,
         element: <CatalogueSuppliersPage />,
+      },
+      {
+        path:
+          OFFICE_PATHS
+            .SUPPLIER_INTELLIGENCE
+            .CATALOGUE_SUPPLIER_DETAIL,
+        element: <CatalogueSupplierDetailPage />,
       },
     ],
   },

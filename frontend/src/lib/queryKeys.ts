@@ -645,6 +645,21 @@ export const QUERY_KEYS = {
             params,
           ),
         ] as const,
+
+
+      details: () =>
+        [
+          ...QUERY_KEYS.office.catalogueSuppliers.root(),
+          "detail",
+        ] as const,
+
+      detail: (
+        supplierId: string,
+      ) =>
+        [
+          ...QUERY_KEYS.office.catalogueSuppliers.details(),
+          supplierId.trim(),
+        ] as const,
     },
 
     masterItems: {
