@@ -23,6 +23,9 @@ import type {
   ListProductsRequest,
   PaginationRequest,
 } from "@/types/requests";
+import type {
+  ListOfficeMasterItemsRequest,
+} from "@/types/officeCatalogue";
 import {
   createBranchQueryKey,
   createIdentityQueryKey,
@@ -174,6 +177,66 @@ function normalizePaginationRequest(
     ...(q ? { q } : {}),
   });
 }
+
+interface NormalizedListOfficeMasterItemsRequest {
+  readonly page: number;
+  readonly per_page: number;
+  readonly search?: string;
+  readonly review_status?: string;
+  readonly is_active?: boolean;
+  readonly item_class?: string;
+  readonly category?: string;
+  readonly dosage_form?: string;
+}
+
+function normalizeListOfficeMasterItemsRequest(
+  params?: ListOfficeMasterItemsRequest,
+): NormalizedListOfficeMasterItemsRequest {
+  const search =
+    params?.search?.trim();
+
+  const reviewStatus =
+    params?.review_status?.trim();
+
+  const itemClass =
+    params?.item_class?.trim();
+
+  const category =
+    params?.category?.trim();
+
+  const dosageForm =
+    params?.dosage_form?.trim();
+
+  return Object.freeze({
+    page: params?.page ?? 1,
+    per_page: params?.per_page ?? 25,
+
+    ...(search
+      ? { search }
+      : {}),
+
+    ...(reviewStatus
+      ? { review_status: reviewStatus }
+      : {}),
+
+    ...(params?.is_active !== undefined
+      ? { is_active: params.is_active }
+      : {}),
+
+    ...(itemClass
+      ? { item_class: itemClass }
+      : {}),
+
+    ...(category
+      ? { category }
+      : {}),
+
+    ...(dosageForm
+      ? { dosage_form: dosageForm }
+      : {}),
+  });
+}
+
 
 interface NormalizedListCatalogueItemsRequest {
   readonly page: number;
@@ -519,6 +582,37 @@ export const QUERY_KEYS = {
         ...QUERY_KEYS.products.root(scope),
         "tax-codes",
       ] as const,
+  },
+
+  /* ==========================================================================
+   * Hela360 Office
+   * ==========================================================================
+   */
+
+  office: {
+    masterItems: {
+      root: () =>
+        createIdentityQueryKey(
+          "office",
+          "master-items",
+        ),
+
+      lists: () =>
+        [
+          ...QUERY_KEYS.office.masterItems.root(),
+          "list",
+        ] as const,
+
+      list: (
+        params?: ListOfficeMasterItemsRequest,
+      ) =>
+        [
+          ...QUERY_KEYS.office.masterItems.lists(),
+          normalizeListOfficeMasterItemsRequest(
+            params,
+          ),
+        ] as const,
+    },
   },
 
   /* ==========================================================================
