@@ -34,6 +34,7 @@ def identity():
         user_id="user-1",
         tenant_id="tenant-1",
         branch_id=None,
+        session_id="session-1",
     )
 
 
@@ -793,3 +794,200 @@ def test_non_platform_user_cannot_read_catalogue_supplier_detail(
     )
 
     assert response.status_code == 403
+
+
+def test_office_master_item_approval_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        (
+            rule.rule,
+            tuple(sorted(rule.methods)),
+        )
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert any(
+        rule
+        == "/api/office/catalogue/master-items/<master_item_id>/approve"
+        and "POST" in methods
+        for rule, methods in rules
+    )
+
+
+def test_platform_admin_can_approve_master_item(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    approved = SimpleNamespace(
+        id="master-1",
+        master_code="HMI-000001",
+        canonical_name="Paracetamol 500mg Tablets",
+        review_status="approved",
+        is_active=True,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformMasterItemGovernanceService,
+        "approve_item",
+        lambda _self, **_kwargs: SimpleNamespace(
+            master_item=approved,
+        ),
+    )
+
+    monkeypatch.setattr(
+        office_catalogue.db.session,
+        "commit",
+        lambda: None,
+    )
+
+    response = client.post(
+        "/api/office/catalogue/master-items/master-1/approve"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert payload["item"]["review_status"] == "approved"
+
+
+def test_non_platform_user_cannot_approve_master_item(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.post(
+        "/api/office/catalogue/master-items/master-1/approve"
+    )
+
+    assert response.status_code == 403
+
+
+def test_master_item_approval_returns_404_when_missing(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    def raise_missing(
+        _self,
+        **_kwargs,
+    ):
+        raise (
+            office_catalogue
+            .MasterItemGovernanceNotFoundError(
+                "Master Item not found."
+            )
+        )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformMasterItemGovernanceService,
+        "approve_item",
+        raise_missing,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue.db.session,
+        "rollback",
+        lambda: None,
+    )
+
+    response = client.post(
+        "/api/office/catalogue/master-items/missing/approve"
+    )
+
+    assert response.status_code == 404
+
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Master Item not found.",
+    }
+
+
+def test_master_item_approval_returns_409_for_invalid_transition(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    def raise_conflict(
+        _self,
+        **_kwargs,
+    ):
+        raise (
+            office_catalogue
+            .MasterItemApprovalConflictError(
+                "Only draft Master Items can be approved."
+            )
+        )
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformMasterItemGovernanceService,
+        "approve_item",
+        raise_conflict,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue.db.session,
+        "rollback",
+        lambda: None,
+    )
+
+    response = client.post(
+        "/api/office/catalogue/master-items/master-1/approve"
+    )
+
+    assert response.status_code == 409
+
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Only draft Master Items can be approved.",
+    }

@@ -82,6 +82,10 @@ class AuditAction(StrEnum):
         "MASTER_CATALOGUE_ITEM_ADOPTED"
     )
 
+    MASTER_CATALOGUE_ITEM_APPROVED = (
+        "MASTER_CATALOGUE_ITEM_APPROVED"
+    )
+
     PRICE_CHANGED = "PRICE_CHANGED"
 
     # ==========================================================

@@ -17,6 +17,12 @@ from app.services.platform.catalogue_supplier_query_service import (
     CatalogueSupplierListFilters,
     PlatformCatalogueSupplierQueryService,
 )
+from app.services.platform.master_item_governance_service import (
+    MasterItemApprovalConflictError,
+    MasterItemGovernanceError,
+    MasterItemGovernanceNotFoundError,
+    PlatformMasterItemGovernanceService,
+)
 from app.services.platform.master_item_query_service import (
     PlatformMasterItemListFilters,
     PlatformMasterItemQueryService,
@@ -313,6 +319,90 @@ def get_master_item_supplier_evidence(
         {
             "ok": True,
             "evidence": evidence,
+        }
+    )
+
+
+@bp.post(
+    "/office/catalogue/master-items/<master_item_id>/approve"
+)
+def approve_master_item(
+    master_item_id: str,
+):
+    """
+    Approve one draft platform-owned MasterItem.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    try:
+        result = (
+            PlatformMasterItemGovernanceService(
+                db.session
+            ).approve_item(
+                master_item_id=master_item_id,
+                user_id=identity.user_id,
+                session_id=getattr(
+                    identity,
+                    "session_id",
+                    None,
+                ),
+            )
+        )
+
+        db.session.commit()
+
+    except MasterItemGovernanceNotFoundError as exc:
+        db.session.rollback()
+
+        return _json_error(
+            str(exc),
+            404,
+        )
+
+    except MasterItemApprovalConflictError as exc:
+        db.session.rollback()
+
+        return _json_error(
+            str(exc),
+            409,
+        )
+
+    except MasterItemGovernanceError as exc:
+        db.session.rollback()
+
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    except Exception:
+        db.session.rollback()
+        raise
+
+    item = result.master_item
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Master Item approved.",
+            "item": {
+                "id": item.id,
+                "master_code": item.master_code,
+                "canonical_name": (
+                    item.canonical_name
+                ),
+                "review_status": (
+                    item.review_status
+                ),
+                "is_active": item.is_active,
+            },
         }
     )
 
