@@ -1,7 +1,10 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AppLayout } from "@/layouts/AppLayout";
+import { OfficeAppLayout } from "@/layouts/OfficeAppLayout";
 import { ROUTE_PERMISSION_REQUIREMENTS } from "@/routes/permissions";
+import { OfficeProtectedRoute } from "@/routes/OfficeProtectedRoute";
+import { OFFICE_PATHS } from "@/routes/officeRoutes";
 import { ProtectedRoute } from "@/routes/ProtectedRoute";
 import { PATHS } from "@/routes/routes";
 import {
@@ -9,6 +12,7 @@ import {
   ShellProvider,
 } from "@/providers";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { OfficeDashboardPage } from "@/features/office/dashboard/OfficeDashboardPage";
 import { CustomersPage } from "@/features/customers";
 import { DashboardPage } from "@/features/dashboard";
 import {
@@ -429,6 +433,42 @@ export const router = createBrowserRouter([
       {
         path: PATHS.SETTINGS.ROOT,
         element: <div>Settings Module (Coming Soon)</div>,
+      },
+    ],
+  },
+
+  /**
+   * Hela360 Office
+   *
+   * Platform-management application boundary.
+   *
+   * Authentication infrastructure is shared with the tenant ERP, while
+   * application layout, navigation and admission remain separate.
+   */
+  {
+    element: (
+      <ShellProvider>
+        <ApplicationProvider>
+          <OfficeProtectedRoute>
+            <OfficeAppLayout />
+          </OfficeProtectedRoute>
+        </ApplicationProvider>
+      </ShellProvider>
+    ),
+
+    children: [
+      {
+        path: OFFICE_PATHS.ROOT,
+        element: (
+          <Navigate
+            to={OFFICE_PATHS.DASHBOARD}
+            replace
+          />
+        ),
+      },
+      {
+        path: OFFICE_PATHS.DASHBOARD,
+        element: <OfficeDashboardPage />,
       },
     ],
   },
