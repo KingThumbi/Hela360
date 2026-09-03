@@ -5,3 +5,7 @@ export {
 export {
   officeCatalogueSupplierService,
 } from "./catalogueSupplierService";
+
+export {
+  officeCatalogueDataQualityService,
+} from "./catalogueDataQualityService";

@@ -224,6 +224,8 @@ export const API_ENDPOINTS = {
         "/office/catalogue/master-items",
         id,
       )}/supplier-evidence`,
+
+    DATA_QUALITY: "/office/catalogue/data-quality",
   },
 
   /**

@@ -95,3 +95,45 @@ export interface OfficeMasterItemApprovalResult {
   review_status: string;
   is_active: boolean;
 }
+
+
+export interface OfficeCatalogueDataQualityCatalogue {
+  total: number;
+  approved: number;
+  draft: number;
+  active: number;
+  inactive: number;
+}
+
+
+export interface OfficeCatalogueDataQualityEnrichment {
+  categorized: number;
+  uncategorized: number;
+  classified: number;
+  unclassified: number;
+  dosage_form_populated: number;
+  dosage_form_missing: number;
+  complete_pack_definition: number;
+  incomplete_pack_definition: number;
+  generic_name_populated: number;
+  generic_name_missing: number;
+  manufacturer_populated: number;
+  manufacturer_missing: number;
+}
+
+
+export interface OfficeCatalogueDataQualityProvenance {
+  with_supplier_mapping: number;
+  without_supplier_mapping: number;
+  with_price_evidence: number;
+  without_price_evidence: number;
+  with_comparable_evidence: number;
+  with_dated_comparable_evidence: number;
+}
+
+
+export interface OfficeCatalogueDataQualitySummary {
+  catalogue: OfficeCatalogueDataQualityCatalogue;
+  enrichment: OfficeCatalogueDataQualityEnrichment;
+  provenance: OfficeCatalogueDataQualityProvenance;
+}
