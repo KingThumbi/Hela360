@@ -17,6 +17,9 @@ from app.services.platform.catalogue_supplier_query_service import (
     CatalogueSupplierListFilters,
     PlatformCatalogueSupplierQueryService,
 )
+from app.services.platform.catalogue_data_quality_service import (
+    PlatformCatalogueDataQualityService,
+)
 from app.services.platform.master_item_governance_service import (
     MasterItemApprovalConflictError,
     MasterItemGovernanceError,
@@ -403,6 +406,36 @@ def approve_master_item(
                 ),
                 "is_active": item.is_active,
             },
+        }
+    )
+
+
+@bp.get(
+    "/office/catalogue/data-quality"
+)
+def get_catalogue_data_quality():
+    """
+    Return platform-wide catalogue quality observations.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    summary = (
+        PlatformCatalogueDataQualityService(
+            db.session
+        ).get_summary()
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "summary": summary,
         }
     )
 

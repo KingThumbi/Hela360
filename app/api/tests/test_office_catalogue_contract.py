@@ -991,3 +991,114 @@ def test_master_item_approval_returns_409_for_invalid_transition(
         "ok": False,
         "error": "Only draft Master Items can be approved.",
     }
+
+
+def test_office_catalogue_data_quality_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        (
+            rule.rule,
+            tuple(sorted(rule.methods)),
+        )
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert any(
+        rule
+        == "/api/office/catalogue/data-quality"
+        and "GET" in methods
+        for rule, methods in rules
+    )
+
+
+def test_platform_admin_receives_catalogue_data_quality(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    summary = {
+        "catalogue": {
+            "total": 10,
+            "approved": 8,
+            "draft": 2,
+            "active": 9,
+            "inactive": 1,
+        },
+        "enrichment": {
+            "categorized": 4,
+            "uncategorized": 6,
+            "classified": 3,
+            "unclassified": 7,
+            "dosage_form_populated": 5,
+            "dosage_form_missing": 5,
+            "complete_pack_definition": 2,
+            "incomplete_pack_definition": 8,
+            "generic_name_populated": 4,
+            "generic_name_missing": 6,
+            "manufacturer_populated": 1,
+            "manufacturer_missing": 9,
+        },
+        "provenance": {
+            "with_supplier_mapping": 3,
+            "without_supplier_mapping": 7,
+            "with_price_evidence": 3,
+            "without_price_evidence": 7,
+            "with_comparable_evidence": 3,
+            "with_dated_comparable_evidence": 2,
+        },
+    }
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformCatalogueDataQualityService,
+        "get_summary",
+        lambda _self: summary,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/data-quality"
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload == {
+        "ok": True,
+        "summary": summary,
+    }
+
+
+def test_non_platform_user_cannot_read_catalogue_data_quality(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/data-quality"
+    )
+
+    assert response.status_code == 403
