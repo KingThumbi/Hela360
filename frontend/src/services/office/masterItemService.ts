@@ -15,6 +15,7 @@ import type {
 import type {
   ListOfficeMasterItemsRequest,
   OfficeMasterItem,
+  OfficeMasterItemApprovalResult,
   OfficeMasterItemSupplierEvidence,
 } from "@/types/officeCatalogue";
 
@@ -61,6 +62,28 @@ class OfficeMasterItemService extends BaseService<
       );
 
     return response.data.evidence;
+  }
+
+
+  async approveItem(
+    masterItemId: string,
+    config?: AxiosRequestConfig,
+  ): Promise<OfficeMasterItemApprovalResult> {
+    const response =
+      await this.postRequest<{
+        ok: true;
+        message: string;
+        item: OfficeMasterItemApprovalResult;
+      }>(
+        API_ENDPOINTS.OFFICE_CATALOGUE
+          .MASTER_ITEM_APPROVE(
+            masterItemId,
+          ),
+        undefined,
+        config,
+      );
+
+    return response.data.item;
   }
 
 

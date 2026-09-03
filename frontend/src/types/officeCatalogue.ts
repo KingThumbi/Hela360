@@ -86,3 +86,12 @@ export interface OfficeMasterItemSupplierEvidence {
 
   mappings: OfficeSupplierMappingEvidence[];
 }
+
+
+export interface OfficeMasterItemApprovalResult {
+  id: string;
+  master_code: string;
+  canonical_name: string;
+  review_status: string;
+  is_active: boolean;
+}

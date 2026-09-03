@@ -1,6 +1,11 @@
 import {
   ArrowLeft,
+  CheckCircle2,
 } from "lucide-react";
+
+import {
+  useState,
+} from "react";
 
 import type {
   ReactNode,
@@ -25,14 +30,27 @@ import {
 } from "@/components/page";
 
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+import {
   Badge,
 } from "@/components/ui/badge";
 
 import {
+  Button,
   buttonVariants,
 } from "@/components/ui/button";
 
 import {
+  useApproveOfficeMasterItem,
   useOfficeMasterItem,
   useOfficeMasterItemSupplierEvidence,
 } from "@/hooks/queries/office";
@@ -121,6 +139,14 @@ export function MasterItemDetailPage() {
     masterItemId,
   } = useParams();
 
+  const [
+    approvalOpen,
+    setApprovalOpen,
+  ] = useState(false);
+
+  const approveMasterItem =
+    useApproveOfficeMasterItem();
+
   const masterItemQuery =
     useOfficeMasterItem(
       masterItemId,
@@ -147,6 +173,19 @@ export function MasterItemDetailPage() {
         </div>
 
         <PageActions>
+          {masterItemQuery.data?.review_status
+            === "draft" ? (
+            <Button
+              type="button"
+              onClick={() =>
+                setApprovalOpen(true)
+              }
+            >
+              <CheckCircle2 />
+              Approve
+            </Button>
+          ) : null}
+
           <Link
             to={
               OFFICE_PATHS.CATALOGUE.MASTER_ITEMS
@@ -193,6 +232,75 @@ export function MasterItemDetailPage() {
           />
         ) : null}
       </PageContent>
+
+      <AlertDialog
+        open={approvalOpen}
+        onOpenChange={(open) => {
+          setApprovalOpen(open);
+
+          if (!open) {
+            approveMasterItem.reset();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Approve this Master Item?
+            </AlertDialogTitle>
+
+            <AlertDialogDescription>
+              Approval confirms this canonical catalogue
+              identity and makes it available for tenant
+              catalogue consumption and adoption.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {approveMasterItem.isError ? (
+            <div className="text-sm text-destructive">
+              {errorMessage(
+                approveMasterItem.error,
+              )}
+            </div>
+          ) : null}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                approveMasterItem.isPending
+              }
+            >
+              Cancel
+            </AlertDialogCancel>
+
+            <AlertDialogAction
+              type="button"
+              disabled={
+                approveMasterItem.isPending ||
+                !masterItemId
+              }
+              onClick={() => {
+                if (!masterItemId) {
+                  return;
+                }
+
+                approveMasterItem.mutate(
+                  masterItemId,
+                  {
+                    onSuccess: () => {
+                      setApprovalOpen(false);
+                    },
+                  },
+                );
+              }}
+            >
+              {approveMasterItem.isPending
+                ? "Approving..."
+                : "Approve Master Item"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Page>
   );
 }

@@ -210,6 +210,12 @@ export const API_ENDPOINTS = {
         id,
       ),
 
+    MASTER_ITEM_APPROVE: (id: string) =>
+      `${byId(
+        "/office/catalogue/master-items",
+        id,
+      )}/approve`,
+
 
     MASTER_ITEM_SUPPLIER_EVIDENCE: (
       id: string,
