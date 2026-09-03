@@ -17,6 +17,9 @@ from app.services.platform.catalogue_supplier_query_service import (
     CatalogueSupplierListFilters,
     PlatformCatalogueSupplierQueryService,
 )
+from app.services.platform.catalogue_category_query_service import (
+    PlatformCatalogueCategoryQueryService,
+)
 from app.services.platform.catalogue_data_quality_service import (
     PlatformCatalogueDataQualityService,
 )
@@ -406,6 +409,36 @@ def approve_master_item(
                 ),
                 "is_active": item.is_active,
             },
+        }
+    )
+
+
+@bp.get(
+    "/office/catalogue/categories"
+)
+def get_catalogue_categories():
+    """
+    Return categories derived from the platform Master Catalogue.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    summary = (
+        PlatformCatalogueCategoryQueryService(
+            db.session
+        ).get_summary()
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "summary": summary,
         }
     )
 
