@@ -137,3 +137,29 @@ export interface OfficeCatalogueDataQualitySummary {
   enrichment: OfficeCatalogueDataQualityEnrichment;
   provenance: OfficeCatalogueDataQualityProvenance;
 }
+
+
+export interface OfficeCatalogueSubcategorySummary {
+  name: string;
+  item_count: number;
+}
+
+
+export interface OfficeCatalogueCategorySummary {
+  name: string;
+  item_count: number;
+  approved_count: number;
+  draft_count: number;
+  active_count: number;
+  inactive_count: number;
+  subcategories: OfficeCatalogueSubcategorySummary[];
+}
+
+
+export interface OfficeCatalogueCategoryOverview {
+  total_items: number;
+  categorized_items: number;
+  uncategorized_items: number;
+  category_count: number;
+  categories: OfficeCatalogueCategorySummary[];
+}

@@ -25,3 +25,7 @@ export {
 export {
   useOfficeCatalogueDataQuality,
 } from "./useOfficeCatalogueDataQuality";
+
+export {
+  useOfficeCatalogueCategories,
+} from "./useOfficeCatalogueCategories";

@@ -623,6 +623,14 @@ export const QUERY_KEYS = {
    */
 
   office: {
+    categories: {
+      root: () =>
+        createIdentityQueryKey(
+          "office",
+          "catalogue-categories",
+        ),
+    },
+
     dataQuality: {
       root: () =>
         createIdentityQueryKey(

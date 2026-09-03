@@ -9,3 +9,7 @@ export {
 export {
   officeCatalogueDataQualityService,
 } from "./catalogueDataQualityService";
+
+export {
+  officeCatalogueCategoryService,
+} from "./catalogueCategoryService";
