@@ -91,6 +91,24 @@ class PlatformUser(
             f"username={self.username}>"
         )
 
+    sessions = db.relationship(
+        "PlatformSession",
+        foreign_keys="PlatformSession.platform_user_id",
+        back_populates="platform_user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    refresh_tokens = db.relationship(
+        "PlatformRefreshToken",
+        foreign_keys="PlatformRefreshToken.platform_user_id",
+        back_populates="platform_user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
 
 class PlatformRole(
     UUIDPrimaryKeyMixin,

@@ -21,6 +21,11 @@ from app.models.platform_auth import (
     PlatformUser,
     PlatformUserRole,
 )
+from app.models.platform_security import (
+    PlatformLoginAttempt,
+    PlatformRefreshToken,
+    PlatformSession,
+)
 from app.models.product import ProductCategory, Brand, UnitOfMeasure, Product, ProductUnit, ProductCode
 from app.models.master_catalogue import (
     MasterItem,
@@ -77,6 +82,9 @@ __all__ = [
     "PlatformPermission",
     "PlatformUserRole",
     "PlatformRolePermission",
+    "PlatformSession",
+    "PlatformRefreshToken",
+    "PlatformLoginAttempt",
     "ProductCategory",
     "Brand",
     "UnitOfMeasure",
