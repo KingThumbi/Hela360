@@ -17,6 +17,9 @@ from app.services.platform.catalogue_supplier_query_service import (
     CatalogueSupplierListFilters,
     PlatformCatalogueSupplierQueryService,
 )
+from app.services.platform.catalogue_brand_query_service import (
+    PlatformCatalogueBrandQueryService,
+)
 from app.services.platform.catalogue_category_query_service import (
     PlatformCatalogueCategoryQueryService,
 )
@@ -409,6 +412,36 @@ def approve_master_item(
                 ),
                 "is_active": item.is_active,
             },
+        }
+    )
+
+
+@bp.get(
+    "/office/catalogue/brands"
+)
+def get_catalogue_brands():
+    """
+    Return brands derived from the platform Master Catalogue.
+    """
+
+    identity = _current_identity()
+
+    if not _has_office_access(identity):
+        return _json_error(
+            "Platform administrator access is required.",
+            403,
+        )
+
+    summary = (
+        PlatformCatalogueBrandQueryService(
+            db.session
+        ).get_summary()
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "summary": summary,
         }
     )
 

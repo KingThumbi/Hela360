@@ -1202,3 +1202,97 @@ def test_non_platform_user_cannot_read_catalogue_categories(
     )
 
     assert response.status_code == 403
+
+
+def test_office_catalogue_brands_route_is_registered(
+    app,
+) -> None:
+    rules = {
+        (
+            rule.rule,
+            tuple(sorted(rule.methods)),
+        )
+        for rule in app.url_map.iter_rules()
+    }
+
+    assert any(
+        rule
+        == "/api/office/catalogue/brands"
+        and "GET" in methods
+        for rule, methods in rules
+    )
+
+
+def test_platform_admin_receives_catalogue_brands(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: True,
+    )
+
+    summary = {
+        "total_items": 10,
+        "branded_items": 4,
+        "unbranded_items": 6,
+        "brand_count": 1,
+        "brands": [
+            {
+                "name": "Example Brand",
+                "item_count": 4,
+                "approved_count": 3,
+                "draft_count": 1,
+                "active_count": 4,
+                "inactive_count": 0,
+            },
+        ],
+    }
+
+    monkeypatch.setattr(
+        office_catalogue
+        .PlatformCatalogueBrandQueryService,
+        "get_summary",
+        lambda _self: summary,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/brands"
+    )
+
+    assert response.status_code == 200
+
+    assert response.get_json() == {
+        "ok": True,
+        "summary": summary,
+    }
+
+
+def test_non_platform_user_cannot_read_catalogue_brands(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        office_catalogue,
+        "get_current_identity",
+        identity,
+    )
+
+    monkeypatch.setattr(
+        office_catalogue,
+        "_has_office_access",
+        lambda _identity: False,
+    )
+
+    response = client.get(
+        "/api/office/catalogue/brands"
+    )
+
+    assert response.status_code == 403
