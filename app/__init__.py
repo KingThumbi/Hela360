@@ -344,4 +344,9 @@ def create_app(
     # Register custom Flask CLI commands.
     register_commands(app)
 
+    # Register platform administration commands.
+    from app.cli import register_platform_cli
+
+    register_platform_cli(app)
+
     return app
