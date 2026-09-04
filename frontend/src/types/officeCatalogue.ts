@@ -163,3 +163,22 @@ export interface OfficeCatalogueCategoryOverview {
   category_count: number;
   categories: OfficeCatalogueCategorySummary[];
 }
+
+
+export interface OfficeCatalogueBrandSummary {
+  name: string;
+  item_count: number;
+  approved_count: number;
+  draft_count: number;
+  active_count: number;
+  inactive_count: number;
+}
+
+
+export interface OfficeCatalogueBrandOverview {
+  total_items: number;
+  branded_items: number;
+  unbranded_items: number;
+  brand_count: number;
+  brands: OfficeCatalogueBrandSummary[];
+}

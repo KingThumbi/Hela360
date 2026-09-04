@@ -13,3 +13,7 @@ export {
 export {
   officeCatalogueCategoryService,
 } from "./catalogueCategoryService";
+
+export {
+  officeCatalogueBrandService,
+} from "./catalogueBrandService";

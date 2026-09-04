@@ -29,3 +29,7 @@ export {
 export {
   useOfficeCatalogueCategories,
 } from "./useOfficeCatalogueCategories";
+
+export {
+  useOfficeCatalogueBrands,
+} from "./useOfficeCatalogueBrands";

@@ -225,6 +225,8 @@ export const API_ENDPOINTS = {
         id,
       )}/supplier-evidence`,
 
+    BRANDS: "/office/catalogue/brands",
+
     CATEGORIES: "/office/catalogue/categories",
 
     DATA_QUALITY: "/office/catalogue/data-quality",

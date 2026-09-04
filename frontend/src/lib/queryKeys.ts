@@ -623,6 +623,14 @@ export const QUERY_KEYS = {
    */
 
   office: {
+    brands: {
+      root: () =>
+        createIdentityQueryKey(
+          "office",
+          "catalogue-brands",
+        ),
+    },
+
     categories: {
       root: () =>
         createIdentityQueryKey(
