@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import create_app
@@ -9,6 +9,8 @@ from app.extensions import db
 from app.models import (
     PlatformPermission,
     PlatformRole,
+    PlatformRolePermission,
+    PlatformUserRole,
 )
 from app.services.platform.platform_permission_catalogue_service import (
     PlatformPermissionCatalogueService,
@@ -40,6 +42,20 @@ def platform_session():
         )
 
         try:
+            session.execute(
+                delete(PlatformUserRole)
+            )
+            session.execute(
+                delete(PlatformRolePermission)
+            )
+            session.execute(
+                delete(PlatformRole)
+            )
+            session.execute(
+                delete(PlatformPermission)
+            )
+            session.flush()
+
             yield session
         finally:
             session.close()

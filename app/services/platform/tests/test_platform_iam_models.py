@@ -66,7 +66,7 @@ def platform_role(
     platform_session,
 ):
     role = PlatformRole(
-        code="catalogue_manager",
+        code="test_catalogue_manager",
         name="Catalogue Manager",
         description="Manages governed catalogue data.",
         is_system=True,
@@ -83,7 +83,7 @@ def platform_permission(
     platform_session,
 ):
     permission = PlatformPermission(
-        code="platform.catalogue.read",
+        code="platform.test.catalogue.read",
         name="Read Platform Catalogue",
         module_code="catalogue",
         description="Read governed Master Catalogue data.",
@@ -138,7 +138,7 @@ def test_platform_user_role_assignment(
         role.code
         for role in persisted.roles
     } == {
-        "catalogue_manager",
+        "test_catalogue_manager",
     }
 
 
@@ -170,7 +170,7 @@ def test_platform_role_permission_assignment(
         permission.code
         for permission in persisted.permissions
     } == {
-        "platform.catalogue.read",
+        "platform.test.catalogue.read",
     }
 
 

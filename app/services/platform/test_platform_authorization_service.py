@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app import create_app
@@ -42,6 +43,17 @@ def platform_session():
         )
 
         try:
+            session.execute(
+                delete(PlatformUserRole)
+            )
+            session.execute(
+                delete(PlatformRolePermission)
+            )
+            session.execute(
+                delete(PlatformRole)
+            )
+            session.flush()
+
             yield session
 
         finally:
@@ -82,6 +94,15 @@ def create_permission(
     session: Session,
     code: str,
 ) -> PlatformPermission:
+    permission = (
+        session.query(PlatformPermission)
+        .filter(PlatformPermission.code == code)
+        .one_or_none()
+    )
+
+    if permission is not None:
+        return permission
+
     permission = PlatformPermission(
         id=str(uuid4()),
         code=code,
