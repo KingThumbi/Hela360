@@ -13,6 +13,10 @@ from app.auth.exceptions import AuthenticationError
 from app.auth.jwt import get_current_identity
 from app.errors import ValidationError
 from app.extensions import db
+from app.platform_auth.decorators import (
+    platform_login_required,
+    require_platform_permission,
+)
 from app.services.platform.catalogue_supplier_query_service import (
     CatalogueSupplierListFilters,
     PlatformCatalogueSupplierQueryService,
@@ -102,18 +106,14 @@ def _has_office_access(
 
 
 @bp.get("/office/catalogue/suppliers")
+@platform_login_required
+@require_platform_permission(
+    "platform.suppliers.read"
+)
 def list_catalogue_suppliers():
     """
     List platform-owned CatalogueSuppliers with supplier-evidence metrics.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     try:
         filters = (
@@ -148,6 +148,10 @@ def list_catalogue_suppliers():
 @bp.get(
     "/office/catalogue/suppliers/<supplier_id>"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.suppliers.read"
+)
 def get_catalogue_supplier(
     supplier_id: str,
 ):
@@ -155,14 +159,6 @@ def get_catalogue_supplier(
     Retrieve one platform-owned CatalogueSupplier with mapped
     Master Items and supplier evidence summary metrics.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     try:
         supplier = (
@@ -194,18 +190,14 @@ def get_catalogue_supplier(
 
 
 @bp.get("/office/catalogue/master-items")
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
 def list_master_items():
     """
     List platform-owned MasterItems for Hela360 Office governance.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     try:
         filters = (
@@ -240,20 +232,16 @@ def list_master_items():
 @bp.get(
     "/office/catalogue/master-items/<master_item_id>"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
 def get_master_item(
     master_item_id: str,
 ):
     """
     Retrieve one platform-owned MasterItem for Office inspection.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     try:
         item = (
@@ -288,20 +276,19 @@ def get_master_item(
     "/office/catalogue/master-items/"
     "<master_item_id>/supplier-evidence"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
+@require_platform_permission(
+    "platform.suppliers.read"
+)
 def get_master_item_supplier_evidence(
     master_item_id: str,
 ):
     """
     Retrieve supplier mappings and price evidence for one MasterItem.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     try:
         evidence = (
@@ -419,18 +406,14 @@ def approve_master_item(
 @bp.get(
     "/office/catalogue/brands"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
 def get_catalogue_brands():
     """
     Return brands derived from the platform Master Catalogue.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     summary = (
         PlatformCatalogueBrandQueryService(
@@ -449,18 +432,14 @@ def get_catalogue_brands():
 @bp.get(
     "/office/catalogue/categories"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
 def get_catalogue_categories():
     """
     Return categories derived from the platform Master Catalogue.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     summary = (
         PlatformCatalogueCategoryQueryService(
@@ -479,18 +458,14 @@ def get_catalogue_categories():
 @bp.get(
     "/office/catalogue/data-quality"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.read"
+)
 def get_catalogue_data_quality():
     """
     Return platform-wide catalogue quality observations.
     """
-
-    identity = _current_identity()
-
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
-        )
 
     summary = (
         PlatformCatalogueDataQualityService(

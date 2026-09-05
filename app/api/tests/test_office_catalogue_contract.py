@@ -7,9 +7,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+
+from app.platform_auth import decorators as platform_decorators
 from flask import Flask
 
 from app.api import office_catalogue
+from app.api.errors import register_error_handlers
+from app.auth.exceptions import PermissionDeniedError
 
 
 @pytest.fixture
@@ -20,6 +24,8 @@ def app():
         office_catalogue.bp,
         url_prefix="/api",
     )
+
+    register_error_handlers(app)
 
     return app
 
@@ -47,6 +53,77 @@ def pagination():
         "has_prev": False,
         "has_next": False,
     }
+
+
+
+@pytest.fixture(autouse=True)
+def platform_office_read_access(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Default Office Catalogue contract authorization.
+
+    Platform authentication transport and persisted IAM behavior are covered
+    independently by app/platform_auth tests. These route contract tests focus
+    on endpoint behavior after a valid Platform request reaches the route.
+    """
+
+    class Identity:
+        platform_user_id = "platform-user-1"
+        session_id = "platform-session-1"
+        authorization = None
+
+    identity = Identity()
+
+    monkeypatch.setattr(
+        platform_decorators,
+        "resolve_platform_identity",
+        lambda: identity,
+    )
+
+    monkeypatch.setattr(
+        platform_decorators
+        .PlatformAuthorizationService,
+        "require_permission",
+        lambda _self, _user_id, _permission: None,
+    )
+
+    return identity
+
+
+@pytest.fixture
+def deny_platform_permission(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """
+    Deny one explicit Platform permission while retaining a valid
+    authenticated Hela360 Office identity.
+    """
+
+    def deny(
+        denied_permission: str,
+    ):
+        def require_permission(
+            _self,
+            _platform_user_id,
+            permission,
+        ):
+            if permission == denied_permission:
+                raise PermissionDeniedError(
+                    "Platform permission required: "
+                    + permission
+                )
+
+            return None
+
+        monkeypatch.setattr(
+            platform_decorators
+            .PlatformAuthorizationService,
+            "require_permission",
+            require_permission,
+        )
+
+    return deny
 
 
 def master_item():
@@ -94,20 +171,12 @@ def test_office_master_items_route_is_registered(
     )
 
 
-def test_non_platform_user_is_denied(
+def test_platform_user_without_catalogue_read_is_denied(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.read"
     )
 
     response = client.get(
@@ -115,25 +184,15 @@ def test_non_platform_user_is_denied(
     )
 
     assert response.status_code == 403
-    assert response.get_json()["ok"] is False
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_platform_admin_receives_master_items(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     monkeypatch.setattr(
         office_catalogue.PlatformMasterItemQueryService,
         "list_items",
@@ -164,18 +223,6 @@ def test_invalid_office_filter_returns_400(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     response = client.get(
         "/api/office/catalogue/master-items"
         "?is_active=not-a-boolean"
@@ -212,18 +259,6 @@ def test_platform_admin_receives_master_item_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue.PlatformMasterItemQueryService,
         "get_item",
         lambda _self, *, master_item_id: (
@@ -251,18 +286,6 @@ def test_office_master_item_detail_returns_404(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue.PlatformMasterItemQueryService,
         "get_item",
         lambda _self, *, master_item_id: None,
@@ -282,20 +305,12 @@ def test_office_master_item_detail_returns_404(
     }
 
 
-def test_non_platform_user_cannot_read_master_item_detail(
+def test_platform_user_without_catalogue_read_cannot_read_master_item_detail(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.read"
     )
 
     response = client.get(
@@ -303,7 +318,10 @@ def test_non_platform_user_cannot_read_master_item_detail(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def supplier_evidence():
     return {
@@ -379,18 +397,6 @@ def test_platform_admin_receives_supplier_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue
         .PlatformMasterItemSupplierEvidenceService,
         "get_evidence",
@@ -434,18 +440,6 @@ def test_supplier_evidence_returns_404_for_missing_master(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue
         .PlatformMasterItemSupplierEvidenceService,
         "get_evidence",
@@ -465,20 +459,12 @@ def test_supplier_evidence_returns_404_for_missing_master(
     }
 
 
-def test_non_platform_user_cannot_read_supplier_evidence(
+def test_platform_user_without_suppliers_read_cannot_read_supplier_evidence(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.suppliers.read"
     )
 
     response = client.get(
@@ -487,7 +473,31 @@ def test_non_platform_user_cannot_read_supplier_evidence(
     )
 
     assert response.status_code == 403
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
+
+
+def test_platform_user_without_catalogue_read_cannot_read_supplier_evidence(
+    client,
+    deny_platform_permission,
+) -> None:
+    deny_platform_permission(
+        "platform.catalogue.read"
+    )
+
+    response = client.get(
+        "/api/office/catalogue/master-items/"
+        "master-1/supplier-evidence"
+    )
+
+    assert response.status_code == 403
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def catalogue_supplier():
     return {
@@ -522,18 +532,6 @@ def test_platform_admin_receives_catalogue_suppliers(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     monkeypatch.setattr(
         office_catalogue
         .PlatformCatalogueSupplierQueryService,
@@ -573,20 +571,12 @@ def test_platform_admin_receives_catalogue_suppliers(
     )
 
 
-def test_non_platform_user_cannot_read_catalogue_suppliers(
+def test_platform_user_without_suppliers_read_cannot_list_catalogue_suppliers(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.suppliers.read"
     )
 
     response = client.get(
@@ -594,24 +584,15 @@ def test_non_platform_user_cannot_read_catalogue_suppliers(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_invalid_catalogue_supplier_filter_returns_400(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     response = client.get(
         "/api/office/catalogue/suppliers"
         "?is_active=not-a-boolean"
@@ -695,18 +676,6 @@ def test_platform_admin_receives_catalogue_supplier_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue
         .PlatformCatalogueSupplierQueryService,
         "get_supplier",
@@ -743,18 +712,6 @@ def test_catalogue_supplier_detail_returns_404_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
-    monkeypatch.setattr(
         office_catalogue
         .PlatformCatalogueSupplierQueryService,
         "get_supplier",
@@ -773,20 +730,12 @@ def test_catalogue_supplier_detail_returns_404_when_missing(
     }
 
 
-def test_non_platform_user_cannot_read_catalogue_supplier_detail(
+def test_platform_user_without_suppliers_read_cannot_read_catalogue_supplier_detail(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.suppliers.read"
     )
 
     response = client.get(
@@ -794,7 +743,10 @@ def test_non_platform_user_cannot_read_catalogue_supplier_detail(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_office_master_item_approval_route_is_registered(
     app,
@@ -1016,18 +968,6 @@ def test_platform_admin_receives_catalogue_data_quality(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     summary = {
         "catalogue": {
             "total": 10,
@@ -1081,20 +1021,12 @@ def test_platform_admin_receives_catalogue_data_quality(
     }
 
 
-def test_non_platform_user_cannot_read_catalogue_data_quality(
+def test_platform_user_without_catalogue_read_cannot_read_data_quality(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.read"
     )
 
     response = client.get(
@@ -1102,7 +1034,10 @@ def test_non_platform_user_cannot_read_catalogue_data_quality(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_office_catalogue_categories_route_is_registered(
     app,
@@ -1127,18 +1062,6 @@ def test_platform_admin_receives_catalogue_categories(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     summary = {
         "total_items": 10,
         "categorized_items": 4,
@@ -1181,20 +1104,12 @@ def test_platform_admin_receives_catalogue_categories(
     }
 
 
-def test_non_platform_user_cannot_read_catalogue_categories(
+def test_platform_user_without_catalogue_read_cannot_read_categories(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.read"
     )
 
     response = client.get(
@@ -1202,7 +1117,10 @@ def test_non_platform_user_cannot_read_catalogue_categories(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_office_catalogue_brands_route_is_registered(
     app,
@@ -1227,18 +1145,6 @@ def test_platform_admin_receives_catalogue_brands(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     summary = {
         "total_items": 10,
         "branded_items": 4,
@@ -1275,20 +1181,12 @@ def test_platform_admin_receives_catalogue_brands(
     }
 
 
-def test_non_platform_user_cannot_read_catalogue_brands(
+def test_platform_user_without_catalogue_read_cannot_read_brands(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.read"
     )
 
     response = client.get(
@@ -1296,3 +1194,7 @@ def test_non_platform_user_cannot_read_catalogue_brands(
     )
 
     assert response.status_code == 403
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )

@@ -549,16 +549,20 @@ def test_logout_all_uses_authenticated_platform_identity(
         )
 
 
-def test_tenant_auth_and_platform_auth_are_distinct(
+def test_platform_access_token_authenticates_office_catalogue(
     client,
     platform_user,
 ):
+    """
+    A valid Platform access token authenticates the migrated Hela360 Office
+    catalogue boundary independently of tenant IAM.
+    """
+
     auth = login(
         client,
         platform_user,
     )
 
-    # A Platform access token must not establish tenant IAM identity.
     response = client.get(
         "/api/office/catalogue/master-items",
         headers={
@@ -571,9 +575,8 @@ def test_tenant_auth_and_platform_auth_are_distinct(
         },
     )
 
-    # The legacy Office catalogue boundary is still tenant-platform-admin
-    # based. It will be migrated separately.
-    assert response.status_code in (
-        401,
-        403,
-    )
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
