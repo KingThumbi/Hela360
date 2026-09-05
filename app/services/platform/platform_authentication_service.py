@@ -100,6 +100,35 @@ class PlatformRefreshResult:
     refresh_token_record: PlatformRefreshToken
 
 
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class PlatformLogoutResult:
+    """
+    Result of terminating one Hela360 Office authentication session.
+    """
+
+    platform_user_id: str
+    platform_session_id: str
+    refresh_tokens_revoked: int
+    session_revoked: bool
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class PlatformLogoutAllResult:
+    """
+    Result of terminating all Hela360 Office sessions for one PlatformUser.
+    """
+
+    platform_user_id: str
+    refresh_tokens_revoked: int
+    sessions_revoked: int
+
+
 class PlatformAuthenticationService:
     """
     Authenticate Hela360 Office users.
@@ -779,6 +808,287 @@ class PlatformAuthenticationService:
             ),
         )
 
+    def logout(
+        self,
+        *,
+        refresh_token: str,
+    ) -> PlatformLogoutResult:
+        """
+        Terminate the PlatformSession identified by one refresh JWT.
+
+        A valid persisted refresh token may be used for logout even when it
+        has previously been rotated. This allows an older client credential
+        to terminate its own session safely while preserving token-history
+        provenance.
+
+        Unknown or ownership-mismatched token state is rejected.
+        """
+
+        payload = (
+            self.jwt.decode_refresh_token(
+                refresh_token
+            )
+        )
+
+        jwt_id = self.jwt.token_id(
+            payload
+        )
+
+        platform_user_id = (
+            self.jwt
+            .extract_platform_user_id(
+                payload
+            )
+        )
+
+        platform_session_id = (
+            self.jwt
+            .extract_session_id(
+                payload
+            )
+        )
+
+        persisted_refresh = (
+            self.refresh_tokens
+            .get_by_jwt_id(
+                jwt_id
+            )
+        )
+
+        if persisted_refresh is None:
+            raise InvalidCredentialsError(
+                "Platform refresh token not found."
+            )
+
+        if (
+            str(
+                persisted_refresh
+                .platform_user_id
+            )
+            != str(
+                platform_user_id
+            )
+            or str(
+                persisted_refresh
+                .platform_session_id
+            )
+            != str(
+                platform_session_id
+            )
+        ):
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    persisted_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            compromised_session = (
+                self.sessions.get(
+                    str(
+                        persisted_refresh
+                        .platform_session_id
+                    )
+                )
+            )
+
+            if compromised_session is not None:
+                self.sessions.revoke(
+                    compromised_session,
+                    reason=(
+                        TokenRevocationReason
+                        .SECURITY_EVENT
+                    ),
+                )
+
+            raise InvalidCredentialsError(
+                "Platform logout authentication "
+                "context is invalid."
+            )
+
+        auth_session = (
+            self.sessions.get(
+                str(
+                    platform_session_id
+                )
+            )
+        )
+
+        if (
+            auth_session is not None
+            and str(
+                auth_session
+                .platform_user_id
+            )
+            != str(
+                platform_user_id
+            )
+        ):
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    persisted_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            self.sessions.revoke(
+                auth_session,
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            raise InvalidCredentialsError(
+                "Platform logout session "
+                "ownership is invalid."
+            )
+
+        refresh_tokens_revoked = (
+            self.refresh_tokens
+            .revoke_session_tokens(
+                platform_session_id=(
+                    str(
+                        platform_session_id
+                    )
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .LOGOUT
+                ),
+                revoked_by_platform_user_id=(
+                    str(
+                        platform_user_id
+                    )
+                ),
+            )
+        )
+
+        session_revoked = False
+
+        if auth_session is not None:
+            session_revoked = (
+                self.sessions.revoke(
+                    auth_session,
+                    reason=(
+                        TokenRevocationReason
+                        .LOGOUT
+                    ),
+                    revoked_by_platform_user_id=(
+                        str(
+                            platform_user_id
+                        )
+                    ),
+                )
+            )
+
+        self.session.flush()
+
+        return PlatformLogoutResult(
+            platform_user_id=(
+                str(
+                    platform_user_id
+                )
+            ),
+            platform_session_id=(
+                str(
+                    platform_session_id
+                )
+            ),
+            refresh_tokens_revoked=(
+                refresh_tokens_revoked
+            ),
+            session_revoked=(
+                session_revoked
+            ),
+        )
+
+    def logout_all(
+        self,
+        *,
+        platform_user_id: str,
+        revoked_by_platform_user_id: str | None = None,
+    ) -> PlatformLogoutAllResult:
+        """
+        Terminate every active Hela360 Office session for one PlatformUser.
+
+        The optional revoker allows future administrative session termination.
+        Self-service logout-all defaults the actor to the Platform user whose
+        sessions are being terminated.
+        """
+
+        normalized_user_id = str(
+            platform_user_id or ""
+        ).strip()
+
+        if not normalized_user_id:
+            raise ValueError(
+                "platform_user_id is required."
+            )
+
+        actor_id = (
+            str(
+                revoked_by_platform_user_id
+            ).strip()
+            if revoked_by_platform_user_id
+            is not None
+            else normalized_user_id
+        )
+
+        refresh_tokens_revoked = (
+            self.refresh_tokens
+            .revoke_user_tokens(
+                platform_user_id=(
+                    normalized_user_id
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .LOGOUT_ALL
+                ),
+                revoked_by_platform_user_id=(
+                    actor_id
+                ),
+            )
+        )
+
+        sessions_revoked = (
+            self.sessions
+            .revoke_user_sessions(
+                platform_user_id=(
+                    normalized_user_id
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .LOGOUT_ALL
+                ),
+                revoked_by_platform_user_id=(
+                    actor_id
+                ),
+            )
+        )
+
+        self.session.flush()
+
+        return PlatformLogoutAllResult(
+            platform_user_id=(
+                normalized_user_id
+            ),
+            refresh_tokens_revoked=(
+                refresh_tokens_revoked
+            ),
+            sessions_revoked=(
+                sessions_revoked
+            ),
+        )
+
     def _resolve_user(
         self,
         identifier: str,
@@ -869,5 +1179,7 @@ __all__ = [
     "PLATFORM_OFFICE_ACCESS_PERMISSION",
     "PlatformAuthenticationResult",
     "PlatformAuthenticationService",
+    "PlatformLogoutAllResult",
+    "PlatformLogoutResult",
     "PlatformRefreshResult",
 ]
