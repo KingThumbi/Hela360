@@ -83,8 +83,13 @@ def register_blueprints(app: Flask) -> None:
     from app.api.suppliers import bp as suppliers_bp
     from app.api.dashboard import bp as dashboard_bp
 
-    # Enterprise IAM
+    # Enterprise tenant IAM
     init_auth(app)
+
+    # Hela360 Office Platform IAM
+    from app.platform_auth import init_platform_auth
+
+    init_platform_auth(app)
 
     app.register_blueprint(health_bp, url_prefix="/api")
     app.register_blueprint(products_bp, url_prefix="/api")
