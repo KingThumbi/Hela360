@@ -29,11 +29,15 @@ from app.auth.exceptions import (
     AccountLockedError,
     InvalidCredentialsError,
     PermissionDeniedError,
+    UserNotFoundError,
 )
 from app.models import (
     PlatformRefreshToken,
     PlatformSession,
     PlatformUser,
+)
+from app.models.security import (
+    TokenRevocationReason,
 )
 from app.services.platform.platform_authorization_service import (
     PlatformAuthorizationContext,
@@ -69,6 +73,23 @@ PLATFORM_OFFICE_ACCESS_PERMISSION = (
 class PlatformAuthenticationResult:
     """
     Result of one successful Hela360 Office authentication.
+    """
+
+    user: PlatformUser
+    authorization: PlatformAuthorizationContext
+    access_token: str
+    refresh_token: str
+    session: PlatformSession
+    refresh_token_record: PlatformRefreshToken
+
+
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class PlatformRefreshResult:
+    """
+    Result of one successful Hela360 Office refresh-token rotation.
     """
 
     user: PlatformUser
@@ -384,6 +405,380 @@ class PlatformAuthenticationService:
             ),
         )
 
+    def refresh(
+        self,
+        *,
+        refresh_token: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PlatformRefreshResult:
+        """
+        Rotate one valid Hela360 Office refresh token.
+
+        Authorization is resolved again from persisted Platform IAM state so
+        newly issued access tokens always carry the user's current effective
+        permissions.
+
+        Replay of a rotated token revokes the surviving token family and the
+        associated PlatformSession.
+        """
+
+        payload = (
+            self.jwt.decode_refresh_token(
+                refresh_token
+            )
+        )
+
+        jwt_id = self.jwt.token_id(
+            payload
+        )
+
+        platform_user_id = (
+            self.jwt
+            .extract_platform_user_id(
+                payload
+            )
+        )
+
+        platform_session_id = (
+            self.jwt
+            .extract_session_id(
+                payload
+            )
+        )
+
+        current_refresh = (
+            self.refresh_tokens
+            .get_by_jwt_id(
+                jwt_id
+            )
+        )
+
+        if current_refresh is None:
+            raise InvalidCredentialsError(
+                "Platform refresh token not found."
+            )
+
+        if (
+            str(
+                current_refresh
+                .platform_user_id
+            )
+            != str(
+                platform_user_id
+            )
+            or str(
+                current_refresh
+                .platform_session_id
+            )
+            != str(
+                platform_session_id
+            )
+        ):
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    current_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            compromised_session = (
+                self.sessions.get(
+                    str(
+                        current_refresh
+                        .platform_session_id
+                    )
+                )
+            )
+
+            if compromised_session is not None:
+                self.sessions.revoke(
+                    compromised_session,
+                    reason=(
+                        TokenRevocationReason
+                        .SECURITY_EVENT
+                    ),
+                )
+
+            raise InvalidCredentialsError(
+                "Platform refresh token "
+                "authentication context is invalid."
+            )
+
+        if current_refresh.is_rotated:
+            self.refresh_tokens.handle_reuse(
+                current_refresh
+            )
+
+            replay_session = (
+                self.sessions.get(
+                    str(
+                        current_refresh
+                        .platform_session_id
+                    )
+                )
+            )
+
+            if replay_session is not None:
+                self.sessions.revoke(
+                    replay_session,
+                    reason=(
+                        TokenRevocationReason
+                        .REUSE_DETECTED
+                    ),
+                )
+
+            raise InvalidCredentialsError(
+                "Platform refresh token "
+                "has already been used."
+            )
+
+        if not current_refresh.is_active:
+            raise InvalidCredentialsError(
+                "Platform refresh token "
+                "is no longer valid."
+            )
+
+        auth_session = (
+            self.sessions.get_active(
+                str(
+                    platform_session_id
+                )
+            )
+        )
+
+        if auth_session is None:
+            self.refresh_tokens.revoke(
+                current_refresh,
+                reason=(
+                    TokenRevocationReason
+                    .SESSION_EXPIRED
+                ),
+            )
+
+            raise AccountInactiveError(
+                "Platform authentication "
+                "session has expired."
+            )
+
+        if (
+            str(
+                auth_session
+                .platform_user_id
+            )
+            != str(
+                platform_user_id
+            )
+        ):
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    current_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            self.sessions.revoke(
+                auth_session,
+                reason=(
+                    TokenRevocationReason
+                    .SECURITY_EVENT
+                ),
+            )
+
+            raise InvalidCredentialsError(
+                "Platform authentication "
+                "session ownership is invalid."
+            )
+
+        user = self.session.get(
+            PlatformUser,
+            str(
+                platform_user_id
+            ),
+        )
+
+        if user is None:
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    current_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .USER_DELETED
+                ),
+            )
+
+            self.sessions.revoke(
+                auth_session,
+                reason=(
+                    TokenRevocationReason
+                    .USER_DELETED
+                ),
+            )
+
+            raise UserNotFoundError(
+                "Platform user not found."
+            )
+
+        if user.is_active is not True:
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    current_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .ACCOUNT_DISABLED
+                ),
+            )
+
+            self.sessions.revoke(
+                auth_session,
+                reason=(
+                    TokenRevocationReason
+                    .ACCOUNT_DISABLED
+                ),
+            )
+
+            raise AccountInactiveError(
+                "Platform user is inactive."
+            )
+
+        try:
+            authorization = (
+                self.authorization
+                .require_permission(
+                    str(user.id),
+                    PLATFORM_OFFICE_ACCESS_PERMISSION,
+                )
+            )
+
+        except PermissionDeniedError:
+            self.refresh_tokens.revoke_family(
+                token_family=(
+                    current_refresh
+                    .token_family
+                ),
+                reason=(
+                    TokenRevocationReason
+                    .ADMIN_REVOKED
+                ),
+            )
+
+            self.sessions.revoke(
+                auth_session,
+                reason=(
+                    TokenRevocationReason
+                    .ADMIN_REVOKED
+                ),
+            )
+
+            raise
+
+        replacement_refresh_token = (
+            self.jwt.issue_refresh_token(
+                platform_user_id=(
+                    str(user.id)
+                ),
+                session_id=(
+                    str(auth_session.id)
+                ),
+            )
+        )
+
+        replacement_payload = (
+            self.jwt.decode_refresh_token(
+                replacement_refresh_token
+            )
+        )
+
+        replacement_jwt_id = (
+            self.jwt.token_id(
+                replacement_payload
+            )
+        )
+
+        replacement_expires_at = (
+            self.jwt.token_expiry(
+                replacement_payload
+            )
+        )
+
+        replacement_record = (
+            self.refresh_tokens.rotate(
+                old_token=(
+                    current_refresh
+                ),
+                new_jwt_id=(
+                    replacement_jwt_id
+                ),
+                expires_at=(
+                    replacement_expires_at
+                ),
+                ip_address=ip_address,
+                user_agent=user_agent,
+                device_name=(
+                    current_refresh
+                    .device_name
+                ),
+                device_fingerprint=(
+                    current_refresh
+                    .device_fingerprint
+                ),
+            )
+        )
+
+        access_token = (
+            self.jwt.issue_access_token(
+                platform_user_id=(
+                    str(user.id)
+                ),
+                permissions=list(
+                    authorization.permissions
+                ),
+                session_id=(
+                    str(auth_session.id)
+                ),
+            )
+        )
+
+        auth_session.expires_at = (
+            replacement_expires_at
+        )
+
+        self.sessions.touch(
+            auth_session,
+            ip_address=ip_address,
+        )
+
+        self.session.flush()
+
+        return PlatformRefreshResult(
+            user=user,
+            authorization=(
+                authorization
+            ),
+            access_token=(
+                access_token
+            ),
+            refresh_token=(
+                replacement_refresh_token
+            ),
+            session=auth_session,
+            refresh_token_record=(
+                replacement_record
+            ),
+        )
+
     def _resolve_user(
         self,
         identifier: str,
@@ -474,4 +869,5 @@ __all__ = [
     "PLATFORM_OFFICE_ACCESS_PERMISSION",
     "PlatformAuthenticationResult",
     "PlatformAuthenticationService",
+    "PlatformRefreshResult",
 ]
