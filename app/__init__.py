@@ -118,7 +118,13 @@ def register_commands(app: Flask) -> None:
     @click.option("--tenant-name", default="Hela360 Demo", show_default=True)
     @click.option("--branch-name", default="Main Branch", show_default=True)
     @click.option("--admin-email", default="admin@hela360.local", show_default=True)
-    @click.option("--admin-password", default="Admin@123", show_default=True)
+    @click.option(
+        "--admin-password",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Initial tenant administrator password.",
+    )
     def seed_initial(
         tenant_name: str,
         branch_name: str,
