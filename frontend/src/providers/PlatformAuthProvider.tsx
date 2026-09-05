@@ -93,10 +93,18 @@ function PlatformAuthInitializer() {
           return;
         }
 
+        const hydratedAccessToken =
+          platformAuthStorage.getAccessToken()
+          ?? effectiveAccessToken;
+
+        const hydratedRefreshToken =
+          platformAuthStorage.getRefreshToken()
+          ?? effectiveRefreshToken;
+
         hydrateSession(
           session,
-          effectiveAccessToken,
-          effectiveRefreshToken,
+          hydratedAccessToken,
+          hydratedRefreshToken,
         );
       })
       .catch(() => {

@@ -10,6 +10,7 @@
 
 export const OFFICE_PATHS = {
   ROOT: "/office",
+  LOGIN: "/office/login",
   DASHBOARD: "/office/dashboard",
 
   SUPPLIER_INTELLIGENCE: {

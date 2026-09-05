@@ -6,6 +6,10 @@ import {
   API_ENDPOINTS,
 } from "@/api/endpoints";
 
+import {
+  platformApiClient,
+} from "@/api/platformClient";
+
 import BaseService from "@/services/base";
 
 import type {
@@ -19,6 +23,7 @@ class OfficeCatalogueDataQualityService extends BaseService<
   constructor() {
     super(
       API_ENDPOINTS.OFFICE_CATALOGUE.DATA_QUALITY,
+      platformApiClient,
     );
   }
 

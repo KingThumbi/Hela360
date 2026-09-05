@@ -9,6 +9,7 @@ import { ProtectedRoute } from "@/routes/ProtectedRoute";
 import { PATHS } from "@/routes/routes";
 import {
   ApplicationProvider,
+  PlatformAuthProvider,
   ShellProvider,
 } from "@/providers";
 import { LoginPage } from "@/features/auth/LoginPage";
@@ -21,6 +22,7 @@ import {
   ReviewQueuePage,
 } from "@/features/office/catalogue";
 import { OfficeDashboardPage } from "@/features/office/dashboard/OfficeDashboardPage";
+import { OfficeLoginPage } from "@/features/office/auth";
 import {
   CatalogueSupplierDetailPage,
   CatalogueSuppliersPage,
@@ -454,18 +456,25 @@ export const router = createBrowserRouter([
    *
    * Platform-management application boundary.
    *
-   * Authentication infrastructure is shared with the tenant ERP, while
-   * application layout, navigation and admission remain separate.
+   * Platform authentication, authorization and identity are independent
+   * from the tenant ERP authentication boundary.
    */
   {
+    path: OFFICE_PATHS.LOGIN,
     element: (
-      <ShellProvider>
-        <ApplicationProvider>
-          <OfficeProtectedRoute>
-            <OfficeAppLayout />
-          </OfficeProtectedRoute>
-        </ApplicationProvider>
-      </ShellProvider>
+      <PlatformAuthProvider>
+        <OfficeLoginPage />
+      </PlatformAuthProvider>
+    ),
+  },
+
+  {
+    element: (
+      <PlatformAuthProvider>
+        <OfficeProtectedRoute>
+          <OfficeAppLayout />
+        </OfficeProtectedRoute>
+      </PlatformAuthProvider>
     ),
 
     children: [

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { UserMenu } from "@/components/layout/UserMenu";
+import { OfficeUserMenu } from "./OfficeUserMenu";
 
 import { OfficeSidebar } from "./OfficeSidebar";
 
@@ -71,7 +71,7 @@ export function OfficeShell({
 
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <UserMenu />
+            <OfficeUserMenu />
           </div>
         </header>
 

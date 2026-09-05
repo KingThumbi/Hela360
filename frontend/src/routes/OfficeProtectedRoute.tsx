@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import type {
+  ReactNode,
+} from "react";
 
 import {
   Navigate,
@@ -6,56 +8,70 @@ import {
   useLocation,
 } from "react-router-dom";
 
-import { AccessDeniedPage } from "@/features/auth/AccessDeniedPage";
-import { useAuthStore } from "@/store/authStore";
-import { PATHS } from "@/routes/routes";
+import {
+  LoadingState,
+} from "@/components/page";
+
+import {
+  AccessDeniedPage,
+} from "@/features/auth/AccessDeniedPage";
+
+import {
+  OFFICE_PATHS,
+} from "@/routes/officeRoutes";
+
+import {
+  usePlatformAuthStore,
+} from "@/store/platformAuthStore";
 
 export interface OfficeProtectedRouteProps {
   children?: ReactNode;
 }
 
-/**
- * Hela360 Office application-boundary guard.
- *
- * Authentication remains shared with the tenant ERP.
- *
- * Office admission currently relies on the backend-derived
- * `isPlatformAdmin` identity flag.
- *
- * This is intentionally not the permanent Office action-authorization model.
- * Future Office actions will be governed by explicit platform permissions.
- */
+const OFFICE_ACCESS_PERMISSION =
+  "platform.office.access";
+
 export function OfficeProtectedRoute({
   children,
 }: OfficeProtectedRouteProps) {
   const location = useLocation();
 
-  const isInitializing = useAuthStore(
-    (state) => state.isInitializing,
-  );
+  const isInitializing =
+    usePlatformAuthStore(
+      (state) => state.isInitializing,
+    );
 
-  const isAuthenticated = useAuthStore(
-    (state) => state.isAuthenticated,
-  );
+  const isAuthenticated =
+    usePlatformAuthStore(
+      (state) => state.isAuthenticated,
+    );
 
-  const identity = useAuthStore(
-    (state) => state.identity,
-  );
+  const user =
+    usePlatformAuthStore(
+      (state) => state.user,
+    );
+
+  const authorization =
+    usePlatformAuthStore(
+      (state) => state.authorization,
+    );
 
   if (isInitializing) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">
-          Loading Hela360 Office...
-        </div>
-      </div>
+      <LoadingState
+        title="Restoring Hela360 Office session..."
+        description="Please wait while we securely restore your platform session."
+      />
     );
   }
 
-  if (!isAuthenticated || identity === null) {
+  if (
+    !isAuthenticated ||
+    user === null
+  ) {
     return (
       <Navigate
-        to={PATHS.LOGIN}
+        to={OFFICE_PATHS.LOGIN}
         replace
         state={{
           from: location,
@@ -64,7 +80,16 @@ export function OfficeProtectedRoute({
     );
   }
 
-  if (identity.isPlatformAdmin !== true) {
+  const permissions =
+    authorization?.permissions ?? [];
+
+  const hasOfficeAccess =
+    permissions.includes("*") ||
+    permissions.includes(
+      OFFICE_ACCESS_PERMISSION,
+    );
+
+  if (!hasOfficeAccess) {
     return <AccessDeniedPage />;
   }
 

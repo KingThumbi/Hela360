@@ -39,6 +39,7 @@
  */
 
 import type {
+  AxiosInstance,
   AxiosRequestConfig,
   AxiosResponse,
 } from "axios";
@@ -82,8 +83,14 @@ export abstract class BaseService<
    */
   protected readonly endpoint: string;
 
-  protected constructor(endpoint: string) {
+  protected readonly client: AxiosInstance;
+
+  protected constructor(
+    endpoint: string,
+    client: AxiosInstance = apiClient,
+  ) {
     this.endpoint = this.normalizeEndpoint(endpoint);
+    this.client = client;
   }
 
   /* ==========================================================================
@@ -416,7 +423,7 @@ export abstract class BaseService<
     config?: RequestOptions,
   ): Promise<ApiResponse<TEntity[]>> {
     const response =
-      await apiClient.get<ApiResponse<TEntity[]>>(
+      await this.client.get<ApiResponse<TEntity[]>>(
         this.collectionUrl(),
         this.buildQueryConfig(
           options,
@@ -439,7 +446,7 @@ export abstract class BaseService<
     PaginatedResponse<TEntity>
   > {
     const response =
-      await apiClient.get<
+      await this.client.get<
         PaginatedResponse<TEntity>
       >(
         this.collectionUrl(),
@@ -460,7 +467,7 @@ export abstract class BaseService<
     config?: RequestOptions,
   ): Promise<ApiResponse<TEntity>> {
     const response =
-      await apiClient.get<
+      await this.client.get<
         ApiResponse<TEntity>
       >(
         this.url(id),
@@ -478,7 +485,7 @@ export abstract class BaseService<
     config?: RequestOptions,
   ): Promise<ApiResponse<TEntity>> {
     const response =
-      await apiClient.post<
+      await this.client.post<
         ApiResponse<TEntity>
       >(
         this.collectionUrl(),
@@ -500,7 +507,7 @@ export abstract class BaseService<
     config?: RequestOptions,
   ): Promise<ApiResponse<TEntity>> {
     const response =
-      await apiClient.put<
+      await this.client.put<
         ApiResponse<TEntity>
       >(
         this.url(id),
@@ -522,7 +529,7 @@ async patch(
   config?: RequestOptions,
 ): Promise<ApiResponse<TEntity>> {
   const response =
-    await apiClient.patch<ApiResponse<TEntity>>(
+    await this.client.patch<ApiResponse<TEntity>>(
       this.url(id),
       payload,
       this.buildConfig(config),
@@ -539,7 +546,7 @@ async patch(
     config?: RequestOptions,
   ): Promise<ApiResponse<void>> {
     const response =
-      await apiClient.delete<
+      await this.client.delete<
         ApiResponse<void>
       >(
         this.url(id),
@@ -682,7 +689,7 @@ async patch(
     url: string,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.get<TResult>(
+    return this.client.get<TResult>(
       url,
       this.buildConfig(config),
     );
@@ -696,7 +703,7 @@ async patch(
     data?: unknown,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.post<TResult>(
+    return this.client.post<TResult>(
       url,
       data,
       this.buildConfig(config),
@@ -711,7 +718,7 @@ async patch(
     data?: unknown,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.put<TResult>(
+    return this.client.put<TResult>(
       url,
       data,
       this.buildConfig(config),
@@ -726,7 +733,7 @@ async patch(
     data?: unknown,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.patch<TResult>(
+    return this.client.patch<TResult>(
       url,
       data,
       this.buildConfig(config),
@@ -740,7 +747,7 @@ async patch(
     url: string,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.delete<TResult>(
+    return this.client.delete<TResult>(
       url,
       this.buildConfig(config),
     );
@@ -755,7 +762,7 @@ async patch(
     url: string,
     config?: RequestOptions,
   ): Promise<AxiosResponse<void>> {
-    return apiClient.head<void>(
+    return this.client.head<void>(
       url,
       this.buildConfig(config),
     );
@@ -770,7 +777,7 @@ async patch(
     url: string,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.options<TResult>(
+    return this.client.options<TResult>(
       url,
       this.buildConfig(config),
     );
@@ -791,7 +798,7 @@ async patch(
     data: FormData,
     config?: RequestOptions,
   ): Promise<AxiosResponse<TResult>> {
-    return apiClient.post<TResult>(
+    return this.client.post<TResult>(
       url,
       data,
       {
@@ -821,7 +828,7 @@ async patch(
     url: string,
     config?: RequestOptions,
   ): Promise<AxiosResponse<Blob>> {
-    return apiClient.get<Blob>(
+    return this.client.get<Blob>(
       url,
       {
         ...this.buildConfig(config),

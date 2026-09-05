@@ -16,6 +16,9 @@ import type {
 } from "axios";
 
 import { API } from "@/constants";
+import {
+  PLATFORM_AUTH_ENDPOINTS,
+} from "@/api/platformAuthEndpoints";
 import { createClientId } from "@/lib/clientId";
 import { AppError } from "@/lib/errors";
 import { platformAuthStorage } from "@/lib/platformAuthStorage";
@@ -53,6 +56,24 @@ function enrichPlatformRequest(
   return config;
 }
 
+function canRefreshPlatformRequest(
+  url: string | undefined,
+): boolean {
+  if (!url) {
+    return true;
+  }
+
+  const nonRefreshableEndpoints = [
+    PLATFORM_AUTH_ENDPOINTS.LOGIN,
+    PLATFORM_AUTH_ENDPOINTS.REFRESH,
+    PLATFORM_AUTH_ENDPOINTS.LOGOUT,
+  ];
+
+  return !nonRefreshableEndpoints.some(
+    (endpoint) => url.endsWith(endpoint),
+  );
+}
+
 async function onPlatformResponseError(
   client: AxiosInstance,
   error: AxiosError,
@@ -67,7 +88,8 @@ async function onPlatformResponseError(
   if (
     response?.status === 401 &&
     request &&
-    !request._platformRetry
+    !request._platformRetry &&
+    canRefreshPlatformRequest(request.url)
   ) {
     request._platformRetry = true;
 

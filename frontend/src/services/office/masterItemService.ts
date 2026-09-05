@@ -6,6 +6,10 @@ import {
   API_ENDPOINTS,
 } from "@/api/endpoints";
 
+import {
+  platformApiClient,
+} from "@/api/platformClient";
+
 import BaseService from "@/services/base";
 
 import type {
@@ -42,6 +46,7 @@ class OfficeMasterItemService extends BaseService<
   constructor() {
     super(
       API_ENDPOINTS.OFFICE_CATALOGUE.MASTER_ITEMS,
+      platformApiClient,
     );
   }
 
