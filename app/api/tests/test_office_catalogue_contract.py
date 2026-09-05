@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.platform_auth import decorators as platform_decorators
-from flask import Flask
+from flask import Flask, g
 
 from app.api import office_catalogue
 from app.api.errors import register_error_handlers
@@ -75,10 +75,14 @@ def platform_office_read_access(
 
     identity = Identity()
 
+    def resolve_identity():
+        g.platform_identity = identity
+        return identity
+
     monkeypatch.setattr(
         platform_decorators,
         "resolve_platform_identity",
-        lambda: identity,
+        resolve_identity,
     )
 
     monkeypatch.setattr(
@@ -767,22 +771,10 @@ def test_office_master_item_approval_route_is_registered(
     )
 
 
-def test_platform_admin_can_approve_master_item(
+def test_platform_user_with_catalogue_approve_can_approve_master_item(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     approved = SimpleNamespace(
         id="master-1",
         master_code="HMI-000001",
@@ -791,13 +783,23 @@ def test_platform_admin_can_approve_master_item(
         is_active=True,
     )
 
+    captured = {}
+
+    def approve_item(
+        _self,
+        **kwargs,
+    ):
+        captured.update(kwargs)
+
+        return SimpleNamespace(
+            master_item=approved,
+        )
+
     monkeypatch.setattr(
         office_catalogue
         .PlatformMasterItemGovernanceService,
         "approve_item",
-        lambda _self, **_kwargs: SimpleNamespace(
-            master_item=approved,
-        ),
+        approve_item,
     )
 
     monkeypatch.setattr(
@@ -817,21 +819,16 @@ def test_platform_admin_can_approve_master_item(
     assert payload["ok"] is True
     assert payload["item"]["review_status"] == "approved"
 
+    assert captured["master_item_id"] == "master-1"
+    assert captured["user_id"] == "platform-user-1"
+    assert captured["session_id"] == "platform-session-1"
 
-def test_non_platform_user_cannot_approve_master_item(
+def test_platform_user_without_catalogue_approve_cannot_approve_master_item(
     client,
-    monkeypatch: pytest.MonkeyPatch,
+    deny_platform_permission,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: False,
+    deny_platform_permission(
+        "platform.catalogue.approve"
     )
 
     response = client.post(
@@ -839,24 +836,15 @@ def test_non_platform_user_cannot_approve_master_item(
     )
 
     assert response.status_code == 403
-
+    assert (
+        response.get_json()["error"]["code"]
+        == "AUTHORIZATION_DENIED"
+    )
 
 def test_master_item_approval_returns_404_when_missing(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     def raise_missing(
         _self,
         **_kwargs,
@@ -892,23 +880,10 @@ def test_master_item_approval_returns_404_when_missing(
         "error": "Master Item not found.",
     }
 
-
 def test_master_item_approval_returns_409_for_invalid_transition(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        office_catalogue,
-        "get_current_identity",
-        identity,
-    )
-
-    monkeypatch.setattr(
-        office_catalogue,
-        "_has_office_access",
-        lambda _identity: True,
-    )
-
     def raise_conflict(
         _self,
         **_kwargs,
@@ -943,7 +918,6 @@ def test_master_item_approval_returns_409_for_invalid_transition(
         "ok": False,
         "error": "Only draft Master Items can be approved.",
     }
-
 
 def test_office_catalogue_data_quality_route_is_registered(
     app,

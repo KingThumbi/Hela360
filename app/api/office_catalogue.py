@@ -9,11 +9,10 @@ API and must not expose tenant Product adoption state.
 
 from flask import Blueprint, jsonify, request
 
-from app.auth.exceptions import AuthenticationError
-from app.auth.jwt import get_current_identity
 from app.errors import ValidationError
 from app.extensions import db
 from app.platform_auth.decorators import (
+    get_current_platform_identity,
     platform_login_required,
     require_platform_permission,
 )
@@ -43,11 +42,6 @@ from app.services.platform.master_item_query_service import (
 from app.services.platform.master_item_supplier_evidence_service import (
     PlatformMasterItemSupplierEvidenceService,
 )
-from app.services.tenant.auth.authorization_service import (
-    authorization_service,
-)
-
-
 bp = Blueprint(
     "office_catalogue",
     __name__,
@@ -67,42 +61,6 @@ def _json_error(
         ),
         status,
     )
-
-
-def _current_identity():
-    identity = get_current_identity()
-
-    if identity is None:
-        raise AuthenticationError(
-            "Authentication is required."
-        )
-
-    return identity
-
-
-def _has_office_access(
-    identity,
-) -> bool:
-    """
-    Resolve the authenticated authorization context and determine whether
-    the identity may enter the Hela360 Office application boundary.
-
-    This is a bootstrap platform-admin boundary. Future Office actions will
-    use explicit platform permissions.
-    """
-
-    user = authorization_service.authorize(
-        identity.user_id,
-        tenant_id=identity.tenant_id,
-        branch_id=identity.branch_id,
-    )
-
-    context = authorization_service.refresh_context(
-        user,
-        tenant_id=identity.tenant_id,
-    )
-
-    return context.is_platform_admin is True
 
 
 @bp.get("/office/catalogue/suppliers")
@@ -322,6 +280,10 @@ def get_master_item_supplier_evidence(
 @bp.post(
     "/office/catalogue/master-items/<master_item_id>/approve"
 )
+@platform_login_required
+@require_platform_permission(
+    "platform.catalogue.approve"
+)
 def approve_master_item(
     master_item_id: str,
 ):
@@ -329,12 +291,11 @@ def approve_master_item(
     Approve one draft platform-owned MasterItem.
     """
 
-    identity = _current_identity()
+    identity = get_current_platform_identity()
 
-    if not _has_office_access(identity):
-        return _json_error(
-            "Platform administrator access is required.",
-            403,
+    if identity is None:
+        raise RuntimeError(
+            "Platform identity was not resolved."
         )
 
     try:
@@ -343,11 +304,11 @@ def approve_master_item(
                 db.session
             ).approve_item(
                 master_item_id=master_item_id,
-                user_id=identity.user_id,
-                session_id=getattr(
-                    identity,
-                    "session_id",
-                    None,
+                user_id=(
+                    identity.platform_user_id
+                ),
+                session_id=(
+                    identity.session_id
                 ),
             )
         )
