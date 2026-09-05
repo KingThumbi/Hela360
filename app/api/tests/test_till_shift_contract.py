@@ -3075,3 +3075,107 @@ def test_takeover_shift_rejects_unknown_requesting_session(
     assert persisted is not None
     assert persisted.active_session_id == OTHER_SESSION_ID
 
+
+
+def test_pos_availability_uses_tenant_local_date_across_utc_midnight_boundary(
+    client,
+    monkeypatch,
+):
+    """
+    At 21:30 UTC it is already the next calendar day in Nairobi.
+
+    An item expiring on the UTC calendar date must therefore already be
+    expired for an Africa/Nairobi tenant.
+    """
+
+    fixed_now = datetime(
+        2026,
+        9,
+        5,
+        21,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    monkeypatch.setattr(
+        "app.api.sales.now_utc",
+        lambda: fixed_now,
+    )
+
+    replace_batches(
+        make_batch(
+            EXPIRED_BATCH_ID,
+            quantity="5.0000",
+            expiry_date=date(2026, 9, 5),
+        )
+    )
+    set_stock_balance(
+        on_hand="5.0000",
+        available="5.0000",
+    )
+    db.session.commit()
+
+    response = client.get(
+        f"/api/sales/availability"
+        f"?till_id={TILL_ID}"
+        f"&product_ids={PRODUCT_ID}"
+    )
+
+    assert response.status_code == 200
+    item = response.json["items"][0]
+
+    assert item["status"] == "out_of_stock"
+    assert item["sellable_quantity"] == "0.0000"
+    assert item["expired_only"] is True
+
+
+def test_checkout_uses_tenant_local_date_across_utc_midnight_boundary(
+    client,
+    monkeypatch,
+):
+    """
+    Checkout must apply the same tenant-local expiry boundary as availability.
+    """
+
+    fixed_now = datetime(
+        2026,
+        9,
+        5,
+        21,
+        30,
+        tzinfo=timezone.utc,
+    )
+
+    monkeypatch.setattr(
+        "app.api.sales.now_utc",
+        lambda: fixed_now,
+    )
+
+    add_open_shift()
+
+    replace_batches(
+        make_batch(
+            EXPIRED_BATCH_ID,
+            quantity="5.0000",
+            expiry_date=date(2026, 9, 5),
+        )
+    )
+    set_stock_balance(
+        on_hand="5.0000",
+        available="5.0000",
+    )
+    db.session.commit()
+
+    response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(),
+    )
+
+    assert response.status_code == 400
+    assert (
+        db.session.get(
+            InventoryBatch,
+            EXPIRED_BATCH_ID,
+        ).quantity_on_hand
+        == Decimal("5.0000")
+    )

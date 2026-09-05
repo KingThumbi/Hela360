@@ -245,7 +245,7 @@ def allocate_sale_stock(
     sale_id: str,
     sale_item_id: str | None = None,
     created_by: str,
-    operational_date: date | None = None,
+    operational_date: date,
     now: datetime | None = None,
 ) -> StockAllocationResult:
     quantity = q4(quantity)
@@ -259,7 +259,6 @@ def allocate_sale_stock(
         )
 
     now = now or utcnow()
-    operational_date = operational_date or now.date()
     product_id = str(product.id)
 
     stock_balance = _lock_stock_balance(

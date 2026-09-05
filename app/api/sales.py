@@ -44,6 +44,7 @@ from app.services.tenant.auth.decorators import (
     _current_identity,
 )
 from app.services.tenant.inventory.sale_stock_service import allocate_sale_stock
+from app.services.tenant.business_time import tenant_operational_date
 from app.services.tenant.inventory.product_unit_conversion_service import (
     ProductUnitConversionService,
 )
@@ -1262,7 +1263,11 @@ def list_pos_availability():
             for batch in batches:
                 batches_by_product_id.setdefault(str(batch.product_id), []).append(batch)
 
-        today = now_utc().date()
+        today = tenant_operational_date(
+            db.session,
+            tenant_id=tenant_id,
+            now=now_utc(),
+        )
         items = [
             _pos_availability_item(
                 product=products_by_id[product_id],
@@ -1506,6 +1511,11 @@ def checkout_sale():
         )
 
         current_time = now_utc()
+        operational_date = tenant_operational_date(
+            db.session,
+            tenant_id=tenant_id,
+            now=current_time,
+        )
 
         # ------------------------------------------------------------------
         # Persist sale aggregate root
@@ -1573,6 +1583,7 @@ def checkout_sale():
                 sale_id=sale_id,
                 sale_item_id=str(sale_item.id),
                 created_by=cashier_id,
+                operational_date=operational_date,
             )
 
             # Preserve direct batch attribution where the allocation
