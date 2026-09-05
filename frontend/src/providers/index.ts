@@ -62,3 +62,7 @@ export {
   ThemeProvider,
   default as ThemeProviderDefault,
 } from "./ThemeProvider";
+
+export {
+  PlatformAuthProvider,
+} from "./PlatformAuthProvider";

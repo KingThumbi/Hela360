@@ -9,6 +9,12 @@ export const STORAGE = {
 
   REFRESH_TOKEN: "hela360.refresh_token",
 
+  PLATFORM_ACCESS_TOKEN:
+    "hela360.platform.access_token",
+
+  PLATFORM_REFRESH_TOKEN:
+    "hela360.platform.refresh_token",
+
   THEME: "hela360.theme",
 
   SIDEBAR_COLLAPSED:
