@@ -197,6 +197,56 @@ def get_goods_receipt(receipt_id: str):
     )
 
 
+@bp.post("/inventory/goods-receipts/<receipt_id>/review")
+@require_permission("inventory.approve")
+def review_goods_receipt(receipt_id: str):
+    identity = _current_identity()
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.mark_goods_receipt_under_review(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        reviewed_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt placed under review.",
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
+@bp.post("/inventory/goods-receipts/<receipt_id>/cancel")
+@require_permission("inventory.approve")
+def cancel_goods_receipt(receipt_id: str):
+    identity = _current_identity()
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.cancel_goods_receipt(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        cancelled_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt cancelled successfully.",
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
 @bp.post("/inventory/goods-receipts/<receipt_id>/approve")
 @require_permission("inventory.approve")
 def approve_goods_receipt(receipt_id: str):

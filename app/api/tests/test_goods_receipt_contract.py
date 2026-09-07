@@ -1939,3 +1939,407 @@ def test_goods_receipt_multi_line_posting_is_atomic(client, monkeypatch):
     # Receipt evidence survives the failed posting attempt.
     assert GoodsReceipt.query.count() == 1
     assert GoodsReceiptItem.query.count() == 2
+
+
+def test_goods_receipt_can_be_placed_under_review(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-review",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/review"
+    )
+
+    assert response.status_code == 200
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "under_review"
+    assert body["under_review_at"] is not None
+    assert body["under_review_by"] == USER_ID
+    assert body["approved_at"] is None
+    assert body["posted_at"] is None
+    assert body["cancelled_at"] is None
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "under_review"
+    assert receipt.under_review_by == USER_ID
+
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_review_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-review-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/review"
+    )
+    second = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/review"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "under_review"
+
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_can_be_approved_from_under_review(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-review-approve",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/review"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["status"] == "approved"
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "approved"
+    assert receipt.under_review_at is not None
+    assert receipt.approved_at is not None
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_can_be_cancelled_from_received(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-received",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+
+    assert response.status_code == 200
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "cancelled"
+    assert body["cancelled_at"] is not None
+    assert body["cancelled_by"] == USER_ID
+
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_can_be_cancelled_from_under_review(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-review",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/review"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["status"] == "cancelled"
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_can_be_cancelled_from_approved(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-approved",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["item"]["status"] == "cancelled"
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.approved_at is not None
+    assert receipt.cancelled_at is not None
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_cancellation_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+    second = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "cancelled"
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_cancelled_goods_receipt_cannot_be_approved(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-no-approve",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+
+    assert response.status_code == 409
+
+    assert (
+        "Only received or under-review goods receipts can be approved."
+        in error_message(response)
+    )
+
+    assert db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    ).status == "cancelled"
+
+
+def test_cancelled_goods_receipt_cannot_be_posted(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-cancel-no-post",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Only approved goods receipts can be posted."
+        in error_message(response)
+    )
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_posted_goods_receipt_cannot_be_cancelled(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-post-no-cancel",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Posted goods receipt cannot be cancelled."
+        in error_message(response)
+    )
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "posted"
+    assert receipt.cancelled_at is None
+
+    assert StockBalance.query.one().quantity_on_hand == Decimal(
+        "10.0000"
+    )
+    assert InventoryMovement.query.count() == 1
+
+
+def test_goods_receipt_review_requires_inventory_approve_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        fake_authorize,
+    )
+
+    from app.api.inventory import review_goods_receipt
+
+    with pytest.raises(Exception):
+        review_goods_receipt("receipt-id")
+
+    assert captured["kwargs"]["permission"] == "inventory.approve"
+
+
+def test_goods_receipt_cancel_requires_inventory_approve_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        fake_authorize,
+    )
+
+    from app.api.inventory import cancel_goods_receipt
+
+    with pytest.raises(Exception):
+        cancel_goods_receipt("receipt-id")
+
+    assert captured["kwargs"]["permission"] == "inventory.approve"

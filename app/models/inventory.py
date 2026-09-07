@@ -117,13 +117,37 @@ class GoodsReceipt(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     request_fingerprint = db.Column(db.String(64), nullable=False)
     received_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
 
-    # Compatibility remains "received" until workflow posting is separated.
+    # Current public create flow begins at RECEIVED.
+    # Earlier workflow states are introduced progressively by workflow actions.
     status = db.Column(db.String(30), nullable=False, default="received", index=True)
 
+    under_review_at = db.Column(db.DateTime(timezone=True))
+    under_review_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
     approved_at = db.Column(db.DateTime(timezone=True))
-    approved_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+    approved_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
     posted_at = db.Column(db.DateTime(timezone=True), index=True)
-    posted_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+    posted_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
+    cancelled_at = db.Column(db.DateTime(timezone=True))
+    cancelled_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
 
     notes = db.Column(db.Text)
     received_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)

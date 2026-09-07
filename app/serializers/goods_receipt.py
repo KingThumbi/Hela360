@@ -80,10 +80,18 @@ def serialize_goods_receipt(
             receipt.reconciliation_difference
         ),
 
+        "under_review_at": _timestamp(receipt.under_review_at),
+        "under_review_by": receipt.under_review_by,
+        "under_review_at": _timestamp(receipt.under_review_at),
+        "under_review_by": receipt.under_review_by,
         "approved_at": _timestamp(receipt.approved_at),
         "approved_by": receipt.approved_by,
         "posted_at": _timestamp(receipt.posted_at),
         "posted_by": receipt.posted_by,
+        "cancelled_at": _timestamp(receipt.cancelled_at),
+        "cancelled_by": receipt.cancelled_by,
+        "cancelled_at": _timestamp(receipt.cancelled_at),
+        "cancelled_by": receipt.cancelled_by,
 
         "received_at": _timestamp(receipt.received_at),
         "status": receipt.status,

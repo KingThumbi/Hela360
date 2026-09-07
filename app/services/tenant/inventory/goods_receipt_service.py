@@ -22,6 +22,11 @@ from app.models import (
 )
 from app.schemas import CreateGoodsReceiptRequest
 from app.serializers.goods_receipt import serialize_goods_receipt_summary
+from app.services.tenant.inventory.goods_receipt_workflow import (
+    GoodsReceiptStatus,
+    goods_receipt_can_transition,
+    parse_goods_receipt_status,
+)
 from app.services.tenant.inventory.product_unit_conversion_service import (
     ProductUnitConversionService,
 )
@@ -367,7 +372,7 @@ class GoodsReceiptService:
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,
                 received_at=received_at,
-                status="received",
+                status=GoodsReceiptStatus.RECEIVED.value,
                 notes=request.notes,
                 received_by=received_by,
                 created_at=now,
@@ -598,6 +603,141 @@ class GoodsReceiptService:
 
         self.session.flush()
 
+    def mark_goods_receipt_under_review(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        receipt_id: str,
+        reviewed_by: str,
+    ) -> GoodsReceipt:
+        """Move a received goods receipt into formal review."""
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        try:
+            receipt = (
+                self.session.query(GoodsReceipt)
+                .filter(
+                    GoodsReceipt.id == receipt_id,
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.branch_id == branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not receipt:
+                raise NotFoundError(
+                    "Goods receipt not found."
+                )
+
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status == GoodsReceiptStatus.UNDER_REVIEW:
+                return receipt
+
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.UNDER_REVIEW,
+            ):
+                raise ConflictError(
+                    "Only received goods receipts can be placed under review."
+                )
+
+            now = _now()
+
+            receipt.status = GoodsReceiptStatus.UNDER_REVIEW.value
+            receipt.under_review_at = now
+            receipt.under_review_by = reviewed_by
+            receipt.updated_at = now
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def cancel_goods_receipt(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        receipt_id: str,
+        cancelled_by: str,
+    ) -> GoodsReceipt:
+        """Cancel an unposted goods receipt."""
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        try:
+            receipt = (
+                self.session.query(GoodsReceipt)
+                .filter(
+                    GoodsReceipt.id == receipt_id,
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.branch_id == branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not receipt:
+                raise NotFoundError(
+                    "Goods receipt not found."
+                )
+
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status == GoodsReceiptStatus.CANCELLED:
+                return receipt
+
+            if current_status == GoodsReceiptStatus.POSTED:
+                raise ConflictError(
+                    "Posted goods receipt cannot be cancelled."
+                )
+
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.CANCELLED,
+            ):
+                raise ConflictError(
+                    "Goods receipt cannot be cancelled from its current status."
+                )
+
+            now = _now()
+
+            receipt.status = GoodsReceiptStatus.CANCELLED.value
+            receipt.cancelled_at = now
+            receipt.cancelled_by = cancelled_by
+            receipt.updated_at = now
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
+
     def approve_goods_receipt(
         self,
         *,
@@ -634,22 +774,35 @@ class GoodsReceiptService:
                     "Goods receipt not found."
                 )
 
-            if receipt.status == "approved":
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status == GoodsReceiptStatus.APPROVED:
                 return receipt
 
-            if receipt.status == "posted":
+            if current_status == GoodsReceiptStatus.POSTED:
                 raise ConflictError(
                     "Posted goods receipt cannot be approved again."
                 )
 
-            if receipt.status != "received":
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.APPROVED,
+            ):
                 raise ConflictError(
-                    "Only received goods receipts can be approved."
+                    "Only received or under-review goods receipts "
+                    "can be approved."
                 )
 
             now = _now()
 
-            receipt.status = "approved"
+            receipt.status = GoodsReceiptStatus.APPROVED.value
             receipt.approved_at = now
             receipt.approved_by = approved_by
             receipt.updated_at = now
@@ -698,10 +851,22 @@ class GoodsReceiptService:
                     "Goods receipt not found."
                 )
 
-            if receipt.status == "posted":
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status == GoodsReceiptStatus.POSTED:
                 return receipt
 
-            if receipt.status != "approved":
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.POSTED,
+            ):
                 raise ConflictError(
                     "Only approved goods receipts can be posted."
                 )
@@ -714,7 +879,7 @@ class GoodsReceiptService:
                 now=now,
             )
 
-            receipt.status = "posted"
+            receipt.status = GoodsReceiptStatus.POSTED.value
             receipt.posted_at = now
             receipt.posted_by = posted_by
             receipt.updated_at = now
