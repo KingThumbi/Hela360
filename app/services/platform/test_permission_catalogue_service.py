@@ -54,3 +54,22 @@ def test_sync_result_changed_property() -> None:
 
     assert unchanged.changed is False
     assert created.changed is True
+
+
+def test_goods_receipt_workflow_permissions_are_canonical():
+    definitions = {
+        definition.code: definition
+        for definition in CANONICAL_PERMISSION_DEFINITIONS
+    }
+
+    assert "inventory.approve" in definitions
+    assert "inventory.post" in definitions
+
+    approve = definitions["inventory.approve"]
+    post = definitions["inventory.post"]
+
+    assert approve.module_code == "inventory"
+    assert approve.name == "Inventory Approve"
+
+    assert post.module_code == "inventory"
+    assert post.name == "Inventory Post"

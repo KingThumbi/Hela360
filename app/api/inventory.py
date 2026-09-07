@@ -197,6 +197,56 @@ def get_goods_receipt(receipt_id: str):
     )
 
 
+@bp.post("/inventory/goods-receipts/<receipt_id>/approve")
+@require_permission("inventory.approve")
+def approve_goods_receipt(receipt_id: str):
+    identity = _current_identity()
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.approve_goods_receipt(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        approved_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt approved successfully.",
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
+@bp.post("/inventory/goods-receipts/<receipt_id>/post")
+@require_permission("inventory.post")
+def post_goods_receipt(receipt_id: str):
+    identity = _current_identity()
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.post_goods_receipt(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        posted_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt posted successfully.",
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
 @bp.get("/inventory/stock-adjustments")
 @require_permission("inventory.adjust")
 def list_stock_adjustments():

@@ -25,3 +25,9 @@ def test_get_system_role_resolves_admin():
         get_system_role("admin")
         is TENANT_ADMINISTRATOR_ROLE
     )
+
+
+def test_tenant_administrator_receives_goods_receipt_workflow_permissions():
+    assert "inventory.receive" in TENANT_ADMINISTRATOR_ROLE.permissions
+    assert "inventory.approve" in TENANT_ADMINISTRATOR_ROLE.permissions
+    assert "inventory.post" in TENANT_ADMINISTRATOR_ROLE.permissions

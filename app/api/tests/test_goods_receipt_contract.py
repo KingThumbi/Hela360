@@ -353,10 +353,15 @@ def error_message(response) -> str:
 
 
 def test_goods_receipt_create_persists_inventory_truth(client):
-    response = client.post("/api/inventory/goods-receipts", json=payload())
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    )
 
     assert response.status_code == 201
+
     item = response.get_json()["item"]
+
     assert item["receipt_number"].startswith("GRN-2026-")
     assert item["status"] == "received"
     assert item["warehouse"] == {
@@ -374,26 +379,20 @@ def test_goods_receipt_create_persists_inventory_truth(client):
 
     receipt = GoodsReceipt.query.one()
     receipt_item = GoodsReceiptItem.query.one()
-    stock = StockBalance.query.one()
-    batch = InventoryBatch.query.one()
-    movement = InventoryMovement.query.one()
 
     assert receipt.tenant_id == TENANT_ID
     assert receipt.branch_id == BRANCH_ID
     assert receipt.received_by == USER_ID
+    assert receipt.status == "received"
+
     assert receipt_item.goods_receipt_id == receipt.id
-    assert stock.quantity_on_hand == Decimal("10.0000")
-    assert stock.quantity_available == Decimal("10.0000")
-    assert stock.quantity_reserved == Decimal("0.0000")
-    assert stock.avg_unit_cost == Decimal("5.50")
-    assert batch.quantity_on_hand == Decimal("10.0000")
-    assert batch.batch_number == "BATCH-1"
-    assert batch.expiry_date == date(2027, 1, 31)
-    assert movement.quantity == Decimal("10.0000")
-    assert movement.movement_type == "goods_receipt"
-    assert movement.reference_type == "goods_receipt"
-    assert movement.reference_id == receipt.id
-    assert movement.batch_id == batch.id
+    assert receipt_item.batch_id is None
+
+    # Receiving alone must not mutate inventory.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
 
 
 def test_goods_receipt_converts_product_unit_receipt_to_base_stock(client):
@@ -416,7 +415,11 @@ def test_goods_receipt_converts_product_unit_receipt_to_base_stock(client):
     )
 
     assert response.status_code == 201
-    line = response.get_json()["item"]["items"][0]
+
+    body = response.get_json()["item"]
+    receipt_id = body["id"]
+    line = body["items"][0]
+
     assert line["quantity"] == "2.0000"
     assert line["base_quantity"] == "20.0000"
     assert line["product_unit_id"] == PACK_PRODUCT_UNIT_ID
@@ -426,18 +429,32 @@ def test_goods_receipt_converts_product_unit_receipt_to_base_stock(client):
     assert line["base_unit_cost"] == "5.00"
 
     receipt_item = GoodsReceiptItem.query.one()
+    assert receipt_item.base_quantity == Decimal("20.0000")
+
+    # Conversion is persisted before stock posting.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    ).status_code == 200
+
     stock = StockBalance.query.one()
     batch = InventoryBatch.query.one()
     movement = InventoryMovement.query.one()
 
-    assert receipt_item.quantity == Decimal("2.0000")
-    assert receipt_item.base_quantity == Decimal("20.0000")
     assert stock.quantity_on_hand == Decimal("20.0000")
     assert stock.avg_unit_cost == Decimal("5.00")
     assert batch.quantity_on_hand == Decimal("20.0000")
     assert batch.unit_cost == Decimal("5.00")
     assert movement.quantity == Decimal("20.0000")
     assert movement.unit_cost == Decimal("5.00")
+
 
 
 def test_goods_receipt_requires_inventory_receive_permission(
@@ -653,6 +670,17 @@ def test_goods_receipt_increments_existing_batch_and_weighted_average_cost(clien
             ],
         ),
     )
+
+    assert first.status_code == 201
+    first_id = first.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/post"
+    ).status_code == 200
+
     second = client.post(
         "/api/inventory/goods-receipts",
         json=payload(
@@ -670,21 +698,51 @@ def test_goods_receipt_increments_existing_batch_and_weighted_average_cost(clien
         ),
     )
 
-    assert first.status_code == 201
     assert second.status_code == 201
+    second_id = second.get_json()["item"]["id"]
+
+    # Second receipt remains non-stock-affecting until posted.
+    assert StockBalance.query.one().quantity_on_hand == Decimal("10.0000")
+    assert InventoryMovement.query.count() == 1
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{second_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{second_id}/post"
+    ).status_code == 200
+
     assert GoodsReceipt.query.count() == 2
     assert GoodsReceiptItem.query.count() == 2
     assert InventoryMovement.query.count() == 2
     assert InventoryBatch.query.count() == 1
-    assert StockBalance.query.one().quantity_on_hand == Decimal("20.0000")
-    assert StockBalance.query.one().avg_unit_cost == Decimal("2.00")
-    assert InventoryBatch.query.one().quantity_on_hand == Decimal("20.0000")
+
+    stock = StockBalance.query.one()
+    batch = InventoryBatch.query.one()
+
+    assert stock.quantity_on_hand == Decimal("20.0000")
+    assert stock.avg_unit_cost == Decimal("2.00")
+    assert batch.quantity_on_hand == Decimal("20.0000")
+
 
 
 def test_goods_receipt_rejects_existing_batch_metadata_conflict(client):
-    assert client.post("/api/inventory/goods-receipts", json=payload()).status_code == 201
+    first = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    )
 
-    response = client.post(
+    assert first.status_code == 201
+    first_id = first.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/post"
+    ).status_code == 200
+
+    second = client.post(
         "/api/inventory/goods-receipts",
         json=payload(
             idempotency_key="conflict-key",
@@ -701,10 +759,27 @@ def test_goods_receipt_rejects_existing_batch_metadata_conflict(client):
         ),
     )
 
+    # Evidence may be recorded even when it conflicts with existing stock.
+    assert second.status_code == 201
+    second_id = second.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{second_id}/approve"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{second_id}/post"
+    )
+
     assert response.status_code == 409
     assert "conflicting expiry" in error_message(response)
-    assert GoodsReceipt.query.count() == 1
+
+    assert GoodsReceipt.query.count() == 2
+    assert db.session.get(GoodsReceipt, second_id).status == "approved"
     assert StockBalance.query.one().quantity_on_hand == Decimal("10.0000")
+    assert InventoryBatch.query.one().quantity_on_hand == Decimal("10.0000")
+    assert InventoryMovement.query.count() == 1
+
 
 
 def test_goods_receipt_rejects_duplicate_product_batch_lines(client):
@@ -749,27 +824,68 @@ def test_goods_receipt_supports_multiple_products(client):
     )
 
     assert response.status_code == 201
+    receipt_id = response.get_json()["item"]["id"]
+
     assert GoodsReceiptItem.query.count() == 2
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    ).status_code == 200
+
     assert StockBalance.query.count() == 2
     assert InventoryBatch.query.count() == 1
     assert InventoryMovement.query.count() == 2
 
 
+
 def test_goods_receipt_idempotency_replays_same_request_without_double_stock(client):
-    first = client.post("/api/inventory/goods-receipts", json=payload())
-    second = client.post("/api/inventory/goods-receipts", json=payload())
+    first = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    )
+    second = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    )
 
     assert first.status_code == 201
     assert second.status_code == 201
-    assert first.get_json()["item"]["id"] == second.get_json()["item"]["id"]
+
+    first_id = first.get_json()["item"]["id"]
+    second_id = second.get_json()["item"]["id"]
+
+    assert first_id == second_id
     assert GoodsReceipt.query.count() == 1
     assert GoodsReceiptItem.query.count() == 1
+
+    # Replaying creation does not create stock.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{first_id}/post"
+    ).status_code == 200
+
     assert InventoryMovement.query.count() == 1
     assert StockBalance.query.one().quantity_on_hand == Decimal("10.0000")
 
 
+
 def test_goods_receipt_idempotency_rejects_conflicting_payload(client):
-    assert client.post("/api/inventory/goods-receipts", json=payload()).status_code == 201
+    assert client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    ).status_code == 201
 
     response = client.post(
         "/api/inventory/goods-receipts",
@@ -789,26 +905,59 @@ def test_goods_receipt_idempotency_rejects_conflicting_payload(client):
 
     assert response.status_code == 409
     assert "idempotency_key" in error_message(response)
-    assert StockBalance.query.one().quantity_on_hand == Decimal("10.0000")
+
+    assert GoodsReceipt.query.count() == 1
+    assert GoodsReceiptItem.query.count() == 1
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
 
 
 def test_goods_receipt_rolls_back_on_downstream_failure(client, monkeypatch):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-post-rollback",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
     def fail(*args, **kwargs):
         raise RuntimeError("forced downstream failure")
 
     monkeypatch.setattr(
-        "app.services.tenant.inventory.goods_receipt_service.GoodsReceiptService._apply_stock_balance_receipt",
+        "app.services.tenant.inventory.goods_receipt_service."
+        "GoodsReceiptService._apply_stock_balance_receipt",
         fail,
     )
 
-    response = client.post("/api/inventory/goods-receipts", json=payload())
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
 
     assert response.status_code == 500
-    assert GoodsReceipt.query.count() == 0
-    assert GoodsReceiptItem.query.count() == 0
+
+    # Receipt evidence was committed before posting and must survive.
+    assert GoodsReceipt.query.count() == 1
+    assert GoodsReceiptItem.query.count() == 1
+
+    receipt = GoodsReceipt.query.one()
+    assert receipt.status == "approved"
+    assert receipt.posted_at is None
+    assert receipt.posted_by is None
+
+    # Posting itself is atomic.
     assert StockBalance.query.count() == 0
     assert InventoryBatch.query.count() == 0
     assert InventoryMovement.query.count() == 0
+
 
 
 def test_goods_receipt_detail_readback_requires_receive_permission(client):
@@ -1097,14 +1246,37 @@ def test_goods_receipt_history_filters_by_warehouse_and_supplier(client):
 
 
 def test_goods_receipt_updates_inventory_read_and_movement_views(client):
-    created = client.post("/api/inventory/goods-receipts", json=payload())
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(),
+    )
+
+    assert created.status_code == 201
     receipt_id = created.get_json()["item"]["id"]
+
+    # Received-but-unposted goods are not inventory truth.
+    stock_response = client.get("/api/inventory")
+    movement_response = client.get("/api/inventory/movements")
+
+    assert stock_response.status_code == 200
+    assert stock_response.get_json()["items"] == []
+
+    assert movement_response.status_code == 200
+    assert movement_response.get_json()["items"] == []
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    ).status_code == 200
 
     stock_response = client.get("/api/inventory")
     movement_response = client.get("/api/inventory/movements")
 
     assert stock_response.status_code == 200
     stock = stock_response.get_json()["items"][0]
+
     assert stock["quantity_on_hand"] == "10.0000"
     assert stock["sellable_quantity"] == "10.0000"
     assert stock["batch_count"] == 1
@@ -1112,9 +1284,658 @@ def test_goods_receipt_updates_inventory_read_and_movement_views(client):
 
     assert movement_response.status_code == 200
     movement = movement_response.get_json()["items"][0]
+
     assert movement["movement_type"] == "goods_receipt"
     assert movement["quantity"] == "10.0000"
     assert movement["reference"] == {
         "type": "goods_receipt",
         "id": receipt_id,
     }
+
+
+
+def test_goods_receipt_persists_supplier_invoice_evidence(client):
+    request_payload = payload(
+        idempotency_key="receipt-supplier-evidence-1",
+        supplier_reference="DN-1001",
+        supplier_invoice_number="INV-2026-001",
+        supplier_invoice_date="2026-08-10",
+        payment_terms="Cash",
+        invoice_currency="kes",
+        supplier_subtotal="100.00",
+        supplier_discount_total="5.00",
+        supplier_tax_total="15.20",
+        supplier_invoice_total="110.20",
+        items=[
+            {
+                "product_id": PRODUCT_ID,
+                "quantity": "10",
+                "invoiced_quantity": "12",
+                "received_quantity": "10",
+                "accepted_quantity": "9",
+                "rejected_quantity": "1",
+                "bonus_quantity": "2",
+                "batch_number": "EVIDENCE-BATCH-1",
+                "manufacture_date": "2026-01-01",
+                "expiry_date": "2027-01-31",
+                "unit_cost": "10.00",
+                "supplier_item_code": "SUP-ITEM-001",
+                "supplier_description": "Supplier description snapshot",
+                "supplier_unit_price": "10.00",
+                "discount_percent": "5",
+                "discount_amount": "5.00",
+                "tax_rate": "16",
+                "tax_amount": "15.20",
+                "net_unit_cost": "9.50",
+                "line_total": "110.20",
+                "discrepancy_status": "discrepant",
+                "discrepancy_reason": "Short and rejected quantity",
+                "supplier_batch_reference": "SUP-BATCH-1",
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=request_payload,
+    )
+
+    assert response.status_code == 201
+
+    body = response.get_json()["item"]
+
+    assert body["supplier_reference"] == "DN-1001"
+    assert body["supplier_invoice_number"] == "INV-2026-001"
+    assert body["supplier_invoice_date"] == "2026-08-10"
+    assert body["payment_terms"] == "Cash"
+    assert body["invoice_currency"] == "KES"
+    assert body["supplier_subtotal"] == "100.00"
+    assert body["supplier_discount_total"] == "5.00"
+    assert body["supplier_tax_total"] == "15.20"
+    assert body["supplier_invoice_total"] == "110.20"
+
+    # Hela360 independently reconstructs the supplier-document maths.
+    assert body["calculated_subtotal"] == "115.00"
+    assert body["calculated_tax_total"] == "18.40"
+    assert body["calculated_total"] == "133.40"
+    assert body["reconciliation_difference"] == "-23.20"
+
+    line = body["items"][0]
+
+    assert line["quantity"] == "10.0000"
+    assert line["invoiced_quantity"] == "12.0000"
+    assert line["received_quantity"] == "10.0000"
+    assert line["accepted_quantity"] == "9.0000"
+    assert line["rejected_quantity"] == "1.0000"
+    assert line["bonus_quantity"] == "2.0000"
+
+    assert line["supplier_item_code"] == "SUP-ITEM-001"
+    assert (
+        line["supplier_description"]
+        == "Supplier description snapshot"
+    )
+
+    assert line["supplier_unit_price"] == "10.00"
+    assert line["discount_percent"] == "5.0000"
+    assert line["discount_amount"] == "5.00"
+    assert line["tax_rate"] == "16.0000"
+    assert line["tax_amount"] == "15.20"
+    assert line["net_unit_cost"] == "9.50"
+    assert line["line_total"] == "110.20"
+
+    assert line["discrepancy_status"] == "discrepant"
+    assert (
+        line["discrepancy_reason"]
+        == "Short and rejected quantity"
+    )
+
+    receipt = GoodsReceipt.query.one()
+    receipt_item = GoodsReceiptItem.query.one()
+
+    assert receipt.supplier_invoice_number == "INV-2026-001"
+    assert receipt.invoice_currency == "KES"
+    assert receipt.supplier_invoice_total == Decimal("110.20")
+
+    assert receipt_item.invoiced_quantity == Decimal("12.0000")
+    assert receipt_item.received_quantity == Decimal("10.0000")
+    assert receipt_item.accepted_quantity == Decimal("9.0000")
+    assert receipt_item.rejected_quantity == Decimal("1.0000")
+    assert receipt_item.bonus_quantity == Decimal("2.0000")
+
+    # Supplier-document evidence does not affect stock until posting.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_reconciliation_matches_supplier_total(client):
+    request_payload = payload(
+        idempotency_key="receipt-reconciliation-match",
+        supplier_invoice_number="INV-MATCH-001",
+        supplier_invoice_total="116.00",
+        items=[
+            {
+                "product_id": PRODUCT_ID,
+                "quantity": "10",
+                "invoiced_quantity": "10",
+                "batch_number": "RECON-MATCH-1",
+                "manufacture_date": "2026-01-01",
+                "expiry_date": "2027-01-31",
+                "unit_cost": "10.00",
+                "supplier_unit_price": "10.00",
+                "tax_rate": "16",
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=request_payload,
+    )
+
+    assert response.status_code == 201
+
+    body = response.get_json()["item"]
+
+    assert body["supplier_invoice_total"] == "116.00"
+    assert body["calculated_subtotal"] == "100.00"
+    assert body["calculated_tax_total"] == "16.00"
+    assert body["calculated_total"] == "116.00"
+    assert body["reconciliation_difference"] == "0.00"
+
+    # Reconciliation is commercial evidence, not an inventory mutation.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_reconciliation_excludes_bonus_from_billed_quantity(
+    client,
+):
+    request_payload = payload(
+        idempotency_key="receipt-reconciliation-bonus",
+        supplier_invoice_total="100.00",
+        items=[
+            {
+                "product_id": PRODUCT_ID,
+                "quantity": "12",
+                "invoiced_quantity": "10",
+                "received_quantity": "12",
+                "accepted_quantity": "12",
+                "bonus_quantity": "2",
+                "batch_number": "RECON-BONUS-1",
+                "manufacture_date": "2026-01-01",
+                "expiry_date": "2027-01-31",
+                "unit_cost": "10.00",
+                "supplier_unit_price": "10.00",
+            }
+        ],
+    )
+
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=request_payload,
+    )
+
+    assert response.status_code == 201
+
+    body = response.get_json()["item"]
+
+    assert body["calculated_subtotal"] == "100.00"
+    assert body["calculated_tax_total"] == "0.00"
+    assert body["calculated_total"] == "100.00"
+    assert body["reconciliation_difference"] == "0.00"
+
+    line = body["items"][0]
+    assert line["quantity"] == "12.0000"
+    assert line["invoiced_quantity"] == "10.0000"
+    assert line["bonus_quantity"] == "2.0000"
+
+    # Bonus and billed quantities remain evidence until explicit posting.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_rejects_discount_above_gross_line_value(client):
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-invalid-discount",
+            items=[
+                {
+                    "product_id": PRODUCT_ID,
+                    "quantity": "1",
+                    "invoiced_quantity": "1",
+                    "batch_number": "INVALID-DISCOUNT-1",
+                    "manufacture_date": "2026-01-01",
+                    "expiry_date": "2027-01-31",
+                    "unit_cost": "10.00",
+                    "supplier_unit_price": "10.00",
+                    "discount_amount": "11.00",
+                }
+            ],
+        ),
+    )
+
+    assert response.status_code == 400
+    assert (
+        "discount_amount cannot exceed"
+        in error_message(response)
+    )
+
+    assert GoodsReceipt.query.count() == 0
+    assert GoodsReceiptItem.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_inventory_posting_boundary_is_idempotent(client):
+    response = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-post-boundary-idempotent",
+        ),
+    )
+
+    assert response.status_code == 201
+
+    receipt = GoodsReceipt.query.one()
+
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    from app.extensions import db
+    from app.services.tenant.inventory.goods_receipt_service import (
+        GoodsReceiptService,
+    )
+
+    service = GoodsReceiptService(db.session)
+
+    service._post_receipt_inventory(
+        receipt=receipt,
+        posted_by=USER_ID,
+        now=receipt.updated_at,
+    )
+    db.session.commit()
+
+    stock = StockBalance.query.one()
+    batch = InventoryBatch.query.one()
+
+    assert stock.quantity_on_hand == Decimal("10.0000")
+    assert batch.quantity_on_hand == Decimal("10.0000")
+    assert InventoryMovement.query.count() == 1
+
+    service._post_receipt_inventory(
+        receipt=receipt,
+        posted_by=USER_ID,
+        now=receipt.updated_at,
+    )
+    db.session.commit()
+
+    assert StockBalance.query.one().quantity_on_hand == Decimal("10.0000")
+    assert InventoryBatch.query.one().quantity_on_hand == Decimal("10.0000")
+    assert InventoryMovement.query.count() == 1
+
+
+
+def test_goods_receipt_can_be_approved_after_receipt(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-approve",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+
+    assert response.status_code == 200
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "approved"
+    assert body["approved_at"] is not None
+    assert body["approved_by"] == USER_ID
+    assert body["posted_at"] is None
+    assert body["posted_by"] is None
+
+    receipt = GoodsReceipt.query.one()
+
+    assert receipt.status == "approved"
+    assert receipt.approved_by == USER_ID
+
+    # Approval alone has no inventory effect.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+
+def test_goods_receipt_approval_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-approve-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+    second = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    receipt = GoodsReceipt.query.one()
+
+    assert receipt.status == "approved"
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+
+def test_goods_receipt_requires_approval_before_explicit_post(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-post-needs-approval",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Only approved goods receipts can be posted."
+        in error_message(response)
+    )
+
+    receipt = GoodsReceipt.query.one()
+
+    assert receipt.status == "received"
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+
+def test_goods_receipt_can_be_explicitly_posted_after_approval(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-post",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    approved = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+    assert approved.status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+
+    assert response.status_code == 200
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "posted"
+    assert body["approved_at"] is not None
+    assert body["approved_by"] == USER_ID
+    assert body["posted_at"] is not None
+    assert body["posted_by"] == USER_ID
+
+    receipt = GoodsReceipt.query.one()
+
+    assert receipt.status == "posted"
+    assert receipt.posted_by == USER_ID
+
+    # Existing compatibility posting must not be duplicated.
+    assert InventoryMovement.query.count() == 1
+    assert StockBalance.query.one().quantity_on_hand == Decimal(
+        "10.0000"
+    )
+    assert InventoryBatch.query.one().quantity_on_hand == Decimal(
+        "10.0000"
+    )
+
+
+def test_goods_receipt_explicit_post_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-post-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+    second = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    assert InventoryMovement.query.count() == 1
+    assert StockBalance.query.one().quantity_on_hand == Decimal(
+        "10.0000"
+    )
+    assert InventoryBatch.query.one().quantity_on_hand == Decimal(
+        "10.0000"
+    )
+
+
+def test_goods_receipt_cannot_be_approved_after_posting(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-workflow-no-backward-transition",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Posted goods receipt cannot be approved again."
+        in error_message(response)
+    )
+
+    assert GoodsReceipt.query.one().status == "posted"
+    assert InventoryMovement.query.count() == 1
+
+
+def test_goods_receipt_approve_requires_inventory_approve_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.authorization_service.authorize",
+        fake_authorize,
+    )
+
+    client = app_context.test_client()
+
+    client.post(
+        "/api/inventory/goods-receipts/not-found/approve"
+    )
+
+    assert captured["kwargs"]["permission"] == "inventory.approve"
+
+
+def test_goods_receipt_post_requires_inventory_post_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.authorization_service.authorize",
+        fake_authorize,
+    )
+
+    client = app_context.test_client()
+
+    client.post(
+        "/api/inventory/goods-receipts/not-found/post"
+    )
+
+    assert captured["kwargs"]["permission"] == "inventory.post"
+
+
+def test_goods_receipt_multi_line_posting_is_atomic(client, monkeypatch):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="receipt-post-multi-line-atomicity",
+            items=[
+                {
+                    "product_id": PRODUCT_ID,
+                    "quantity": "10",
+                    "batch_number": "ATOMIC-BATCH-1",
+                    "manufacture_date": "2026-01-01",
+                    "expiry_date": "2027-01-31",
+                    "unit_cost": "5.50",
+                },
+                {
+                    "product_id": SECOND_PRODUCT_ID,
+                    "quantity": "3",
+                    "unit_cost": "1.50",
+                },
+            ],
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/approve"
+    ).status_code == 200
+
+    from app.services.tenant.inventory.goods_receipt_service import (
+        GoodsReceiptService,
+    )
+
+    original = GoodsReceiptService._apply_stock_balance_receipt
+    calls = {"count": 0}
+
+    def fail_on_second_line(self, *args, **kwargs):
+        calls["count"] += 1
+
+        if calls["count"] == 2:
+            raise RuntimeError(
+                "forced second-line posting failure"
+            )
+
+        return original(
+            self,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        GoodsReceiptService,
+        "_apply_stock_balance_receipt",
+        fail_on_second_line,
+    )
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/post"
+    )
+
+    assert response.status_code == 500
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "approved"
+    assert receipt.approved_at is not None
+    assert receipt.posted_at is None
+    assert receipt.posted_by is None
+
+    # Posting is atomic: line 1 must not survive when line 2 fails.
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    # Receipt evidence survives the failed posting attempt.
+    assert GoodsReceipt.query.count() == 1
+    assert GoodsReceiptItem.query.count() == 2

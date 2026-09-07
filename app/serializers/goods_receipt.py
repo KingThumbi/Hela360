@@ -22,6 +22,10 @@ def _decimal(value) -> str:
     return str(value) if value is not None else "0"
 
 
+def _nullable_decimal(value) -> str | None:
+    return str(value) if value is not None else None
+
+
 def serialize_goods_receipt(
     receipt: GoodsReceipt,
     *,
@@ -48,6 +52,39 @@ def serialize_goods_receipt(
             else None
         ),
         "supplier_reference": receipt.supplier_reference,
+
+        "supplier_invoice_number": receipt.supplier_invoice_number,
+        "supplier_invoice_date": _date(receipt.supplier_invoice_date),
+        "payment_terms": receipt.payment_terms,
+        "invoice_currency": receipt.invoice_currency,
+
+        "supplier_subtotal": _nullable_decimal(receipt.supplier_subtotal),
+        "supplier_discount_total": _nullable_decimal(
+            receipt.supplier_discount_total
+        ),
+        "supplier_tax_total": _nullable_decimal(receipt.supplier_tax_total),
+        "supplier_invoice_total": _nullable_decimal(
+            receipt.supplier_invoice_total
+        ),
+
+        "calculated_subtotal": _nullable_decimal(
+            receipt.calculated_subtotal
+        ),
+        "calculated_tax_total": _nullable_decimal(
+            receipt.calculated_tax_total
+        ),
+        "calculated_total": _nullable_decimal(
+            receipt.calculated_total
+        ),
+        "reconciliation_difference": _nullable_decimal(
+            receipt.reconciliation_difference
+        ),
+
+        "approved_at": _timestamp(receipt.approved_at),
+        "approved_by": receipt.approved_by,
+        "posted_at": _timestamp(receipt.posted_at),
+        "posted_by": receipt.posted_by,
+
         "received_at": _timestamp(receipt.received_at),
         "status": receipt.status,
         "notes": receipt.notes,
@@ -78,7 +115,26 @@ def serialize_goods_receipt(
                     "name": product.name,
                 },
                 "quantity": _decimal(item.quantity),
-                "base_quantity": _decimal(getattr(item, "base_quantity", None)),
+
+                "invoiced_quantity": _nullable_decimal(
+                    item.invoiced_quantity
+                ),
+                "received_quantity": _nullable_decimal(
+                    item.received_quantity
+                ),
+                "accepted_quantity": _nullable_decimal(
+                    item.accepted_quantity
+                ),
+                "rejected_quantity": _nullable_decimal(
+                    item.rejected_quantity
+                ),
+                "bonus_quantity": _nullable_decimal(
+                    item.bonus_quantity
+                ),
+
+                "base_quantity": _decimal(
+                    getattr(item, "base_quantity", None)
+                ),
                 "product_unit_id": (
                     str(item.product_unit_id)
                     if getattr(item, "product_unit_id", None)
@@ -89,6 +145,10 @@ def serialize_goods_receipt(
                 "conversion_factor_to_base": _decimal(
                     getattr(item, "conversion_factor_to_base", None)
                 ),
+
+                "supplier_item_code": item.supplier_item_code,
+                "supplier_description": item.supplier_description,
+
                 "batch": (
                     {
                         "id": str(batch.id),
@@ -102,7 +162,27 @@ def serialize_goods_receipt(
                 "manufacture_date": _date(item.manufacture_date),
                 "expiry_date": _date(item.expiry_date),
                 "unit_cost": _decimal(item.unit_cost),
-                "base_unit_cost": _decimal(getattr(item, "base_unit_cost", None)),
+                "base_unit_cost": _decimal(
+                    getattr(item, "base_unit_cost", None)
+                ),
+
+                "supplier_unit_price": _nullable_decimal(
+                    item.supplier_unit_price
+                ),
+                "discount_percent": _nullable_decimal(
+                    item.discount_percent
+                ),
+                "discount_amount": _nullable_decimal(
+                    item.discount_amount
+                ),
+                "tax_rate": _nullable_decimal(item.tax_rate),
+                "tax_amount": _nullable_decimal(item.tax_amount),
+                "net_unit_cost": _nullable_decimal(item.net_unit_cost),
+                "line_total": _nullable_decimal(item.line_total),
+
+                "discrepancy_status": item.discrepancy_status,
+                "discrepancy_reason": item.discrepancy_reason,
+
                 "supplier_batch_reference": item.supplier_batch_reference,
             }
             for item, product, batch in items

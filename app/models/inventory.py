@@ -94,10 +94,37 @@ class GoodsReceipt(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     supplier_id = db.Column(db.String(36), db.ForeignKey("suppliers.id"), index=True)
     receipt_number = db.Column(db.String(50), nullable=False, index=True)
     supplier_reference = db.Column(db.String(120))
+
+    # Commercial document supplied with the physical delivery.
+    supplier_invoice_number = db.Column(db.String(120), index=True)
+    supplier_invoice_date = db.Column(db.Date, index=True)
+    payment_terms = db.Column(db.String(120))
+    invoice_currency = db.Column(db.String(3), nullable=False, default="KES")
+
+    # Values declared on the supplier document.
+    supplier_subtotal = db.Column(db.Numeric(18, 2))
+    supplier_discount_total = db.Column(db.Numeric(18, 2))
+    supplier_tax_total = db.Column(db.Numeric(18, 2))
+    supplier_invoice_total = db.Column(db.Numeric(18, 2))
+
+    # Values independently calculated by Hela360.
+    calculated_subtotal = db.Column(db.Numeric(18, 2))
+    calculated_tax_total = db.Column(db.Numeric(18, 2))
+    calculated_total = db.Column(db.Numeric(18, 2))
+    reconciliation_difference = db.Column(db.Numeric(18, 2))
+
     idempotency_key = db.Column(db.String(120), nullable=False, index=True)
     request_fingerprint = db.Column(db.String(64), nullable=False)
     received_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+
+    # Compatibility remains "received" until workflow posting is separated.
     status = db.Column(db.String(30), nullable=False, default="received", index=True)
+
+    approved_at = db.Column(db.DateTime(timezone=True))
+    approved_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+    posted_at = db.Column(db.DateTime(timezone=True), index=True)
+    posted_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)
+
     notes = db.Column(db.Text)
     received_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
 
@@ -117,16 +144,43 @@ class GoodsReceiptItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     product_unit_id = db.Column(db.String(36), db.ForeignKey("product_units.id"), index=True)
     batch_id = db.Column(db.String(36), db.ForeignKey("inventory_batches.id"), index=True)
     line_number = db.Column(db.Integer, nullable=False)
+    # Existing quantity remains authoritative during compatibility migration.
     quantity = db.Column(db.Numeric(18, 4), nullable=False)
+
+    invoiced_quantity = db.Column(db.Numeric(18, 4))
+    received_quantity = db.Column(db.Numeric(18, 4))
+    accepted_quantity = db.Column(db.Numeric(18, 4))
+    rejected_quantity = db.Column(db.Numeric(18, 4))
+    bonus_quantity = db.Column(db.Numeric(18, 4))
+
     base_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
     unit_code_snapshot = db.Column(db.String(20))
     unit_name_snapshot = db.Column(db.String(50))
     conversion_factor_to_base = db.Column(db.Numeric(18, 6), nullable=False, default=1)
+
+    # Snapshot the supplier's own representation of the item.
+    supplier_item_code = db.Column(db.String(120), index=True)
+    supplier_description = db.Column(db.String(500))
+
     batch_number = db.Column(db.String(100))
     manufacture_date = db.Column(db.Date)
     expiry_date = db.Column(db.Date)
+
+    # Existing costs remain authoritative during compatibility migration.
     unit_cost = db.Column(db.Numeric(18, 2), nullable=False, default=0)
     base_unit_cost = db.Column(db.Numeric(18, 2), nullable=False, default=0)
+
+    supplier_unit_price = db.Column(db.Numeric(18, 2))
+    discount_percent = db.Column(db.Numeric(9, 4))
+    discount_amount = db.Column(db.Numeric(18, 2))
+    tax_rate = db.Column(db.Numeric(9, 4))
+    tax_amount = db.Column(db.Numeric(18, 2))
+    net_unit_cost = db.Column(db.Numeric(18, 2))
+    line_total = db.Column(db.Numeric(18, 2))
+
+    discrepancy_status = db.Column(db.String(30), index=True)
+    discrepancy_reason = db.Column(db.String(500))
+
     supplier_batch_reference = db.Column(db.String(120))
 
 
