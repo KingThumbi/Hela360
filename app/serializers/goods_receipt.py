@@ -80,6 +80,11 @@ def serialize_goods_receipt(
             receipt.reconciliation_difference
         ),
 
+        "created_by": receipt.created_by,
+        "receiving_started_at": _timestamp(
+            receipt.receiving_started_at
+        ),
+        "receiving_started_by": receipt.receiving_started_by,
         "under_review_at": _timestamp(receipt.under_review_at),
         "under_review_by": receipt.under_review_by,
         "under_review_at": _timestamp(receipt.under_review_at),

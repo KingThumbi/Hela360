@@ -1,5 +1,6 @@
 from app.schemas.goods_receipt import (
     CreateGoodsReceiptItemRequest,
+    CreateGoodsReceiptDraftRequest,
     CreateGoodsReceiptRequest,
 )
 from app.schemas.stock_count import (

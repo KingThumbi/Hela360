@@ -3,7 +3,10 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from app.extensions import db
-from app.schemas import CreateGoodsReceiptRequest
+from app.schemas import (
+    CreateGoodsReceiptDraftRequest,
+    CreateGoodsReceiptRequest,
+)
 from app.schemas import (
     CreateStockAdjustmentFromCountRequest,
     CreateStockAdjustmentRequest,
@@ -144,6 +147,37 @@ def list_goods_receipts():
             "items": items,
             "pagination": pagination,
         }
+    )
+
+
+@bp.post("/inventory/goods-receipts/drafts")
+@require_permission("inventory.receive")
+def create_goods_receipt_draft():
+    identity = _current_identity()
+    payload = request.get_json(silent=True) or {}
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.create_goods_receipt_draft(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        created_by=identity.user_id,
+        request=CreateGoodsReceiptDraftRequest.from_payload(
+            payload
+        ),
+    )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": "Goods receipt draft created successfully.",
+                "item": serialize_goods_receipt(
+                    receipt,
+                    **service.serialization_context(receipt),
+                ),
+            }
+        ),
+        201,
     )
 
 

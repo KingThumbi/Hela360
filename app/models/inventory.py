@@ -115,11 +115,41 @@ class GoodsReceipt(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
 
     idempotency_key = db.Column(db.String(120), nullable=False, index=True)
     request_fingerprint = db.Column(db.String(64), nullable=False)
-    received_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
 
-    # Current public create flow begins at RECEIVED.
-    # Earlier workflow states are introduced progressively by workflow actions.
-    status = db.Column(db.String(30), nullable=False, default="received", index=True)
+    created_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    receiving_started_at = db.Column(
+        db.DateTime(timezone=True),
+    )
+    receiving_started_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
+    received_at = db.Column(
+        db.DateTime(timezone=True),
+        index=True,
+    )
+    received_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
+    # The compatibility create endpoint enters directly at RECEIVED.
+    # Structured receiving begins at DRAFT.
+    status = db.Column(
+        db.String(30),
+        nullable=False,
+        default="received",
+        index=True,
+    )
 
     under_review_at = db.Column(db.DateTime(timezone=True))
     under_review_by = db.Column(
@@ -150,7 +180,11 @@ class GoodsReceipt(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     )
 
     notes = db.Column(db.Text)
-    received_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False, index=True)
+    received_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
 
 
 class GoodsReceiptItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):

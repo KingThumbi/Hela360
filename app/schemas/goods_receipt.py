@@ -455,3 +455,122 @@ class CreateGoodsReceiptRequest:
             ),
             items=items,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CreateGoodsReceiptDraftRequest:
+    warehouse_id: str
+    idempotency_key: str
+
+    supplier_id: str | None = None
+    supplier_reference: str | None = None
+
+    supplier_invoice_number: str | None = None
+    supplier_invoice_date: date | None = None
+    payment_terms: str | None = None
+    invoice_currency: str = "KES"
+
+    supplier_subtotal: Decimal | None = None
+    supplier_discount_total: Decimal | None = None
+    supplier_tax_total: Decimal | None = None
+    supplier_invoice_total: Decimal | None = None
+
+    notes: str | None = None
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> "CreateGoodsReceiptDraftRequest":
+        if not isinstance(payload, dict):
+            raise ValidationError(
+                "Request payload must be an object."
+            )
+
+        warehouse_id = _required_text(
+            payload,
+            "warehouse_id",
+            max_length=36,
+        )
+
+        idempotency_key = _required_text(
+            payload,
+            "idempotency_key",
+            max_length=120,
+        )
+
+        invoice_currency = (
+            _optional_text(
+                payload,
+                "invoice_currency",
+                max_length=3,
+            )
+            or "KES"
+        ).upper()
+
+        supplier_subtotal = _optional_decimal(
+            payload,
+            "supplier_subtotal",
+        )
+        supplier_discount_total = _optional_decimal(
+            payload,
+            "supplier_discount_total",
+        )
+        supplier_tax_total = _optional_decimal(
+            payload,
+            "supplier_tax_total",
+        )
+        supplier_invoice_total = _optional_decimal(
+            payload,
+            "supplier_invoice_total",
+        )
+
+        for field_name, value in (
+            ("supplier_subtotal", supplier_subtotal),
+            ("supplier_discount_total", supplier_discount_total),
+            ("supplier_tax_total", supplier_tax_total),
+            ("supplier_invoice_total", supplier_invoice_total),
+        ):
+            if value is not None and value < 0:
+                raise ValidationError(
+                    f"{field_name} must be greater than or equal to zero."
+                )
+
+        return cls(
+            warehouse_id=warehouse_id,
+            idempotency_key=idempotency_key,
+            supplier_id=_optional_text(
+                payload,
+                "supplier_id",
+                max_length=36,
+            ),
+            supplier_reference=_optional_text(
+                payload,
+                "supplier_reference",
+                max_length=120,
+            ),
+            supplier_invoice_number=_optional_text(
+                payload,
+                "supplier_invoice_number",
+                max_length=120,
+            ),
+            supplier_invoice_date=_optional_date(
+                payload,
+                "supplier_invoice_date",
+            ),
+            payment_terms=_optional_text(
+                payload,
+                "payment_terms",
+                max_length=120,
+            ),
+            invoice_currency=invoice_currency,
+            supplier_subtotal=supplier_subtotal,
+            supplier_discount_total=supplier_discount_total,
+            supplier_tax_total=supplier_tax_total,
+            supplier_invoice_total=supplier_invoice_total,
+            notes=_optional_text(
+                payload,
+                "notes",
+                max_length=5000,
+            ),
+        )

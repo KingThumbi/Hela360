@@ -303,6 +303,7 @@ def make_history_receipt(
         supplier_reference=supplier_reference,
         idempotency_key=f"{receipt_id}-key",
         request_fingerprint=f"{receipt_id}-fingerprint",
+        created_by=received_by,
         received_at=received_at,
         status="received",
         received_by=received_by,
@@ -2343,3 +2344,147 @@ def test_goods_receipt_cancel_requires_inventory_approve_permission(
         cancel_goods_receipt("receipt-id")
 
     assert captured["kwargs"]["permission"] == "inventory.approve"
+
+
+def draft_payload(**overrides):
+    base = {
+        "warehouse_id": WAREHOUSE_ID,
+        "idempotency_key": "receipt-draft-key-1",
+        "supplier_id": SUPPLIER_ID,
+        "supplier_reference": "DN-DRAFT-1",
+        "notes": "Receiving not yet completed.",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_goods_receipt_draft_can_be_created_without_lines(client):
+    response = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(),
+    )
+
+    assert response.status_code == 201
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "draft"
+    assert body["receipt_number"].startswith("GRN-2026-")
+    assert body["created_by"] == USER_ID
+    assert body["receiving_started_at"] is None
+    assert body["receiving_started_by"] is None
+    assert body["received_at"] is None
+    assert body["received_by"] is None
+    assert body["items"] == []
+
+    receipt = GoodsReceipt.query.one()
+
+    assert receipt.status == "draft"
+    assert receipt.created_by == USER_ID
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert GoodsReceiptItem.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_draft_supports_null_supplier(client):
+    response = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="receipt-draft-no-supplier",
+            supplier_id=None,
+            supplier_reference=None,
+        ),
+    )
+
+    assert response.status_code == 201
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "draft"
+    assert body["supplier"] is None
+
+
+def test_goods_receipt_draft_creation_is_idempotent(client):
+    first = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(),
+    )
+    second = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(),
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    assert (
+        first.get_json()["item"]["id"]
+        == second.get_json()["item"]["id"]
+    )
+
+    assert GoodsReceipt.query.count() == 1
+    assert GoodsReceiptItem.query.count() == 0
+
+
+def test_goods_receipt_draft_idempotency_rejects_conflicting_payload(client):
+    assert client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(),
+    ).status_code == 201
+
+    response = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            notes="Different draft evidence.",
+        ),
+    )
+
+    assert response.status_code == 409
+    assert "idempotency_key" in error_message(response)
+
+    assert GoodsReceipt.query.count() == 1
+
+
+def test_goods_receipt_draft_requires_inventory_receive_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        fake_authorize,
+    )
+
+    from app.api.inventory import create_goods_receipt_draft
+
+    with pytest.raises(Exception):
+        create_goods_receipt_draft()
+
+    assert captured["kwargs"]["permission"] == "inventory.receive"

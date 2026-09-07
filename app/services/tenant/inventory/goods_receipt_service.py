@@ -20,7 +20,10 @@ from app.models import (
     User,
     Warehouse,
 )
-from app.schemas import CreateGoodsReceiptRequest
+from app.schemas import (
+    CreateGoodsReceiptDraftRequest,
+    CreateGoodsReceiptRequest,
+)
 from app.serializers.goods_receipt import serialize_goods_receipt_summary
 from app.services.tenant.inventory.goods_receipt_workflow import (
     GoodsReceiptStatus,
@@ -155,7 +158,9 @@ def _json_safe(value):
     return value
 
 
-def _fingerprint(request: CreateGoodsReceiptRequest) -> str:
+def _fingerprint(
+    request: CreateGoodsReceiptRequest | CreateGoodsReceiptDraftRequest,
+) -> str:
     payload = _json_safe(asdict(request))
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -268,6 +273,132 @@ class GoodsReceiptService:
     def __init__(self, session):
         self.session = session
 
+    def create_goods_receipt_draft(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        created_by: str,
+        request: CreateGoodsReceiptDraftRequest,
+    ) -> GoodsReceipt:
+        """
+        Create an incomplete goods receipt draft.
+
+        Draft creation records header evidence only. It does not complete
+        receiving, create inventory batches, update stock balances, or create
+        inventory movements.
+        """
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        fingerprint = _fingerprint(request)
+
+        existing = self._existing_by_idempotency_key(
+            tenant_id=tenant_id,
+            idempotency_key=request.idempotency_key,
+        )
+
+        if existing:
+            if existing.request_fingerprint != fingerprint:
+                raise ConflictError(
+                    "idempotency_key was already used for a different goods receipt."
+                )
+            return existing
+
+        now = _now()
+
+        try:
+            warehouse = self._require_warehouse(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                warehouse_id=request.warehouse_id,
+            )
+
+            supplier = self._require_supplier(
+                tenant_id=tenant_id,
+                supplier_id=request.supplier_id,
+            )
+
+            receipt = GoodsReceipt(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                warehouse_id=str(warehouse.id),
+                supplier_id=(
+                    str(supplier.id)
+                    if supplier
+                    else None
+                ),
+                receipt_number="PENDING",
+                supplier_reference=request.supplier_reference,
+
+                supplier_invoice_number=(
+                    request.supplier_invoice_number
+                ),
+                supplier_invoice_date=(
+                    request.supplier_invoice_date
+                ),
+                payment_terms=request.payment_terms,
+                invoice_currency=request.invoice_currency,
+
+                supplier_subtotal=(
+                    _q2(request.supplier_subtotal)
+                    if request.supplier_subtotal is not None
+                    else None
+                ),
+                supplier_discount_total=(
+                    _q2(request.supplier_discount_total)
+                    if request.supplier_discount_total is not None
+                    else None
+                ),
+                supplier_tax_total=(
+                    _q2(request.supplier_tax_total)
+                    if request.supplier_tax_total is not None
+                    else None
+                ),
+                supplier_invoice_total=(
+                    _q2(request.supplier_invoice_total)
+                    if request.supplier_invoice_total is not None
+                    else None
+                ),
+
+                calculated_subtotal=None,
+                calculated_tax_total=None,
+                calculated_total=None,
+                reconciliation_difference=None,
+
+                idempotency_key=request.idempotency_key,
+                request_fingerprint=fingerprint,
+
+                created_by=created_by,
+                receiving_started_at=None,
+                receiving_started_by=None,
+                received_at=None,
+                received_by=None,
+
+                status=GoodsReceiptStatus.DRAFT.value,
+                notes=request.notes,
+
+                created_at=now,
+                updated_at=now,
+            )
+
+            self.session.add(receipt)
+            self.session.flush()
+
+            receipt.receipt_number = self._receipt_number(
+                receipt,
+                now,
+            )
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
+
     def create_goods_receipt(
         self,
         *,
@@ -371,10 +502,11 @@ class GoodsReceiptService:
 
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,
+                created_by=received_by,
                 received_at=received_at,
+                received_by=received_by,
                 status=GoodsReceiptStatus.RECEIVED.value,
                 notes=request.notes,
-                received_by=received_by,
                 created_at=now,
                 updated_at=now,
             )
@@ -1364,6 +1496,15 @@ class GoodsReceiptService:
     def _receipt_number(
         self,
         receipt: GoodsReceipt,
-        received_at: datetime,
+        reference_at: datetime,
     ) -> str:
-        return f"GRN-{received_at.year}-{str(receipt.id)[:8].upper()}"
+        """
+        Build the immutable GRN reference.
+
+        Completed fast-path receipts use their received timestamp.
+        Structured drafts use their creation timestamp.
+        """
+        return (
+            f"GRN-{reference_at.year}-"
+            f"{str(receipt.id)[:8].upper()}"
+        )
