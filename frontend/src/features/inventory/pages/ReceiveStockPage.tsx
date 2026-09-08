@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/forms/SearchableSelect"
 import {
   ArrowLeft,
   PackagePlus,
@@ -581,17 +582,26 @@ export function ReceiveStockPage() {
                   </Button>
                 </div>
 
-                <NativeSelect
+                <SearchableSelect
                   value={selectedProductId}
-                  onChange={setSelectedProductId}
+                  onValueChange={setSelectedProductId}
                   placeholder={
                     productsQuery.isLoading
                       ? "Loading products"
                       : "Select inventory product"
                   }
+                  searchPlaceholder="Search product or SKU..."
+                  emptyText="No inventory product found."
+                  disabled={productsQuery.isLoading}
                   options={eligibleProducts.map((product) => ({
                     value: product.id,
                     label: productLabel(product),
+                    keywords: [
+                      product.name,
+                      product.internal_sku,
+                    ]
+                      .filter(Boolean)
+                      .join(" "),
                   }))}
                 />
 

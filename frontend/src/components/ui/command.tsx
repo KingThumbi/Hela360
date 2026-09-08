@@ -35,7 +35,10 @@ export function CommandList({
 }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("max-h-72 overflow-y-auto", className)}
+      className={cn(
+        "max-h-72 overflow-y-auto overscroll-contain",
+        className
+      )}
       {...props}
     />
   );
