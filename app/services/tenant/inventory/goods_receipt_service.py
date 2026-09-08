@@ -1327,6 +1327,15 @@ class GoodsReceiptService:
                     "Posted goods receipt cannot be cancelled."
                 )
 
+            if _movement_count_for_receipt(
+                self.session,
+                str(receipt.id),
+            ):
+                raise ConflictError(
+                    "Goods receipt already has inventory movements "
+                    "and cannot be cancelled."
+                )
+
             if not goods_receipt_can_transition(
                 current_status,
                 GoodsReceiptStatus.CANCELLED,

@@ -3371,3 +3371,117 @@ def test_complete_receiving_rejects_existing_inventory_movement(client):
     assert InventoryMovement.query.count() == 1
     assert StockBalance.query.count() == 0
     assert InventoryBatch.query.count() == 0
+
+
+def test_stock_bearing_historical_goods_receipt_cannot_be_cancelled(client):
+    received_at = datetime(
+        2026,
+        8,
+        9,
+        10,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    receipt = make_history_receipt(
+        receipt_id="historical-stock-bearing-receipt",
+        receipt_number="GRN-2026-HIST-STOCK",
+        received_at=received_at,
+    )
+
+    movement = InventoryMovement(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        product_id=PRODUCT_ID,
+        batch_id=None,
+        movement_type="goods_receipt",
+        quantity=Decimal("10.0000"),
+        unit_cost=Decimal("5.50"),
+        reference_type="goods_receipt",
+        reference_id=str(receipt.id),
+        notes="Historical compatibility posting.",
+        created_by=USER_ID,
+    )
+    db.session.add(movement)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt.id}/cancel"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "already has inventory movements"
+        in error_message(response)
+    )
+
+    db.session.expire_all()
+
+    persisted = db.session.get(
+        GoodsReceipt,
+        str(receipt.id),
+    )
+
+    assert persisted.status == "received"
+    assert persisted.cancelled_at is None
+    assert persisted.cancelled_by is None
+    assert InventoryMovement.query.count() == 1
+
+
+def test_stock_bearing_historical_goods_receipt_cannot_be_cancelled(client):
+    received_at = datetime(
+        2026,
+        8,
+        9,
+        10,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    receipt = make_history_receipt(
+        receipt_id="historical-stock-bearing-receipt",
+        receipt_number="GRN-2026-HIST-STOCK",
+        received_at=received_at,
+    )
+
+    movement = InventoryMovement(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        product_id=PRODUCT_ID,
+        batch_id=None,
+        movement_type="goods_receipt",
+        quantity=Decimal("10.0000"),
+        unit_cost=Decimal("5.50"),
+        reference_type="goods_receipt",
+        reference_id=str(receipt.id),
+        notes="Historical compatibility posting.",
+        created_by=USER_ID,
+    )
+    db.session.add(movement)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt.id}/cancel"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "already has inventory movements"
+        in error_message(response)
+    )
+
+    db.session.expire_all()
+
+    persisted = db.session.get(
+        GoodsReceipt,
+        str(receipt.id),
+    )
+
+    assert persisted.status == "received"
+    assert persisted.cancelled_at is None
+    assert persisted.cancelled_by is None
+    assert InventoryMovement.query.count() == 1
