@@ -2673,3 +2673,368 @@ def test_goods_receipt_begin_receiving_requires_inventory_receive_permission(
         begin_goods_receipt_receiving("receipt-id")
 
     assert captured["kwargs"]["permission"] == "inventory.receive"
+
+
+def editable_receipt_payload(**overrides):
+    base = payload(
+        supplier_reference="DN-EDIT-100",
+        notes="Editable goods receipt.",
+    )
+
+    # Creation-only fields do not belong to the editable aggregate.
+    base.pop("idempotency_key", None)
+    base.pop("received_at", None)
+
+    base.update(overrides)
+    return base
+
+
+def test_draft_goods_receipt_can_replace_header_and_lines(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="draft-edit-header-lines",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            supplier_reference="DN-EDITED",
+            supplier_invoice_number="INV-EDITED-001",
+            supplier_invoice_date="2026-09-08",
+            payment_terms="30 days",
+            supplier_subtotal="55.00",
+            supplier_discount_total="0.00",
+            supplier_tax_total="0.00",
+            supplier_invoice_total="55.00",
+            notes="Physical receiving evidence saved.",
+        ),
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "draft"
+    assert item["supplier_reference"] == "DN-EDITED"
+    assert item["supplier_invoice_number"] == "INV-EDITED-001"
+    assert item["payment_terms"] == "30 days"
+    assert item["notes"] == "Physical receiving evidence saved."
+
+    assert len(item["items"]) == 1
+    assert item["items"][0]["product"]["id"] == PRODUCT_ID
+    assert item["items"][0]["quantity"] == "10.0000"
+    assert item["items"][0]["unit_cost"] == "5.50"
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "draft"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert GoodsReceiptItem.query.count() == 1
+
+    # Editing receipt evidence must never mutate inventory.
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_receiving_goods_receipt_can_be_edited(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="receiving-edit",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            notes="Updated while physically receiving.",
+        ),
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "receiving"
+    assert item["receiving_started_at"] is not None
+    assert item["received_at"] is None
+    assert item["notes"] == "Updated while physically receiving."
+    assert len(item["items"]) == 1
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_edit_replaces_existing_lines(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="replace-lines",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    first = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert first.status_code == 200
+    assert GoodsReceiptItem.query.count() == 1
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            supplier_reference="DN-SECOND",
+            items=[
+                {
+                    "product_id": SECOND_PRODUCT_ID,
+                    "quantity": "4",
+                    "unit_cost": "2.25",
+                }
+            ],
+        ),
+    )
+
+    assert response.status_code == 200
+
+    rows = (
+        GoodsReceiptItem.query
+        .order_by(GoodsReceiptItem.line_number.asc())
+        .all()
+    )
+
+    assert len(rows) == 1
+    assert rows[0].product_id == SECOND_PRODUCT_ID
+    assert rows[0].line_number == 1
+    assert rows[0].quantity == Decimal("4.0000")
+    assert rows[0].unit_cost == Decimal("2.25")
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_edit_can_save_empty_line_set(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="empty-edit-lines",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    populated = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert populated.status_code == 200
+    assert GoodsReceiptItem.query.count() == 1
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            items=[],
+            supplier_subtotal=None,
+            supplier_discount_total=None,
+            supplier_tax_total=None,
+            supplier_invoice_total=None,
+        ),
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "draft"
+    assert item["items"] == []
+    assert GoodsReceiptItem.query.count() == 0
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_edit_resolves_product_units_without_stock_effect(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="edit-unit-conversion",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            items=[
+                {
+                    "product_id": PRODUCT_ID,
+                    "product_unit_id": PACK_PRODUCT_UNIT_ID,
+                    "quantity": "2",
+                    "batch_number": "EDIT-BOX-BATCH",
+                    "manufacture_date": "2026-01-01",
+                    "expiry_date": "2027-01-31",
+                    "unit_cost": "50.00",
+                }
+            ],
+        ),
+    )
+
+    assert response.status_code == 200
+
+    line = response.get_json()["item"]["items"][0]
+
+    assert line["quantity"] == "2.0000"
+    assert line["base_quantity"] == "20.0000"
+    assert line["product_unit_id"] == PACK_PRODUCT_UNIT_ID
+    assert line["unit_code"] == "BOX"
+    assert line["conversion_factor_to_base"] == "10.000000"
+    assert line["base_unit_cost"] == "5.00"
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_edit_rolls_back_on_invalid_replacement(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="edit-rollback",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    initial = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            supplier_reference="ORIGINAL-DN",
+        ),
+    )
+
+    assert initial.status_code == 200
+
+    original_line = GoodsReceiptItem.query.one()
+    original_line_id = original_line.id
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(
+            supplier_reference="SHOULD-ROLL-BACK",
+            items=[
+                {
+                    "product_id": NON_INVENTORY_PRODUCT_ID,
+                    "quantity": "3",
+                    "unit_cost": "10.00",
+                }
+            ],
+        ),
+    )
+
+    assert response.status_code == 400
+
+    db.session.expire_all()
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+    rows = GoodsReceiptItem.query.all()
+
+    assert receipt.supplier_reference == "ORIGINAL-DN"
+    assert len(rows) == 1
+    assert rows[0].id == original_line_id
+    assert rows[0].product_id == PRODUCT_ID
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_received_goods_receipt_cannot_be_edited(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="received-edit-rejected",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Only draft or receiving goods receipts can be edited."
+        in error_message(response)
+    )
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+    assert receipt.status == "received"
+
+
+def test_goods_receipt_edit_requires_inventory_receive_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def deny(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        deny,
+    )
+
+    response = app_context.test_client().patch(
+        "/api/inventory/goods-receipts/receipt-id",
+        json=editable_receipt_payload(),
+    )
+
+    assert response.status_code == 403
+    assert captured["kwargs"]["permission"] == "inventory.receive"

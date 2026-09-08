@@ -6,6 +6,7 @@ from app.extensions import db
 from app.schemas import (
     CreateGoodsReceiptDraftRequest,
     CreateGoodsReceiptRequest,
+    UpdateGoodsReceiptRequest,
 )
 from app.schemas import (
     CreateStockAdjustmentFromCountRequest,
@@ -223,6 +224,34 @@ def get_goods_receipt(receipt_id: str):
     return jsonify(
         {
             "ok": True,
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
+@bp.patch("/inventory/goods-receipts/<receipt_id>")
+@require_permission("inventory.receive")
+def update_goods_receipt(receipt_id: str):
+    identity = _current_identity()
+    payload = request.get_json(silent=True) or {}
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.update_goods_receipt(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        request=UpdateGoodsReceiptRequest.from_payload(
+            payload
+        ),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt updated successfully.",
             "item": serialize_goods_receipt(
                 receipt,
                 **service.serialization_context(receipt),

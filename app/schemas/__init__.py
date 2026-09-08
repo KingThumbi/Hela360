@@ -1,7 +1,8 @@
 from app.schemas.goods_receipt import (
-    CreateGoodsReceiptItemRequest,
     CreateGoodsReceiptDraftRequest,
+    CreateGoodsReceiptItemRequest,
     CreateGoodsReceiptRequest,
+    UpdateGoodsReceiptRequest,
 )
 from app.schemas.stock_count import (
     AddDiscoveredStockCountItemRequest,
@@ -19,8 +20,10 @@ from app.schemas.supplier import (
 )
 
 __all__ = [
+    "CreateGoodsReceiptDraftRequest",
     "CreateGoodsReceiptItemRequest",
     "CreateGoodsReceiptRequest",
+    "UpdateGoodsReceiptRequest",
     "CreateStockAdjustmentFromCountRequest",
     "CreateStockAdjustmentRequest",
     "AddDiscoveredStockCountItemRequest",

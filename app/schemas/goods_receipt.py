@@ -574,3 +574,134 @@ class CreateGoodsReceiptDraftRequest:
                 max_length=5000,
             ),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateGoodsReceiptRequest:
+    """
+    Complete editable goods-receipt aggregate.
+
+    This request replaces the editable header evidence and complete
+    persisted line set while the receipt remains DRAFT or RECEIVING.
+
+    An empty item collection is valid while work is still in progress.
+    Completion validation is performed by the workflow transition.
+    """
+
+    warehouse_id: str
+
+    supplier_id: str | None = None
+    supplier_reference: str | None = None
+
+    supplier_invoice_number: str | None = None
+    supplier_invoice_date: date | None = None
+    payment_terms: str | None = None
+    invoice_currency: str = "KES"
+
+    supplier_subtotal: Decimal | None = None
+    supplier_discount_total: Decimal | None = None
+    supplier_tax_total: Decimal | None = None
+    supplier_invoice_total: Decimal | None = None
+
+    notes: str | None = None
+    items: tuple[CreateGoodsReceiptItemRequest, ...] = ()
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> "UpdateGoodsReceiptRequest":
+        if not isinstance(payload, dict):
+            raise ValidationError(
+                "Request payload must be an object."
+            )
+
+        warehouse_id = _required_text(
+            payload,
+            "warehouse_id",
+            max_length=36,
+        )
+
+        raw_items = payload.get("items", [])
+        if not isinstance(raw_items, list):
+            raise ValidationError(
+                "items must be an array."
+            )
+
+        items = tuple(
+            CreateGoodsReceiptItemRequest.from_payload(
+                item,
+                index=index,
+            )
+            for index, item in enumerate(raw_items)
+        )
+
+        invoice_currency = (
+            _optional_text(
+                payload,
+                "invoice_currency",
+                max_length=3,
+            )
+            or "KES"
+        ).upper()
+
+        if len(invoice_currency) != 3:
+            raise ValidationError(
+                "invoice_currency must be a 3-letter currency code."
+            )
+
+        supplier_subtotal = _optional_non_negative_decimal(
+            payload,
+            "supplier_subtotal",
+        )
+        supplier_discount_total = _optional_non_negative_decimal(
+            payload,
+            "supplier_discount_total",
+        )
+        supplier_tax_total = _optional_non_negative_decimal(
+            payload,
+            "supplier_tax_total",
+        )
+        supplier_invoice_total = _optional_non_negative_decimal(
+            payload,
+            "supplier_invoice_total",
+        )
+
+        return cls(
+            warehouse_id=warehouse_id,
+            supplier_id=_optional_text(
+                payload,
+                "supplier_id",
+                max_length=36,
+            ),
+            supplier_reference=_optional_text(
+                payload,
+                "supplier_reference",
+                max_length=120,
+            ),
+            supplier_invoice_number=_optional_text(
+                payload,
+                "supplier_invoice_number",
+                max_length=120,
+            ),
+            supplier_invoice_date=_optional_date(
+                payload,
+                "supplier_invoice_date",
+            ),
+            payment_terms=_optional_text(
+                payload,
+                "payment_terms",
+                max_length=120,
+            ),
+            invoice_currency=invoice_currency,
+            supplier_subtotal=supplier_subtotal,
+            supplier_discount_total=supplier_discount_total,
+            supplier_tax_total=supplier_tax_total,
+            supplier_invoice_total=supplier_invoice_total,
+            notes=_optional_text(
+                payload,
+                "notes",
+                max_length=10000,
+            ),
+            items=items,
+        )

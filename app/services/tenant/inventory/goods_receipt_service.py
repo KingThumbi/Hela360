@@ -23,6 +23,7 @@ from app.models import (
 from app.schemas import (
     CreateGoodsReceiptDraftRequest,
     CreateGoodsReceiptRequest,
+    UpdateGoodsReceiptRequest,
 )
 from app.serializers.goods_receipt import serialize_goods_receipt_summary
 from app.services.tenant.inventory.goods_receipt_workflow import (
@@ -226,7 +227,7 @@ def _calculate_receipt_line(item) -> dict[str, Decimal]:
 
 
 def _calculate_receipt_reconciliation(
-    request: CreateGoodsReceiptRequest,
+    request: CreateGoodsReceiptRequest | UpdateGoodsReceiptRequest,
 ) -> dict[str, Decimal | None]:
     calculated_subtotal = Decimal("0.00")
     calculated_tax_total = Decimal("0.00")
@@ -451,7 +452,6 @@ class GoodsReceiptService:
                 request
             )
 
-            unit_service = ProductUnitConversionService(self.session)
 
             receipt = GoodsReceipt(
                 tenant_id=tenant_id,
@@ -514,101 +514,13 @@ class GoodsReceiptService:
             self.session.flush()
             receipt.receipt_number = self._receipt_number(receipt, received_at)
 
-            for line_number, item in enumerate(request.items, start=1):
-                product = products[item.product_id]
-                unit_resolution = unit_service.resolve_for_receipt(
-                    tenant_id=tenant_id,
-                    product=product,
-                    product_unit_id=item.product_unit_id,
-                )
-                base_quantity = unit_resolution.to_base_quantity(item.quantity)
-                base_unit_cost = unit_resolution.to_base_unit_cost(item.unit_cost)
-                receipt_item = GoodsReceiptItem(
-                    goods_receipt_id=str(receipt.id),
-                    product_id=str(product.id),
-                    product_unit_id=unit_resolution.product_unit_id,
-                    batch_id=None,
-                    line_number=line_number,
-                    quantity=_q4(item.quantity),
-
-                    invoiced_quantity=(
-                        _q4(item.invoiced_quantity)
-                        if item.invoiced_quantity is not None
-                        else None
-                    ),
-                    received_quantity=(
-                        _q4(item.received_quantity)
-                        if item.received_quantity is not None
-                        else None
-                    ),
-                    accepted_quantity=(
-                        _q4(item.accepted_quantity)
-                        if item.accepted_quantity is not None
-                        else None
-                    ),
-                    rejected_quantity=(
-                        _q4(item.rejected_quantity)
-                        if item.rejected_quantity is not None
-                        else None
-                    ),
-                    bonus_quantity=(
-                        _q4(item.bonus_quantity)
-                        if item.bonus_quantity is not None
-                        else None
-                    ),
-
-                    base_quantity=base_quantity,
-                    unit_code_snapshot=unit_resolution.unit_code,
-                    unit_name_snapshot=unit_resolution.unit_name,
-                    conversion_factor_to_base=unit_resolution.conversion_factor_to_base,
-
-                    supplier_item_code=item.supplier_item_code,
-                    supplier_description=item.supplier_description,
-
-                    batch_number=item.batch_number,
-                    manufacture_date=item.manufacture_date,
-                    expiry_date=item.expiry_date,
-                    unit_cost=_q2(item.unit_cost),
-                    base_unit_cost=base_unit_cost,
-
-                    supplier_unit_price=(
-                        _q2(item.supplier_unit_price)
-                        if item.supplier_unit_price is not None
-                        else None
-                    ),
-                    discount_percent=item.discount_percent,
-                    discount_amount=(
-                        _q2(item.discount_amount)
-                        if item.discount_amount is not None
-                        else None
-                    ),
-                    tax_rate=item.tax_rate,
-                    tax_amount=(
-                        _q2(item.tax_amount)
-                        if item.tax_amount is not None
-                        else None
-                    ),
-                    net_unit_cost=(
-                        _q2(item.net_unit_cost)
-                        if item.net_unit_cost is not None
-                        else None
-                    ),
-                    line_total=(
-                        _q2(item.line_total)
-                        if item.line_total is not None
-                        else None
-                    ),
-
-                    discrepancy_status=item.discrepancy_status,
-                    discrepancy_reason=item.discrepancy_reason,
-
-                    supplier_batch_reference=item.supplier_batch_reference,
-                    created_at=now,
-                    updated_at=now,
-                )
-                self.session.add(receipt_item)
-
-            self.session.flush()
+            self._replace_receipt_items(
+                tenant_id=tenant_id,
+                receipt=receipt,
+                items=request.items,
+                products=products,
+                now=now,
+            )
 
             # Receiving records physical and supplier-document evidence only.
             # Inventory is mutated exclusively by the explicit posting action.
@@ -617,6 +529,139 @@ class GoodsReceiptService:
         except Exception:
             self.session.rollback()
             raise
+
+    def _replace_receipt_items(
+        self,
+        *,
+        tenant_id: str,
+        receipt: GoodsReceipt,
+        items,
+        products: dict[str, Product],
+        now: datetime,
+    ) -> None:
+        """
+        Replace the complete persisted receipt-line evidence set.
+
+        This helper does not create inventory batches, stock balances,
+        or inventory movements.
+        """
+        self.session.query(GoodsReceiptItem).filter(
+            GoodsReceiptItem.goods_receipt_id == str(receipt.id)
+        ).delete(synchronize_session=False)
+
+        self.session.flush()
+
+        unit_service = ProductUnitConversionService(self.session)
+
+        for line_number, item in enumerate(items, start=1):
+            product = products[item.product_id]
+
+            unit_resolution = unit_service.resolve_for_receipt(
+                tenant_id=tenant_id,
+                product=product,
+                product_unit_id=item.product_unit_id,
+            )
+
+            base_quantity = unit_resolution.to_base_quantity(
+                item.quantity
+            )
+            base_unit_cost = unit_resolution.to_base_unit_cost(
+                item.unit_cost
+            )
+
+            receipt_item = GoodsReceiptItem(
+                goods_receipt_id=str(receipt.id),
+                product_id=str(product.id),
+                product_unit_id=unit_resolution.product_unit_id,
+                batch_id=None,
+                line_number=line_number,
+                quantity=_q4(item.quantity),
+
+                invoiced_quantity=(
+                    _q4(item.invoiced_quantity)
+                    if item.invoiced_quantity is not None
+                    else None
+                ),
+                received_quantity=(
+                    _q4(item.received_quantity)
+                    if item.received_quantity is not None
+                    else None
+                ),
+                accepted_quantity=(
+                    _q4(item.accepted_quantity)
+                    if item.accepted_quantity is not None
+                    else None
+                ),
+                rejected_quantity=(
+                    _q4(item.rejected_quantity)
+                    if item.rejected_quantity is not None
+                    else None
+                ),
+                bonus_quantity=(
+                    _q4(item.bonus_quantity)
+                    if item.bonus_quantity is not None
+                    else None
+                ),
+
+                base_quantity=base_quantity,
+                unit_code_snapshot=unit_resolution.unit_code,
+                unit_name_snapshot=unit_resolution.unit_name,
+                conversion_factor_to_base=(
+                    unit_resolution.conversion_factor_to_base
+                ),
+
+                supplier_item_code=item.supplier_item_code,
+                supplier_description=item.supplier_description,
+
+                batch_number=item.batch_number,
+                manufacture_date=item.manufacture_date,
+                expiry_date=item.expiry_date,
+
+                unit_cost=_q2(item.unit_cost),
+                base_unit_cost=base_unit_cost,
+
+                supplier_unit_price=(
+                    _q2(item.supplier_unit_price)
+                    if item.supplier_unit_price is not None
+                    else None
+                ),
+                discount_percent=item.discount_percent,
+                discount_amount=(
+                    _q2(item.discount_amount)
+                    if item.discount_amount is not None
+                    else None
+                ),
+                tax_rate=item.tax_rate,
+                tax_amount=(
+                    _q2(item.tax_amount)
+                    if item.tax_amount is not None
+                    else None
+                ),
+                net_unit_cost=(
+                    _q2(item.net_unit_cost)
+                    if item.net_unit_cost is not None
+                    else None
+                ),
+                line_total=(
+                    _q2(item.line_total)
+                    if item.line_total is not None
+                    else None
+                ),
+
+                discrepancy_status=item.discrepancy_status,
+                discrepancy_reason=item.discrepancy_reason,
+
+                supplier_batch_reference=(
+                    item.supplier_batch_reference
+                ),
+
+                created_at=now,
+                updated_at=now,
+            )
+
+            self.session.add(receipt_item)
+
+        self.session.flush()
 
     def _post_receipt_inventory(
         self,
@@ -734,6 +779,177 @@ class GoodsReceiptService:
             )
 
         self.session.flush()
+
+    def update_goods_receipt(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        receipt_id: str,
+        request: UpdateGoodsReceiptRequest,
+    ) -> GoodsReceipt:
+        """
+        Replace editable goods-receipt header and line evidence.
+
+        Only DRAFT and RECEIVING receipts are editable.
+
+        This operation is atomic and has no inventory effect.
+        """
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        now = _now()
+
+        try:
+            receipt = (
+                self.session.query(GoodsReceipt)
+                .filter(
+                    GoodsReceipt.id == receipt_id,
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.branch_id == branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not receipt:
+                raise NotFoundError(
+                    "Goods receipt not found."
+                )
+
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status not in {
+                GoodsReceiptStatus.DRAFT,
+                GoodsReceiptStatus.RECEIVING,
+            }:
+                raise ConflictError(
+                    "Only draft or receiving goods receipts "
+                    "can be edited."
+                )
+
+            if _movement_count_for_receipt(
+                self.session,
+                str(receipt.id),
+            ):
+                raise ConflictError(
+                    "Goods receipt already has inventory movements "
+                    "and cannot be edited."
+                )
+
+            warehouse = self._require_warehouse(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                warehouse_id=request.warehouse_id,
+            )
+
+            supplier = self._require_supplier(
+                tenant_id=tenant_id,
+                supplier_id=request.supplier_id,
+            )
+
+            products = self._load_products(
+                tenant_id=tenant_id,
+                product_ids=[
+                    item.product_id
+                    for item in request.items
+                ],
+            )
+
+            self._validate_lines(
+                request=request,
+                products=products,
+                received_at=now,
+            )
+
+            reconciliation = (
+                _calculate_receipt_reconciliation(request)
+            )
+
+            receipt.warehouse_id = str(warehouse.id)
+            receipt.supplier_id = (
+                str(supplier.id)
+                if supplier
+                else None
+            )
+
+            receipt.supplier_reference = (
+                request.supplier_reference
+            )
+            receipt.supplier_invoice_number = (
+                request.supplier_invoice_number
+            )
+            receipt.supplier_invoice_date = (
+                request.supplier_invoice_date
+            )
+            receipt.payment_terms = request.payment_terms
+            receipt.invoice_currency = (
+                request.invoice_currency
+            )
+
+            receipt.supplier_subtotal = (
+                _q2(request.supplier_subtotal)
+                if request.supplier_subtotal is not None
+                else None
+            )
+            receipt.supplier_discount_total = (
+                _q2(request.supplier_discount_total)
+                if request.supplier_discount_total is not None
+                else None
+            )
+            receipt.supplier_tax_total = (
+                _q2(request.supplier_tax_total)
+                if request.supplier_tax_total is not None
+                else None
+            )
+            receipt.supplier_invoice_total = (
+                _q2(request.supplier_invoice_total)
+                if request.supplier_invoice_total is not None
+                else None
+            )
+
+            receipt.calculated_subtotal = reconciliation[
+                "calculated_subtotal"
+            ]
+            receipt.calculated_tax_total = reconciliation[
+                "calculated_tax_total"
+            ]
+            receipt.calculated_total = reconciliation[
+                "calculated_total"
+            ]
+            receipt.reconciliation_difference = reconciliation[
+                "reconciliation_difference"
+            ]
+
+            receipt.notes = request.notes
+            receipt.updated_at = now
+
+            # Preserve the original create-request fingerprint.
+            # Idempotency identifies creation, not later edits.
+
+            self._replace_receipt_items(
+                tenant_id=tenant_id,
+                receipt=receipt,
+                items=request.items,
+                products=products,
+                now=now,
+            )
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
 
     def begin_goods_receipt_receiving(
         self,
@@ -1393,7 +1609,7 @@ class GoodsReceiptService:
     def _validate_lines(
         self,
         *,
-        request: CreateGoodsReceiptRequest,
+        request: CreateGoodsReceiptRequest | UpdateGoodsReceiptRequest,
         products: dict[str, Product],
         received_at: datetime,
     ) -> None:
