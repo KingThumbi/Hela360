@@ -2488,3 +2488,188 @@ def test_goods_receipt_draft_requires_inventory_receive_permission(
         create_goods_receipt_draft()
 
     assert captured["kwargs"]["permission"] == "inventory.receive"
+
+
+def test_goods_receipt_draft_can_begin_receiving(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="draft-begin-receiving",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert response.status_code == 200
+
+    body = response.get_json()["item"]
+
+    assert body["status"] == "receiving"
+    assert body["receiving_started_at"] is not None
+    assert body["receiving_started_by"] == USER_ID
+    assert body["received_at"] is None
+    assert body["received_by"] is None
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "receiving"
+    assert receipt.receiving_started_at is not None
+    assert receipt.receiving_started_by == USER_ID
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert GoodsReceiptItem.query.count() == 0
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_begin_receiving_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="draft-begin-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+    second = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "receiving"
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_received_goods_receipt_cannot_begin_receiving(client):
+    created = client.post(
+        "/api/inventory/goods-receipts",
+        json=payload(
+            idempotency_key="received-cannot-begin",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Only draft goods receipts can begin receiving."
+        in error_message(response)
+    )
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "received"
+    assert receipt.receiving_started_at is None
+    assert receipt.receiving_started_by is None
+
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_cancelled_goods_receipt_cannot_begin_receiving(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="cancelled-cannot-begin",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/{receipt_id}/cancel"
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert response.status_code == 409
+
+    receipt = db.session.get(
+        GoodsReceipt,
+        receipt_id,
+    )
+
+    assert receipt.status == "cancelled"
+    assert receipt.receiving_started_at is None
+
+    assert InventoryMovement.query.count() == 0
+
+
+def test_goods_receipt_begin_receiving_requires_inventory_receive_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def fake_authorize(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        fake_authorize,
+    )
+
+    from app.api.inventory import begin_goods_receipt_receiving
+
+    with pytest.raises(Exception):
+        begin_goods_receipt_receiving("receipt-id")
+
+    assert captured["kwargs"]["permission"] == "inventory.receive"

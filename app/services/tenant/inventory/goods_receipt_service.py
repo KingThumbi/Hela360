@@ -735,6 +735,76 @@ class GoodsReceiptService:
 
         self.session.flush()
 
+    def begin_goods_receipt_receiving(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        receipt_id: str,
+        started_by: str,
+    ) -> GoodsReceipt:
+        """
+        Begin physical receiving for a goods receipt draft.
+
+        This transition records workflow audit evidence only.
+        It does not mutate inventory.
+        """
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        try:
+            receipt = (
+                self.session.query(GoodsReceipt)
+                .filter(
+                    GoodsReceipt.id == receipt_id,
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.branch_id == branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not receipt:
+                raise NotFoundError(
+                    "Goods receipt not found."
+                )
+
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            if current_status == GoodsReceiptStatus.RECEIVING:
+                return receipt
+
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.RECEIVING,
+            ):
+                raise ConflictError(
+                    "Only draft goods receipts can begin receiving."
+                )
+
+            now = _now()
+
+            receipt.status = GoodsReceiptStatus.RECEIVING.value
+            receipt.receiving_started_at = now
+            receipt.receiving_started_by = started_by
+            receipt.updated_at = now
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
+
     def mark_goods_receipt_under_review(
         self,
         *,
