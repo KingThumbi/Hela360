@@ -443,7 +443,7 @@ class GoodsReceiptService:
                 product_ids=[item.product_id for item in request.items],
             )
             self._validate_lines(
-                request=request,
+                items=request.items,
                 products=products,
                 received_at=received_at,
             )
@@ -663,6 +663,72 @@ class GoodsReceiptService:
 
         self.session.flush()
 
+    def _validate_persisted_receipt_units(
+        self,
+        *,
+        tenant_id: str,
+        rows: list[tuple[GoodsReceiptItem, Product]],
+    ) -> None:
+        """
+        Verify persisted unit-conversion evidence before receiving completes.
+
+        No inventory mutation occurs here.
+        """
+        unit_service = ProductUnitConversionService(self.session)
+
+        for receipt_item, product in rows:
+            unit_resolution = unit_service.resolve_for_receipt(
+                tenant_id=tenant_id,
+                product=product,
+                product_unit_id=receipt_item.product_unit_id,
+            )
+
+            expected_base_quantity = (
+                unit_resolution.to_base_quantity(
+                    receipt_item.quantity
+                )
+            )
+            expected_base_unit_cost = (
+                unit_resolution.to_base_unit_cost(
+                    receipt_item.unit_cost
+                )
+            )
+
+            if (
+                _q4(receipt_item.base_quantity)
+                != _q4(expected_base_quantity)
+            ):
+                raise ConflictError(
+                    "Goods receipt unit-conversion evidence "
+                    "does not match the current product-unit "
+                    "configuration. Re-save the receipt before "
+                    "completing receiving."
+                )
+
+            if (
+                _q2(receipt_item.base_unit_cost)
+                != _q2(expected_base_unit_cost)
+            ):
+                raise ConflictError(
+                    "Goods receipt unit-cost conversion evidence "
+                    "does not match the current product-unit "
+                    "configuration. Re-save the receipt before "
+                    "completing receiving."
+                )
+
+            if (
+                _d(receipt_item.conversion_factor_to_base)
+                != _d(
+                    unit_resolution.conversion_factor_to_base
+                )
+            ):
+                raise ConflictError(
+                    "Goods receipt conversion-factor evidence "
+                    "does not match the current product-unit "
+                    "configuration. Re-save the receipt before "
+                    "completing receiving."
+                )
+
     def _post_receipt_inventory(
         self,
         *,
@@ -866,7 +932,7 @@ class GoodsReceiptService:
             )
 
             self._validate_lines(
-                request=request,
+                items=request.items,
                 products=products,
                 received_at=now,
             )
@@ -1012,6 +1078,133 @@ class GoodsReceiptService:
             receipt.status = GoodsReceiptStatus.RECEIVING.value
             receipt.receiving_started_at = now
             receipt.receiving_started_by = started_by
+            receipt.updated_at = now
+
+            self.session.commit()
+            return receipt
+
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def complete_goods_receipt_receiving(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        receipt_id: str,
+        received_by: str,
+    ) -> GoodsReceipt:
+        """
+        Complete physical receiving for an in-progress goods receipt.
+
+        Completion validates the persisted receiving aggregate and records
+        receipt audit evidence. It does not mutate inventory.
+        """
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        try:
+            receipt = (
+                self.session.query(GoodsReceipt)
+                .filter(
+                    GoodsReceipt.id == receipt_id,
+                    GoodsReceipt.tenant_id == tenant_id,
+                    GoodsReceipt.branch_id == branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            if not receipt:
+                raise NotFoundError(
+                    "Goods receipt not found."
+                )
+
+            try:
+                current_status = parse_goods_receipt_status(
+                    receipt.status
+                )
+            except ValueError as exc:
+                raise ConflictError(
+                    "Goods receipt has an unsupported workflow status."
+                ) from exc
+
+            # Completion is retry-safe after a successful transition.
+            if current_status == GoodsReceiptStatus.RECEIVED:
+                return receipt
+
+            if not goods_receipt_can_transition(
+                current_status,
+                GoodsReceiptStatus.RECEIVED,
+            ):
+                raise ConflictError(
+                    "Only a receiving goods receipt can complete receiving."
+                )
+
+            receipt_id_value = str(receipt.id)
+
+            if _movement_count_for_receipt(
+                self.session,
+                receipt_id_value,
+            ):
+                raise ConflictError(
+                    "Goods receipt already has inventory movements "
+                    "and cannot complete receiving."
+                )
+
+            rows = (
+                self.session.query(
+                    GoodsReceiptItem,
+                    Product,
+                )
+                .join(
+                    Product,
+                    Product.id == GoodsReceiptItem.product_id,
+                )
+                .filter(
+                    GoodsReceiptItem.goods_receipt_id
+                    == receipt_id_value,
+                    Product.tenant_id == tenant_id,
+                )
+                .order_by(
+                    GoodsReceiptItem.line_number.asc()
+                )
+                .all()
+            )
+
+            if not rows:
+                raise ValidationError(
+                    "Goods receipt must contain at least one "
+                    "line before receiving can be completed."
+                )
+
+            products = {
+                str(product.id): product
+                for _, product in rows
+            }
+
+            now = _now()
+
+            self._validate_lines(
+                items=[
+                    receipt_item
+                    for receipt_item, _ in rows
+                ],
+                products=products,
+                received_at=now,
+            )
+
+            self._validate_persisted_receipt_units(
+                tenant_id=tenant_id,
+                rows=rows,
+            )
+
+            receipt.status = GoodsReceiptStatus.RECEIVED.value
+            receipt.received_at = now
+            receipt.received_by = received_by
             receipt.updated_at = now
 
             self.session.commit()
@@ -1609,13 +1802,13 @@ class GoodsReceiptService:
     def _validate_lines(
         self,
         *,
-        request: CreateGoodsReceiptRequest | UpdateGoodsReceiptRequest,
+        items,
         products: dict[str, Product],
         received_at: datetime,
     ) -> None:
         seen: set[tuple[str, str | None]] = set()
 
-        for item in request.items:
+        for item in items:
             product = products[item.product_id]
             if not product.is_active:
                 raise ValidationError("Goods receipt products must be active.")

@@ -287,6 +287,33 @@ def begin_goods_receipt_receiving(receipt_id: str):
     )
 
 
+@bp.post(
+    "/inventory/goods-receipts/<receipt_id>/complete-receiving"
+)
+@require_permission("inventory.receive")
+def complete_goods_receipt_receiving(receipt_id: str):
+    identity = _current_identity()
+    service = GoodsReceiptService(db.session)
+
+    receipt = service.complete_goods_receipt_receiving(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        receipt_id=receipt_id,
+        received_by=identity.user_id,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Goods receipt receiving completed.",
+            "item": serialize_goods_receipt(
+                receipt,
+                **service.serialization_context(receipt),
+            ),
+        }
+    )
+
+
 @bp.post("/inventory/goods-receipts/<receipt_id>/review")
 @require_permission("inventory.approve")
 def review_goods_receipt(receipt_id: str):

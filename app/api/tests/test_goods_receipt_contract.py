@@ -3038,3 +3038,336 @@ def test_goods_receipt_edit_requires_inventory_receive_permission(
 
     assert response.status_code == 403
     assert captured["kwargs"]["permission"] == "inventory.receive"
+
+
+def test_receiving_goods_receipt_can_complete_receiving(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-success",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert updated.status_code == 200
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+    assert started.get_json()["item"]["status"] == "receiving"
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "received"
+    assert item["received_at"] is not None
+    assert item["received_by"]["id"] == USER_ID
+    assert len(item["items"]) == 1
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "received"
+    assert receipt.received_at is not None
+    assert receipt.received_by == USER_ID
+
+    # Completing receiving records evidence only.
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_complete_goods_receipt_receiving_is_idempotent(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-idempotent",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    assert client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    ).status_code == 200
+
+    first = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert first.status_code == 200
+
+    first_item = first.get_json()["item"]
+
+    second = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert second.status_code == 200
+
+    second_item = second.get_json()["item"]
+
+    assert second_item["status"] == "received"
+    assert (
+        second_item["received_at"]
+        == first_item["received_at"]
+    )
+    assert (
+        second_item["received_by"]["id"]
+        == first_item["received_by"]["id"]
+        == USER_ID
+    )
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_complete_goods_receipt_receiving_requires_lines(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-empty",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 400
+    assert "at least one line" in error_message(response)
+
+    db.session.expire_all()
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "receiving"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_draft_goods_receipt_cannot_complete_receiving(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-from-draft",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "Only a receiving goods receipt can complete receiving."
+        in error_message(response)
+    )
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "draft"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+
+def test_complete_receiving_revalidates_persisted_evidence(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-revalidate",
+        ),
+    )
+
+    receipt_id = created.get_json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert updated.status_code == 200
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+
+    # Simulate persisted evidence becoming invalid before finalization.
+    receipt_item = GoodsReceiptItem.query.one()
+    receipt_item.expiry_date = date(2020, 1, 1)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 400
+    assert "Expired stock" in error_message(response)
+
+    db.session.expire_all()
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "receiving"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
+def test_complete_receiving_requires_inventory_receive_permission(
+    app_context,
+    identity,
+    monkeypatch,
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.auth.jwt.get_current_identity",
+        lambda: identity,
+    )
+    monkeypatch.setattr(
+        "app.api.inventory._current_identity",
+        lambda: identity,
+    )
+
+    def deny(*args, **kwargs):
+        captured["kwargs"] = kwargs
+
+        from app.auth.exceptions import PermissionDeniedError
+
+        raise PermissionDeniedError("denied")
+
+    monkeypatch.setattr(
+        "app.services.tenant.auth.decorators."
+        "authorization_service.authorize",
+        deny,
+    )
+
+    response = app_context.test_client().post(
+        "/api/inventory/goods-receipts/"
+        "receipt-id/complete-receiving"
+    )
+
+    assert response.status_code == 403
+    assert captured["kwargs"]["permission"] == "inventory.receive"
+
+
+def test_complete_receiving_rejects_existing_inventory_movement(client):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-movement-guard",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert updated.status_code == 200
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+
+    # Simulate historical or otherwise inconsistent inventory evidence
+    # already existing before the workflow completion transition.
+    movement = InventoryMovement(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        product_id=PRODUCT_ID,
+        batch_id=None,
+        movement_type="goods_receipt",
+        quantity=Decimal("10.0000"),
+        unit_cost=Decimal("5.50"),
+        reference_type="goods_receipt",
+        reference_id=receipt_id,
+        notes="Pre-existing compatibility movement.",
+        created_by=USER_ID,
+    )
+    db.session.add(movement)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "already has inventory movements"
+        in error_message(response)
+    )
+
+    db.session.expire_all()
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+
+    assert receipt.status == "receiving"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    # Existing evidence remains untouched; completion adds nothing.
+    assert InventoryMovement.query.count() == 1
+    assert StockBalance.query.count() == 0
+    assert InventoryBatch.query.count() == 0
