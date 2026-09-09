@@ -72,8 +72,6 @@ GOODS_RECEIPT_EDITABLE_STATUSES = frozenset(
     {
         GoodsReceiptStatus.DRAFT,
         GoodsReceiptStatus.RECEIVING,
-        GoodsReceiptStatus.RECEIVED,
-        GoodsReceiptStatus.UNDER_REVIEW,
     }
 )
 

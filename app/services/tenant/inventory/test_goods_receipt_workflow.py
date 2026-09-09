@@ -74,18 +74,16 @@ def test_goods_receipt_posted_and_cancelled_are_terminal():
     ) == frozenset()
 
 
-def test_goods_receipt_editability_stops_at_approval():
+def test_goods_receipt_editability_stops_after_receiving():
     assert GOODS_RECEIPT_EDITABLE_STATUSES == {
         GoodsReceiptStatus.DRAFT,
         GoodsReceiptStatus.RECEIVING,
-        GoodsReceiptStatus.RECEIVED,
-        GoodsReceiptStatus.UNDER_REVIEW,
     }
 
     assert goods_receipt_is_editable("draft")
     assert goods_receipt_is_editable("receiving")
-    assert goods_receipt_is_editable("received")
-    assert goods_receipt_is_editable("under_review")
+    assert not goods_receipt_is_editable("received")
+    assert not goods_receipt_is_editable("under_review")
 
     assert not goods_receipt_is_editable("approved")
     assert not goods_receipt_is_editable("posted")
@@ -103,3 +101,19 @@ def test_goods_receipt_same_state_is_not_a_transition():
 def test_goods_receipt_invalid_status_is_rejected():
     with pytest.raises(ValueError):
         parse_goods_receipt_status("made_up_status")
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (GoodsReceiptStatus.DRAFT, True),
+        (GoodsReceiptStatus.RECEIVING, True),
+        (GoodsReceiptStatus.RECEIVED, False),
+        (GoodsReceiptStatus.UNDER_REVIEW, False),
+        (GoodsReceiptStatus.APPROVED, False),
+        (GoodsReceiptStatus.POSTED, False),
+        (GoodsReceiptStatus.CANCELLED, False),
+    ],
+)
+def test_goods_receipt_editability_policy(status, expected):
+    assert goods_receipt_is_editable(status) is expected
