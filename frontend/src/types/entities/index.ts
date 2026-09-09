@@ -22,6 +22,7 @@ export type {
   GoodsReceiptBatch,
   GoodsReceiptItem,
   GoodsReceiptProduct,
+  GoodsReceiptStatus,
   GoodsReceiptSupplier,
   GoodsReceiptUser,
   GoodsReceiptWarehouse,

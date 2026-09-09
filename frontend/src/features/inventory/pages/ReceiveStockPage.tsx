@@ -49,7 +49,10 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  useCreateGoodsReceipt,
+  useBeginGoodsReceiptReceiving,
+  useCompleteGoodsReceiptReceiving,
+  useCreateGoodsReceiptDraft,
+  useUpdateGoodsReceipt,
 } from "@/hooks/queries/inventory";
 import {
   useProducts,
@@ -64,10 +67,13 @@ import { useQueryScope } from "@/hooks/useQueryScope";
 import { createClientId } from "@/lib/clientId";
 import { PATHS } from "@/routes/routes";
 import type {
+  GoodsReceipt,
+  GoodsReceiptStatus,
   Product,
 } from "@/types/entities";
 import type {
-  CreateGoodsReceiptRequest,
+  CreateGoodsReceiptDraftRequest,
+  UpdateGoodsReceiptRequest,
 } from "@/types/requests";
 
 const PAGE_SIZE = 10;
@@ -109,34 +115,46 @@ function errorMessage(error: unknown): string {
     : "Something went wrong.";
 }
 
-function requestSnapshot(
-  payload: Omit<CreateGoodsReceiptRequest, "idempotency_key">,
-): string {
-  return JSON.stringify(payload);
-}
-
-function buildRequestBase({
+function buildDraftRequest({
   warehouseId,
   supplierId,
   supplierReference,
-  receivedAt,
   notes,
-  lines,
 }: {
   warehouseId: string;
   supplierId: string;
   supplierReference: string;
-  receivedAt: string;
   notes: string;
-  lines: ReceiptLine[];
-}): Omit<CreateGoodsReceiptRequest, "idempotency_key"> {
+}): Omit<CreateGoodsReceiptDraftRequest, "idempotency_key"> {
   return {
     warehouse_id: warehouseId,
     ...(supplierId ? { supplier_id: supplierId } : {}),
     ...(supplierReference.trim()
       ? { supplier_reference: supplierReference.trim() }
       : {}),
-    ...(receivedAt ? { received_at: new Date(receivedAt).toISOString() } : {}),
+    ...(notes.trim() ? { notes: notes.trim() } : {}),
+  };
+}
+
+function buildUpdateRequest({
+  warehouseId,
+  supplierId,
+  supplierReference,
+  notes,
+  lines,
+}: {
+  warehouseId: string;
+  supplierId: string;
+  supplierReference: string;
+  notes: string;
+  lines: ReceiptLine[];
+}): UpdateGoodsReceiptRequest {
+  return {
+    warehouse_id: warehouseId,
+    ...(supplierId ? { supplier_id: supplierId } : {}),
+    ...(supplierReference.trim()
+      ? { supplier_reference: supplierReference.trim() }
+      : {}),
     ...(notes.trim() ? { notes: notes.trim() } : {}),
     items: lines.map((line) => ({
       product_id: line.product.id,
@@ -148,7 +166,9 @@ function buildRequestBase({
       ...(line.manufacture_date
         ? { manufacture_date: line.manufacture_date }
         : {}),
-      ...(line.expiry_date ? { expiry_date: line.expiry_date } : {}),
+      ...(line.expiry_date
+        ? { expiry_date: line.expiry_date }
+        : {}),
       ...(line.supplier_batch_reference.trim()
         ? {
             supplier_batch_reference:
@@ -238,10 +258,6 @@ export function ReceiveStockPage() {
     setSupplierReference,
   ] = useState("");
   const [
-    receivedAt,
-    setReceivedAt,
-  ] = useState("");
-  const [
     notes,
     setNotes,
   ] = useState("");
@@ -266,9 +282,13 @@ export function ReceiveStockPage() {
     setIdempotencyKey,
   ] = useState(createIdempotencyKey);
   const [
-    submittedSnapshot,
-    setSubmittedSnapshot,
+    receiptId,
+    setReceiptId,
   ] = useState<string | null>(null);
+  const [
+    receiptStatus,
+    setReceiptStatus,
+  ] = useState<GoodsReceiptStatus | null>(null);
 
   const warehousesQuery = useWarehouses();
   const suppliersQuery = useSuppliers({
@@ -282,7 +302,16 @@ export function ReceiveStockPage() {
     search: productSearch || undefined,
     is_active: true,
   });
-  const createReceipt = useCreateGoodsReceipt();
+  const createDraft = useCreateGoodsReceiptDraft();
+  const updateReceipt = useUpdateGoodsReceipt();
+  const beginReceiving = useBeginGoodsReceiptReceiving();
+  const completeReceiving = useCompleteGoodsReceiptReceiving();
+
+  const isWorking =
+    createDraft.isPending ||
+    updateReceipt.isPending ||
+    beginReceiving.isPending ||
+    completeReceiving.isPending;
 
   const warehouses = useMemo(
     () => (warehousesQuery.data ?? []).filter((warehouse) => warehouse.is_active),
@@ -343,21 +372,114 @@ export function ReceiveStockPage() {
   const resetForAnotherReceipt = () => {
     setSupplierId("");
     setSupplierReference("");
-    setReceivedAt("");
     setNotes("");
     setLines([]);
     setProductSearch("");
     setProductSearchInput("");
     setSelectedProductId("");
     setIdempotencyKey(createIdempotencyKey());
-    setSubmittedSnapshot(null);
+    setReceiptId(null);
+    setReceiptStatus(null);
   };
 
-  const submitReceipt = (event: FormEvent<HTMLFormElement>) => {
+  const syncReceiptState = (receipt: GoodsReceipt) => {
+    setReceiptId(receipt.id);
+    setReceiptStatus(receipt.status);
+  };
+
+  const persistEditableReceipt = async (): Promise<GoodsReceipt> => {
+    if (!warehouseId) {
+      throw new Error("Select a warehouse.");
+    }
+
+    const updatePayload = buildUpdateRequest({
+      warehouseId,
+      supplierId,
+      supplierReference,
+      notes,
+      lines,
+    });
+
+    if (!receiptId) {
+      const draft = await createDraft.mutateAsync({
+        ...buildDraftRequest({
+          warehouseId,
+          supplierId,
+          supplierReference,
+          notes,
+        }),
+        idempotency_key: idempotencyKey,
+      });
+
+      syncReceiptState(draft);
+
+      // Draft creation intentionally has no line collection.
+      // Persist the full editable aggregate immediately afterward.
+      const saved = await updateReceipt.mutateAsync({
+        receiptId: draft.id,
+        payload: updatePayload,
+      });
+
+      syncReceiptState(saved);
+      return saved;
+    }
+
+    const saved = await updateReceipt.mutateAsync({
+      receiptId,
+      payload: updatePayload,
+    });
+
+    syncReceiptState(saved);
+    return saved;
+  };
+
+  const submitReceipt = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
     event.preventDefault();
 
-    if (!warehouseId) {
-      toast.error("Select a warehouse.");
+    try {
+      const receipt = await persistEditableReceipt();
+
+      toast.success(
+        receipt.status === "receiving"
+          ? "Receiving work saved."
+          : "Goods receipt draft saved.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const handleBeginReceiving = async () => {
+    try {
+      const saved = await persistEditableReceipt();
+
+      if (saved.status === "receiving") {
+        toast.success("Goods receipt is already receiving.");
+        return;
+      }
+
+      if (saved.status !== "draft") {
+        toast.error(
+          `Cannot begin receiving from ${saved.status}.`,
+        );
+        return;
+      }
+
+      const receiving =
+        await beginReceiving.mutateAsync(saved.id);
+
+      syncReceiptState(receiving);
+      toast.success("Receiving started.");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
+  const handleCompleteReceiving = async () => {
+    if (receiptStatus !== "receiving") {
+      toast.error("Begin receiving before completing the receipt.");
       return;
     }
 
@@ -367,46 +489,21 @@ export function ReceiveStockPage() {
       return;
     }
 
-    const requestBase = buildRequestBase({
-      warehouseId,
-      supplierId,
-      supplierReference,
-      receivedAt,
-      notes,
-      lines,
-    });
-    const snapshot = requestSnapshot(requestBase);
-    const nextKey =
-      submittedSnapshot && submittedSnapshot !== snapshot
-        ? createIdempotencyKey()
-        : idempotencyKey;
+    try {
+      const saved = await persistEditableReceipt();
 
-    if (nextKey !== idempotencyKey) {
-      setIdempotencyKey(nextKey);
+      const received =
+        await completeReceiving.mutateAsync(saved.id);
+
+      syncReceiptState(received);
+      toast.success("Goods receipt receiving completed.");
+
+      navigate(
+        PATHS.INVENTORY.receipt(received.id),
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
     }
-    setSubmittedSnapshot(snapshot);
-
-    createReceipt.mutate(
-      {
-        ...requestBase,
-        idempotency_key: nextKey,
-      },
-      {
-        onSuccess: (receipt) => {
-          toast.success("Goods receipt created.");
-          resetForAnotherReceipt();
-          navigate(PATHS.INVENTORY.receipt(receipt.id));
-        },
-        onError: (error) => {
-          const message = errorMessage(error);
-          toast.error(message);
-          if (message.toLowerCase().includes("idempotency_key")) {
-            setIdempotencyKey(createIdempotencyKey());
-            setSubmittedSnapshot(null);
-          }
-        },
-      },
-    );
   };
 
   if (!isBranchScopeReady) {
@@ -537,13 +634,6 @@ export function ReceiveStockPage() {
                 />
               </Field>
 
-              <Field label="Received date">
-                <Input
-                  type="datetime-local"
-                  value={receivedAt}
-                  onChange={(event) => setReceivedAt(event.target.value)}
-                />
-              </Field>
             </div>
 
             <Field label="Notes">
@@ -638,33 +728,78 @@ export function ReceiveStockPage() {
 
           <PageSection>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-muted-foreground">
-                {lines.length} receipt line{lines.length === 1 ? "" : "s"}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  {lines.length} receipt line{lines.length === 1 ? "" : "s"}
+                </span>
+
+                {receiptStatus ? (
+                  <Badge variant="outline">
+                    {receiptStatus.replace("_", " ")}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">
+                    Not saved
+                  </Badge>
+                )}
               </div>
               <div className="flex gap-2">
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={resetForAnotherReceipt}
-                  disabled={createReceipt.isPending}
+                  disabled={isWorking || Boolean(receiptId)}
                 >
                   Clear
                 </Button>
                 <Button
                   type="submit"
+                  variant="outline"
                   disabled={
-                    createReceipt.isPending ||
+                    isWorking ||
                     warehouses.length === 0 ||
-                    lines.length === 0
+                    !warehouseId
                   }
                 >
                   <RefreshCw
                     className={
-                      createReceipt.isPending ? "animate-spin" : undefined
+                      isWorking ? "animate-spin" : undefined
                     }
                   />
-                  Receive Stock
+                  {receiptId
+                    ? "Save"
+                    : "Save Draft"}
                 </Button>
+
+                {receiptStatus === null ||
+                receiptStatus === "draft" ? (
+                  <Button
+                    type="button"
+                    onClick={handleBeginReceiving}
+                    disabled={
+                      isWorking ||
+                      warehouses.length === 0 ||
+                      !warehouseId
+                    }
+                  >
+                    <PackagePlus />
+                    Begin Receiving
+                  </Button>
+                ) : null}
+
+                {receiptStatus === "receiving" ? (
+                  <Button
+                    type="button"
+                    onClick={handleCompleteReceiving}
+                    disabled={
+                      isWorking ||
+                      lines.length === 0
+                    }
+                  >
+                    <PackagePlus />
+                    Complete Receiving
+                  </Button>
+                ) : null}
               </div>
             </div>
           </PageSection>
