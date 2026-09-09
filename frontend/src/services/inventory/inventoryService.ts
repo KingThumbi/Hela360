@@ -4,6 +4,7 @@ import { API_ENDPOINTS } from "@/api/endpoints";
 import BaseService from "@/services/base";
 import type {
   AddDiscoveredStockCountItemRequest,
+  CreateGoodsReceiptDraftRequest,
   CreateGoodsReceiptRequest,
   CreateStockAdjustmentFromCountRequest,
   CreateStockAdjustmentRequest,
@@ -13,6 +14,7 @@ import type {
   ListInventoryRequest,
   ListStockAdjustmentsRequest,
   ListStockCountsRequest,
+  UpdateGoodsReceiptRequest,
   UpdateStockCountItemRequest,
 } from "@/types/requests";
 import type {
@@ -363,6 +365,59 @@ export class InventoryService extends BaseService<InventoryStockSummary> {
     const response = await this.postRequest<GoodsReceiptResponse>(
       API_ENDPOINTS.INVENTORY.GOODS_RECEIPTS,
       payload,
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async createGoodsReceiptDraft(
+    payload: CreateGoodsReceiptDraftRequest,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.GOODS_RECEIPT_DRAFTS,
+      payload,
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async updateGoodsReceipt(
+    id: string,
+    payload: UpdateGoodsReceiptRequest,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.patchRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.GOODS_RECEIPT(id),
+      payload,
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async beginGoodsReceiptReceiving(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.BEGIN_GOODS_RECEIPT_RECEIVING(id),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async completeGoodsReceiptReceiving(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.COMPLETE_GOODS_RECEIPT_RECEIVING(id),
+      {},
       config,
     );
 

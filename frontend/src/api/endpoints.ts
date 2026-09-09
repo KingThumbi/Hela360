@@ -264,8 +264,17 @@ export const API_ENDPOINTS = {
 
     GOODS_RECEIPTS: "/inventory/goods-receipts",
 
+    GOODS_RECEIPT_DRAFTS:
+      "/inventory/goods-receipts/drafts",
+
     GOODS_RECEIPT: (id: string) =>
       byId("/inventory/goods-receipts", id),
+
+    BEGIN_GOODS_RECEIPT_RECEIVING: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/begin-receiving`,
+
+    COMPLETE_GOODS_RECEIPT_RECEIVING: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/complete-receiving`,
 
     STOCK_COUNTS: "/inventory/stock-counts",
 

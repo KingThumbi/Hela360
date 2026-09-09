@@ -14,8 +14,10 @@ export * from "./create-sale-prescription-context";
 
 export * from "./create-sale-request";
 export type {
+  CreateGoodsReceiptDraftRequest,
   CreateGoodsReceiptItemRequest,
   CreateGoodsReceiptRequest,
+  UpdateGoodsReceiptRequest,
 } from "./create-goods-receipt-request";
 export type {
   CreateStockAdjustmentFromCountRequest,
