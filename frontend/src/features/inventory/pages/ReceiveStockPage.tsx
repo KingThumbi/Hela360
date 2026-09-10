@@ -1193,15 +1193,116 @@ export function ReceiveStockPage() {
                 />
               </Field>
 
+              <Field label="Supplier invoice no.">
+                <Input
+                  value={supplierInvoiceNumber}
+                  onChange={(event) =>
+                    setSupplierInvoiceNumber(event.target.value)
+                  }
+                  placeholder="Supplier invoice number"
+                />
+              </Field>
+
+              <Field label="Supplier invoice date">
+                <Input
+                  type="date"
+                  value={supplierInvoiceDate}
+                  onChange={(event) =>
+                    setSupplierInvoiceDate(event.target.value)
+                  }
+                />
+              </Field>
+
+              <Field label="Payment terms">
+                <Input
+                  value={paymentTerms}
+                  onChange={(event) =>
+                    setPaymentTerms(event.target.value)
+                  }
+                  placeholder="e.g. Cash, 30 days"
+                />
+              </Field>
+
+              <Field label="Invoice currency">
+                <Input
+                  value={invoiceCurrency}
+                  onChange={(event) =>
+                    setInvoiceCurrency(
+                      event.target.value.toUpperCase(),
+                    )
+                  }
+                  maxLength={3}
+                  placeholder="KES"
+                />
+              </Field>
+
             </div>
 
-            <Field label="Notes">
-              <Textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Operational receipt notes"
-              />
-            </Field>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Field label="Supplier subtotal">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={supplierSubtotal}
+                  onChange={(event) =>
+                    setSupplierSubtotal(event.target.value)
+                  }
+                  placeholder="0.00"
+                />
+              </Field>
+
+              <Field label="Supplier discount">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={supplierDiscountTotal}
+                  onChange={(event) =>
+                    setSupplierDiscountTotal(event.target.value)
+                  }
+                  placeholder="0.00"
+                />
+              </Field>
+
+              <Field label="Supplier tax">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={supplierTaxTotal}
+                  onChange={(event) =>
+                    setSupplierTaxTotal(event.target.value)
+                  }
+                  placeholder="0.00"
+                />
+              </Field>
+
+              <Field label="Supplier invoice total">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={supplierInvoiceTotal}
+                  onChange={(event) =>
+                    setSupplierInvoiceTotal(event.target.value)
+                  }
+                  placeholder="0.00"
+                />
+              </Field>
+            </div>
+
+            <div className="mt-4">
+              <Field label="Notes">
+                <Textarea
+                  value={notes}
+                  onChange={(event) =>
+                    setNotes(event.target.value)
+                  }
+                  placeholder="Operational receipt notes"
+                />
+              </Field>
+            </div>
           </PageSection>
 
           <PageSection>
@@ -1277,11 +1378,22 @@ export function ReceiveStockPage() {
                 description="Search for inventory-tracked products and add receipt lines."
               />
             ) : (
-              <ReceiptLinesTable
-                lines={lines}
-                onUpdate={updateLine}
-                onRemove={removeLine}
-              />
+              <div className="space-y-3">
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  Invoice, physical, accepted, rejected, and bonus
+                  quantities are receiving evidence. Stock Qty is the
+                  quantity that will be converted to the product base
+                  unit and posted to inventory after approval.
+                </div>
+
+                <div className="overflow-x-auto">
+                  <ReceiptLinesTable
+                    lines={lines}
+                    onUpdate={updateLine}
+                    onRemove={removeLine}
+                  />
+                </div>
+              </div>
             )}
           </PageSection>
 
@@ -1385,7 +1497,12 @@ function ReceiptLinesTable({
       <TableHeader>
         <TableRow>
           <TableHead>Product</TableHead>
-          <TableHead>Quantity</TableHead>
+          <TableHead>Invoice Qty</TableHead>
+          <TableHead>Physical Qty</TableHead>
+          <TableHead>Accepted</TableHead>
+          <TableHead>Rejected</TableHead>
+          <TableHead>Bonus</TableHead>
+          <TableHead>Stock Qty</TableHead>
           <TableHead>Unit Cost</TableHead>
           <TableHead>Batch</TableHead>
           <TableHead>Manufacture</TableHead>
@@ -1418,13 +1535,99 @@ function ReceiptLinesTable({
                   type="number"
                   min="0"
                   step="0.0001"
+                  value={line.invoiced_quantity}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      invoiced_quantity:
+                        event.target.value,
+                    })
+                  }
+                  className="w-24"
+                  aria-label={`Invoice quantity for ${line.product.name}`}
+                />
+              </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={line.received_quantity}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      received_quantity:
+                        event.target.value,
+                    })
+                  }
+                  className="w-24"
+                  aria-label={`Physical quantity for ${line.product.name}`}
+                />
+              </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={line.accepted_quantity}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      accepted_quantity:
+                        event.target.value,
+                    })
+                  }
+                  className="w-24"
+                  aria-label={`Accepted quantity for ${line.product.name}`}
+                />
+              </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={line.rejected_quantity}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      rejected_quantity:
+                        event.target.value,
+                    })
+                  }
+                  className="w-24"
+                  aria-label={`Rejected quantity for ${line.product.name}`}
+                />
+              </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  value={line.bonus_quantity}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      bonus_quantity:
+                        event.target.value,
+                    })
+                  }
+                  className="w-24"
+                  aria-label={`Bonus quantity for ${line.product.name}`}
+                />
+              </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.0001"
                   value={line.quantity}
                   onChange={(event) =>
                     onUpdate(line.id, {
                       quantity: event.target.value,
                     })
                   }
-                  className="w-28"
+                  className="w-24"
+                  aria-label={`Stock quantity for ${line.product.name}`}
                 />
               </TableCell>
               <TableCell>
