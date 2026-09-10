@@ -204,10 +204,10 @@ export const router = createBrowserRouter([
         path: PATHS.INVENTORY.RECEIPTS,
         element: (
           <ProtectedRoute
-            permission={
+            anyOf={
               ROUTE_PERMISSION_REQUIREMENTS[
                 PATHS.INVENTORY.RECEIPTS
-              ].permission
+              ].anyOf
             }
           >
             <GoodsReceiptHistoryPage />
@@ -219,10 +219,10 @@ export const router = createBrowserRouter([
         path: PATHS.INVENTORY.RECEIPT,
         element: (
           <ProtectedRoute
-            permission={
+            anyOf={
               ROUTE_PERMISSION_REQUIREMENTS[
                 PATHS.INVENTORY.RECEIPT
-              ].permission
+              ].anyOf
             }
           >
             <GoodsReceiptDetailPage />

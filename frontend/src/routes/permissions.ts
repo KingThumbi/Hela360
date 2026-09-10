@@ -63,11 +63,19 @@ export const ROUTE_PERMISSION_REQUIREMENTS = {
   },
 
   [PATHS.INVENTORY.RECEIPTS]: {
-    permission: "inventory.receive",
+    anyOf: [
+      "inventory.receive",
+      "inventory.approve",
+      "inventory.post",
+    ],
   },
 
   [PATHS.INVENTORY.RECEIPT]: {
-    permission: "inventory.receive",
+    anyOf: [
+      "inventory.receive",
+      "inventory.approve",
+      "inventory.post",
+    ],
   },
 
   [PATHS.INVENTORY.STOCK_COUNTS]: {

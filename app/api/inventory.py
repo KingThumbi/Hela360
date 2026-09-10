@@ -22,6 +22,7 @@ from app.serializers import serialize_stock_adjustment
 from app.serializers import serialize_stock_count
 from app.services.tenant.auth.decorators import (
     _current_identity,
+    require_any_permission,
     require_permission,
 )
 from app.services.tenant.inventory import (
@@ -127,7 +128,13 @@ def list_inventory_movements():
 
 
 @bp.get("/inventory/goods-receipts")
-@require_permission("inventory.receive")
+@require_any_permission(
+    (
+        "inventory.receive",
+        "inventory.approve",
+        "inventory.post",
+    )
+)
 def list_goods_receipts():
     identity = _current_identity()
     service = GoodsReceiptService(db.session)
@@ -211,7 +218,13 @@ def create_goods_receipt():
 
 
 @bp.get("/inventory/goods-receipts/<receipt_id>")
-@require_permission("inventory.receive")
+@require_any_permission(
+    (
+        "inventory.receive",
+        "inventory.approve",
+        "inventory.post",
+    )
+)
 def get_goods_receipt(receipt_id: str):
     identity = _current_identity()
     service = GoodsReceiptService(db.session)

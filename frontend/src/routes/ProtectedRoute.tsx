@@ -60,6 +60,11 @@ export interface ProtectedRouteProps {
    * Optional permission required to render the route.
    */
   permission?: PermissionCode;
+
+  /**
+   * Optional set where at least one permission is required.
+   */
+  anyOf?: readonly PermissionCode[];
 }
 
 /* ============================================================================
@@ -70,6 +75,7 @@ export interface ProtectedRouteProps {
 export function ProtectedRoute({
   children,
   permission,
+  anyOf,
   redirectTo = PATHS.LOGIN,
 }: ProtectedRouteProps): ReactElement {
   const location = useLocation();
@@ -120,7 +126,10 @@ export function ProtectedRoute({
    * --------------------------------------------------------------------------
    */
 
-  if (permission) {
+  if (
+    permission ||
+    (anyOf && anyOf.length > 0)
+  ) {
     if (!authorization.isAuthorizationReady) {
       return (
         <LoadingState
@@ -130,7 +139,18 @@ export function ProtectedRoute({
       );
     }
 
-    if (!authorization.can(permission)) {
+    if (
+      permission &&
+      !authorization.can(permission)
+    ) {
+      return <AccessDeniedPage />;
+    }
+
+    if (
+      anyOf &&
+      anyOf.length > 0 &&
+      !authorization.canAny(anyOf)
+    ) {
       return <AccessDeniedPage />;
     }
   }

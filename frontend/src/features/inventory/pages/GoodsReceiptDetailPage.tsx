@@ -246,6 +246,7 @@ function GoodsReceiptDetail({
     setPostDialogOpen,
   ] = useState(false);
 
+  const canReceive = authorization.can("inventory.receive");
   const canApprove = authorization.can("inventory.approve");
   const canPost = authorization.can("inventory.post");
 
@@ -338,7 +339,7 @@ function GoodsReceiptDetail({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {isEditable ? (
+            {canReceive && isEditable ? (
               <Link
                 to={PATHS.INVENTORY.resumeReceipt(receipt.id)}
                 className={buttonVariants({
