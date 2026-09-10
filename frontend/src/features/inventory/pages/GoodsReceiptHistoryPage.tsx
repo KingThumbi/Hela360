@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   Eye,
   History,
+  PackagePlus,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -210,7 +211,7 @@ export function GoodsReceiptHistoryPage() {
         <div>
           <PageTitle>Receiving History</PageTitle>
           <PageDescription>
-            Review posted Goods Receipts by Warehouse, Supplier, receiver, and reference.
+            Review and resume Goods Receipts across the receiving lifecycle.
           </PageDescription>
         </div>
 
@@ -477,16 +478,30 @@ function GoodsReceiptHistoryTable({
                 </Badge>
               </td>
               <td className="px-3 py-3 text-right">
-                <Link
-                  to={PATHS.INVENTORY.receipt(receipt.id)}
-                  className={buttonVariants({
-                    variant: "outline",
-                    size: "sm",
-                  })}
-                >
-                  <Eye />
-                  View Receipt
-                </Link>
+                {receipt.status === "draft" ||
+                receipt.status === "receiving" ? (
+                  <Link
+                    to={PATHS.INVENTORY.resumeReceipt(receipt.id)}
+                    className={buttonVariants({
+                      variant: "outline",
+                      size: "sm",
+                    })}
+                  >
+                    <PackagePlus />
+                    Resume
+                  </Link>
+                ) : (
+                  <Link
+                    to={PATHS.INVENTORY.receipt(receipt.id)}
+                    className={buttonVariants({
+                      variant: "outline",
+                      size: "sm",
+                    })}
+                  >
+                    <Eye />
+                    View Receipt
+                  </Link>
+                )}
               </td>
             </tr>
           ))}

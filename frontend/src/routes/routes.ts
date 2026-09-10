@@ -31,6 +31,8 @@ export const PATHS = {
   INVENTORY: {
     ROOT: "/inventory",
     RECEIVE: "/inventory/receive",
+    resumeReceipt: (receiptId: string) =>
+      `/inventory/receive?receipt=${encodeURIComponent(receiptId)}`,
     RECEIPTS: "/inventory/receipts",
     RECEIPT: "/inventory/receipts/:receiptId",
     receipt: (receiptId: string) => `/inventory/receipts/${receiptId}`,

@@ -8,7 +8,9 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -16,6 +18,7 @@ import {
 import {
   Link,
   useNavigate,
+  useSearchParams,
 } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -52,6 +55,7 @@ import {
   useBeginGoodsReceiptReceiving,
   useCompleteGoodsReceiptReceiving,
   useCreateGoodsReceiptDraft,
+  useGoodsReceipt,
   useUpdateGoodsReceipt,
 } from "@/hooks/queries/inventory";
 import {
@@ -66,6 +70,7 @@ import {
 import { useQueryScope } from "@/hooks/useQueryScope";
 import { createClientId } from "@/lib/clientId";
 import { PATHS } from "@/routes/routes";
+import { productService } from "@/services/products";
 import type {
   GoodsReceipt,
   GoodsReceiptStatus,
@@ -234,6 +239,9 @@ function validateLines(lines: ReceiptLine[]): string | null {
 
 export function ReceiveStockPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const resumeReceiptId =
+    searchParams.get("receipt")?.trim() || undefined;
   const {
     isBranchScopeReady,
   } = useQueryScope();
@@ -289,7 +297,18 @@ export function ReceiveStockPage() {
     receiptStatus,
     setReceiptStatus,
   ] = useState<GoodsReceiptStatus | null>(null);
+  const [
+    resumeHydrationError,
+    setResumeHydrationError,
+  ] = useState<string | null>(null);
+  const [
+    isHydratingResume,
+    setIsHydratingResume,
+  ] = useState(false);
 
+  const hydratedReceiptIdRef = useRef<string | null>(null);
+
+  const resumeReceiptQuery = useGoodsReceipt(resumeReceiptId);
   const warehousesQuery = useWarehouses();
   const suppliersQuery = useSuppliers({
     page: 1,
@@ -312,6 +331,128 @@ export function ReceiveStockPage() {
     updateReceipt.isPending ||
     beginReceiving.isPending ||
     completeReceiving.isPending;
+
+  useEffect(() => {
+    const receipt = resumeReceiptQuery.data;
+
+    if (!resumeReceiptId || !receipt) {
+      return;
+    }
+
+    if (hydratedReceiptIdRef.current === receipt.id) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const hydrateReceipt = async () => {
+      if (
+        receipt.status !== "draft" &&
+        receipt.status !== "receiving"
+      ) {
+        toast.error(
+          "Only draft or receiving Goods Receipts can be resumed.",
+        );
+
+        navigate(
+          PATHS.INVENTORY.receipt(receipt.id),
+          { replace: true },
+        );
+        return;
+      }
+
+      setIsHydratingResume(true);
+      setResumeHydrationError(null);
+
+      try {
+        const productIds = [
+          ...new Set(
+            receipt.items.map((item) => item.product.id),
+          ),
+        ];
+
+        const fullProducts = await Promise.all(
+          productIds.map((productId) =>
+            productService.getProduct(productId),
+          ),
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        const productsById = new Map(
+          fullProducts.map((product) => [
+            product.id,
+            product,
+          ]),
+        );
+
+        const hydratedLines: ReceiptLine[] =
+          receipt.items.map((item) => {
+            const product = productsById.get(
+              item.product.id,
+            );
+
+            if (!product) {
+              throw new Error(
+                `Unable to hydrate product ${item.product.name}.`,
+              );
+            }
+
+            return {
+              id: item.id,
+              product,
+              quantity: item.quantity,
+              unit_cost: item.unit_cost,
+              batch_number: item.batch_number ?? "",
+              manufacture_date:
+                item.manufacture_date ?? "",
+              expiry_date: item.expiry_date ?? "",
+              supplier_batch_reference:
+                item.supplier_batch_reference ?? "",
+            };
+          });
+
+        setWarehouseId(receipt.warehouse.id);
+        setSupplierId(receipt.supplier?.id ?? "");
+        setSupplierReference(
+          receipt.supplier_reference ?? "",
+        );
+        setNotes(receipt.notes ?? "");
+        setLines(hydratedLines);
+        setReceiptId(receipt.id);
+        setReceiptStatus(receipt.status);
+
+        if (receipt.supplier) {
+          setSupplierSearchInput(receipt.supplier.name);
+          setSupplierSearch(receipt.supplier.name);
+        }
+
+        hydratedReceiptIdRef.current = receipt.id;
+      } catch (error) {
+        if (!cancelled) {
+          setResumeHydrationError(
+            errorMessage(error),
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsHydratingResume(false);
+        }
+      }
+    };
+
+    void hydrateReceipt();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    navigate,
+    resumeReceiptId,
+    resumeReceiptQuery.data,
+  ]);
 
   const warehouses = useMemo(
     () => (warehousesQuery.data ?? []).filter((warehouse) => warehouse.is_active),
@@ -529,13 +670,75 @@ export function ReceiveStockPage() {
     );
   }
 
+  if (
+    resumeReceiptId &&
+    (
+      resumeReceiptQuery.isLoading ||
+      isHydratingResume
+    )
+  ) {
+    return (
+      <Page>
+        <PageHeader>
+          <div>
+            <PageTitle>Resume Receiving</PageTitle>
+            <PageDescription>
+              Loading the persisted Goods Receipt and product evidence.
+            </PageDescription>
+          </div>
+        </PageHeader>
+        <PageContent>
+          <PageSection>
+            <LoadingState title="Loading Goods Receipt" />
+          </PageSection>
+        </PageContent>
+      </Page>
+    );
+  }
+
+  if (
+    resumeReceiptId &&
+    (
+      resumeReceiptQuery.isError ||
+      resumeHydrationError
+    )
+  ) {
+    return (
+      <Page>
+        <PageHeader>
+          <div>
+            <PageTitle>Resume Receiving</PageTitle>
+            <PageDescription>
+              The Goods Receipt could not be restored.
+            </PageDescription>
+          </div>
+        </PageHeader>
+        <PageContent>
+          <PageSection>
+            <ErrorState
+              title="Unable to resume Goods Receipt"
+              description={
+                resumeHydrationError ??
+                errorMessage(resumeReceiptQuery.error)
+              }
+            />
+          </PageSection>
+        </PageContent>
+      </Page>
+    );
+  }
+
   return (
     <Page>
       <PageHeader>
         <div>
-          <PageTitle>Receive Stock</PageTitle>
+          <PageTitle>
+            {receiptId ? "Resume Receiving" : "Receive Stock"}
+          </PageTitle>
           <PageDescription>
-            Receive physical stock into a branch warehouse with batch, expiry, and cost details.
+            {receiptId
+              ? "Continue the saved Goods Receipt receiving workflow."
+              : "Receive physical stock into a branch warehouse with batch, expiry, and cost details."}
           </PageDescription>
         </div>
 

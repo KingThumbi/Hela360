@@ -1,4 +1,5 @@
 import type {
+  GoodsReceiptStatus,
   GoodsReceiptSupplier,
   GoodsReceiptUser,
   GoodsReceiptWarehouse,
@@ -11,7 +12,7 @@ export interface GoodsReceiptSummary {
 
   received_at: string | null;
 
-  status: "received";
+  status: GoodsReceiptStatus;
 
   warehouse: GoodsReceiptWarehouse;
 
