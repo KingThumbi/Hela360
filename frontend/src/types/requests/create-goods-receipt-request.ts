@@ -18,17 +18,19 @@ export interface CreateGoodsReceiptItemRequest {
   unit_cost: string;
 
   supplier_item_code?: string;
-  supplier_item_name?: string;
-  supplier_pack_description?: string;
+  supplier_description?: string;
   supplier_batch_reference?: string;
 
-  discount_rate?: string;
+  supplier_unit_price?: string;
+  discount_percent?: string;
   discount_amount?: string;
   tax_rate?: string;
   tax_amount?: string;
+  net_unit_cost?: string;
+  line_total?: string;
 
+  discrepancy_status?: string;
   discrepancy_reason?: string;
-  discrepancy_notes?: string;
 }
 
 export interface CreateGoodsReceiptRequest {

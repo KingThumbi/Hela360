@@ -64,19 +64,20 @@ export interface GoodsReceiptItem {
   unit_cost: string;
   base_unit_cost: string;
 
-  supplier_item_code?: string | null;
-  supplier_item_name?: string | null;
-  supplier_pack_description?: string | null;
+  supplier_item_code: string | null;
+  supplier_description: string | null;
   supplier_batch_reference: string | null;
 
-  discount_rate?: string | null;
-  discount_amount?: string | null;
-  tax_rate?: string | null;
-  tax_amount?: string | null;
-  net_amount?: string | null;
+  supplier_unit_price: string | null;
+  discount_percent: string | null;
+  discount_amount: string | null;
+  tax_rate: string | null;
+  tax_amount: string | null;
+  net_unit_cost: string | null;
+  line_total: string | null;
 
-  discrepancy_reason?: string | null;
-  discrepancy_notes?: string | null;
+  discrepancy_status: string | null;
+  discrepancy_reason: string | null;
 }
 
 export interface GoodsReceipt {

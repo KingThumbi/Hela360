@@ -86,12 +86,36 @@ const PAGE_SIZE = 10;
 interface ReceiptLine {
   id: string;
   product: Product;
+
+  product_unit_id: string;
+
   quantity: string;
+  invoiced_quantity: string;
+  received_quantity: string;
+  accepted_quantity: string;
+  rejected_quantity: string;
+  bonus_quantity: string;
+
   unit_cost: string;
+
   batch_number: string;
   manufacture_date: string;
   expiry_date: string;
   supplier_batch_reference: string;
+
+  supplier_item_code: string;
+  supplier_description: string;
+
+  supplier_unit_price: string;
+  discount_percent: string;
+  discount_amount: string;
+  tax_rate: string;
+  tax_amount: string;
+  net_unit_cost: string;
+  line_total: string;
+
+  discrepancy_status: string;
+  discrepancy_reason: string;
 }
 
 function createDraftId(): string {
@@ -145,39 +169,219 @@ function buildUpdateRequest({
   warehouseId,
   supplierId,
   supplierReference,
+  supplierInvoiceNumber,
+  supplierInvoiceDate,
+  paymentTerms,
+  invoiceCurrency,
+  supplierSubtotal,
+  supplierDiscountTotal,
+  supplierTaxTotal,
+  supplierInvoiceTotal,
   notes,
   lines,
 }: {
   warehouseId: string;
   supplierId: string;
   supplierReference: string;
+  supplierInvoiceNumber: string;
+  supplierInvoiceDate: string;
+  paymentTerms: string;
+  invoiceCurrency: string;
+  supplierSubtotal: string;
+  supplierDiscountTotal: string;
+  supplierTaxTotal: string;
+  supplierInvoiceTotal: string;
   notes: string;
   lines: ReceiptLine[];
 }): UpdateGoodsReceiptRequest {
   return {
     warehouse_id: warehouseId,
-    ...(supplierId ? { supplier_id: supplierId } : {}),
+
+    ...(supplierId
+      ? { supplier_id: supplierId }
+      : {}),
     ...(supplierReference.trim()
       ? { supplier_reference: supplierReference.trim() }
       : {}),
-    ...(notes.trim() ? { notes: notes.trim() } : {}),
+
+    ...(supplierInvoiceNumber.trim()
+      ? {
+          supplier_invoice_number:
+            supplierInvoiceNumber.trim(),
+        }
+      : {}),
+    ...(supplierInvoiceDate
+      ? {
+          supplier_invoice_date:
+            supplierInvoiceDate,
+        }
+      : {}),
+    ...(paymentTerms.trim()
+      ? { payment_terms: paymentTerms.trim() }
+      : {}),
+
+    invoice_currency:
+      invoiceCurrency.trim().toUpperCase() || "KES",
+
+    ...(supplierSubtotal.trim()
+      ? { supplier_subtotal: supplierSubtotal.trim() }
+      : {}),
+    ...(supplierDiscountTotal.trim()
+      ? {
+          supplier_discount_total:
+            supplierDiscountTotal.trim(),
+        }
+      : {}),
+    ...(supplierTaxTotal.trim()
+      ? { supplier_tax_total: supplierTaxTotal.trim() }
+      : {}),
+    ...(supplierInvoiceTotal.trim()
+      ? {
+          supplier_invoice_total:
+            supplierInvoiceTotal.trim(),
+        }
+      : {}),
+
+    ...(notes.trim()
+      ? { notes: notes.trim() }
+      : {}),
+
     items: lines.map((line) => ({
       product_id: line.product.id,
+
+      ...(line.product_unit_id
+        ? {
+            product_unit_id:
+              line.product_unit_id,
+          }
+        : {}),
+
       quantity: line.quantity,
+
+      ...(line.invoiced_quantity
+        ? {
+            invoiced_quantity:
+              line.invoiced_quantity,
+          }
+        : {}),
+      ...(line.received_quantity
+        ? {
+            received_quantity:
+              line.received_quantity,
+          }
+        : {}),
+      ...(line.accepted_quantity
+        ? {
+            accepted_quantity:
+              line.accepted_quantity,
+          }
+        : {}),
+      ...(line.rejected_quantity
+        ? {
+            rejected_quantity:
+              line.rejected_quantity,
+          }
+        : {}),
+      ...(line.bonus_quantity
+        ? {
+            bonus_quantity:
+              line.bonus_quantity,
+          }
+        : {}),
+
       unit_cost: line.unit_cost,
+
       ...(line.batch_number.trim()
-        ? { batch_number: line.batch_number.trim() }
+        ? {
+            batch_number:
+              line.batch_number.trim(),
+          }
         : {}),
       ...(line.manufacture_date
-        ? { manufacture_date: line.manufacture_date }
+        ? {
+            manufacture_date:
+              line.manufacture_date,
+          }
         : {}),
       ...(line.expiry_date
-        ? { expiry_date: line.expiry_date }
+        ? {
+            expiry_date:
+              line.expiry_date,
+          }
         : {}),
       ...(line.supplier_batch_reference.trim()
         ? {
             supplier_batch_reference:
               line.supplier_batch_reference.trim(),
+          }
+        : {}),
+
+      ...(line.supplier_item_code.trim()
+        ? {
+            supplier_item_code:
+              line.supplier_item_code.trim(),
+          }
+        : {}),
+      ...(line.supplier_description.trim()
+        ? {
+            supplier_description:
+              line.supplier_description.trim(),
+          }
+        : {}),
+
+      ...(line.supplier_unit_price
+        ? {
+            supplier_unit_price:
+              line.supplier_unit_price,
+          }
+        : {}),
+      ...(line.discount_percent
+        ? {
+            discount_percent:
+              line.discount_percent,
+          }
+        : {}),
+      ...(line.discount_amount
+        ? {
+            discount_amount:
+              line.discount_amount,
+          }
+        : {}),
+      ...(line.tax_rate
+        ? {
+            tax_rate:
+              line.tax_rate,
+          }
+        : {}),
+      ...(line.tax_amount
+        ? {
+            tax_amount:
+              line.tax_amount,
+          }
+        : {}),
+      ...(line.net_unit_cost
+        ? {
+            net_unit_cost:
+              line.net_unit_cost,
+          }
+        : {}),
+      ...(line.line_total
+        ? {
+            line_total:
+              line.line_total,
+          }
+        : {}),
+
+      ...(line.discrepancy_status.trim()
+        ? {
+            discrepancy_status:
+              line.discrepancy_status.trim(),
+          }
+        : {}),
+      ...(line.discrepancy_reason.trim()
+        ? {
+            discrepancy_reason:
+              line.discrepancy_reason.trim(),
           }
         : {}),
     })),
@@ -265,6 +469,41 @@ export function ReceiveStockPage() {
     supplierReference,
     setSupplierReference,
   ] = useState("");
+
+  const [
+    supplierInvoiceNumber,
+    setSupplierInvoiceNumber,
+  ] = useState("");
+  const [
+    supplierInvoiceDate,
+    setSupplierInvoiceDate,
+  ] = useState("");
+  const [
+    paymentTerms,
+    setPaymentTerms,
+  ] = useState("");
+  const [
+    invoiceCurrency,
+    setInvoiceCurrency,
+  ] = useState("KES");
+
+  const [
+    supplierSubtotal,
+    setSupplierSubtotal,
+  ] = useState("");
+  const [
+    supplierDiscountTotal,
+    setSupplierDiscountTotal,
+  ] = useState("");
+  const [
+    supplierTaxTotal,
+    setSupplierTaxTotal,
+  ] = useState("");
+  const [
+    supplierInvoiceTotal,
+    setSupplierInvoiceTotal,
+  ] = useState("");
+
   const [
     notes,
     setNotes,
@@ -403,14 +642,57 @@ export function ReceiveStockPage() {
             return {
               id: item.id,
               product,
+
+              product_unit_id:
+                item.product_unit_id ?? "",
+
               quantity: item.quantity,
+              invoiced_quantity:
+                item.invoiced_quantity ?? "",
+              received_quantity:
+                item.received_quantity ?? "",
+              accepted_quantity:
+                item.accepted_quantity ?? "",
+              rejected_quantity:
+                item.rejected_quantity ?? "",
+              bonus_quantity:
+                item.bonus_quantity ?? "",
+
               unit_cost: item.unit_cost,
-              batch_number: item.batch_number ?? "",
+
+              batch_number:
+                item.batch_number ?? "",
               manufacture_date:
                 item.manufacture_date ?? "",
-              expiry_date: item.expiry_date ?? "",
+              expiry_date:
+                item.expiry_date ?? "",
               supplier_batch_reference:
                 item.supplier_batch_reference ?? "",
+
+              supplier_item_code:
+                item.supplier_item_code ?? "",
+              supplier_description:
+                item.supplier_description ?? "",
+
+              supplier_unit_price:
+                item.supplier_unit_price ?? "",
+              discount_percent:
+                item.discount_percent ?? "",
+              discount_amount:
+                item.discount_amount ?? "",
+              tax_rate:
+                item.tax_rate ?? "",
+              tax_amount:
+                item.tax_amount ?? "",
+              net_unit_cost:
+                item.net_unit_cost ?? "",
+              line_total:
+                item.line_total ?? "",
+
+              discrepancy_status:
+                item.discrepancy_status ?? "",
+              discrepancy_reason:
+                item.discrepancy_reason ?? "",
             };
           });
 
@@ -419,6 +701,33 @@ export function ReceiveStockPage() {
         setSupplierReference(
           receipt.supplier_reference ?? "",
         );
+
+        setSupplierInvoiceNumber(
+          receipt.supplier_invoice_number ?? "",
+        );
+        setSupplierInvoiceDate(
+          receipt.supplier_invoice_date ?? "",
+        );
+        setPaymentTerms(
+          receipt.payment_terms ?? "",
+        );
+        setInvoiceCurrency(
+          receipt.invoice_currency ?? "KES",
+        );
+
+        setSupplierSubtotal(
+          receipt.supplier_subtotal ?? "",
+        );
+        setSupplierDiscountTotal(
+          receipt.supplier_discount_total ?? "",
+        );
+        setSupplierTaxTotal(
+          receipt.supplier_tax_total ?? "",
+        );
+        setSupplierInvoiceTotal(
+          receipt.supplier_invoice_total ?? "",
+        );
+
         setNotes(receipt.notes ?? "");
         setLines(hydratedLines);
         setReceiptId(receipt.id);
@@ -479,12 +788,37 @@ export function ReceiveStockPage() {
       {
         id: createDraftId(),
         product: selectedProduct,
+
+        product_unit_id: "",
+
         quantity: "1",
-        unit_cost: selectedProduct.cost_price ?? "0.00",
+        invoiced_quantity: "",
+        received_quantity: "",
+        accepted_quantity: "",
+        rejected_quantity: "",
+        bonus_quantity: "",
+
+        unit_cost:
+          selectedProduct.cost_price ?? "0.00",
+
         batch_number: "",
         manufacture_date: "",
         expiry_date: "",
         supplier_batch_reference: "",
+
+        supplier_item_code: "",
+        supplier_description: "",
+
+        supplier_unit_price: "",
+        discount_percent: "",
+        discount_amount: "",
+        tax_rate: "",
+        tax_amount: "",
+        net_unit_cost: "",
+        line_total: "",
+
+        discrepancy_status: "",
+        discrepancy_reason: "",
       },
     ]);
     setSelectedProductId("");
@@ -513,6 +847,17 @@ export function ReceiveStockPage() {
   const resetForAnotherReceipt = () => {
     setSupplierId("");
     setSupplierReference("");
+
+    setSupplierInvoiceNumber("");
+    setSupplierInvoiceDate("");
+    setPaymentTerms("");
+    setInvoiceCurrency("KES");
+
+    setSupplierSubtotal("");
+    setSupplierDiscountTotal("");
+    setSupplierTaxTotal("");
+    setSupplierInvoiceTotal("");
+
     setNotes("");
     setLines([]);
     setProductSearch("");
@@ -537,6 +882,17 @@ export function ReceiveStockPage() {
       warehouseId,
       supplierId,
       supplierReference,
+
+      supplierInvoiceNumber,
+      supplierInvoiceDate,
+      paymentTerms,
+      invoiceCurrency,
+
+      supplierSubtotal,
+      supplierDiscountTotal,
+      supplierTaxTotal,
+      supplierInvoiceTotal,
+
       notes,
       lines,
     });
