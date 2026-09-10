@@ -536,6 +536,33 @@ export function ReceiveStockPage() {
     receiptStatus,
     setReceiptStatus,
   ] = useState<GoodsReceiptStatus | null>(null);
+
+  const [
+    savedSupplierInvoiceTotal,
+    setSavedSupplierInvoiceTotal,
+  ] = useState<string | null>(null);
+  const [
+    savedInvoiceCurrency,
+    setSavedInvoiceCurrency,
+  ] = useState("KES");
+
+  const [
+    calculatedSubtotal,
+    setCalculatedSubtotal,
+  ] = useState<string | null>(null);
+  const [
+    calculatedTaxTotal,
+    setCalculatedTaxTotal,
+  ] = useState<string | null>(null);
+  const [
+    calculatedTotal,
+    setCalculatedTotal,
+  ] = useState<string | null>(null);
+  const [
+    reconciliationDifference,
+    setReconciliationDifference,
+  ] = useState<string | null>(null);
+
   const [
     resumeHydrationError,
     setResumeHydrationError,
@@ -733,6 +760,26 @@ export function ReceiveStockPage() {
         setReceiptId(receipt.id);
         setReceiptStatus(receipt.status);
 
+        setSavedSupplierInvoiceTotal(
+          receipt.supplier_invoice_total ?? null,
+        );
+        setSavedInvoiceCurrency(
+          receipt.invoice_currency ?? "KES",
+        );
+
+        setCalculatedSubtotal(
+          receipt.calculated_subtotal ?? null,
+        );
+        setCalculatedTaxTotal(
+          receipt.calculated_tax_total ?? null,
+        );
+        setCalculatedTotal(
+          receipt.calculated_total ?? null,
+        );
+        setReconciliationDifference(
+          receipt.reconciliation_difference ?? null,
+        );
+
         if (receipt.supplier) {
           setSupplierSearchInput(receipt.supplier.name);
           setSupplierSearch(receipt.supplier.name);
@@ -866,11 +913,39 @@ export function ReceiveStockPage() {
     setIdempotencyKey(createIdempotencyKey());
     setReceiptId(null);
     setReceiptStatus(null);
+
+    setSavedSupplierInvoiceTotal(null);
+    setSavedInvoiceCurrency("KES");
+
+    setCalculatedSubtotal(null);
+    setCalculatedTaxTotal(null);
+    setCalculatedTotal(null);
+    setReconciliationDifference(null);
   };
 
   const syncReceiptState = (receipt: GoodsReceipt) => {
     setReceiptId(receipt.id);
     setReceiptStatus(receipt.status);
+
+    setSavedSupplierInvoiceTotal(
+      receipt.supplier_invoice_total ?? null,
+    );
+    setSavedInvoiceCurrency(
+      receipt.invoice_currency ?? "KES",
+    );
+
+    setCalculatedSubtotal(
+      receipt.calculated_subtotal ?? null,
+    );
+    setCalculatedTaxTotal(
+      receipt.calculated_tax_total ?? null,
+    );
+    setCalculatedTotal(
+      receipt.calculated_total ?? null,
+    );
+    setReconciliationDifference(
+      receipt.reconciliation_difference ?? null,
+    );
   };
 
   const persistEditableReceipt = async (): Promise<GoodsReceipt> => {
@@ -1398,6 +1473,46 @@ export function ReceiveStockPage() {
           </PageSection>
 
           <PageSection>
+            <div className="mb-3">
+              <div className="text-sm font-medium">
+                Saved Reconciliation
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Hela360 calculations shown here reflect the latest
+                successfully saved receipt state.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <ReconciliationMetric
+                label="Supplier Total"
+                value={savedSupplierInvoiceTotal}
+                currency={savedInvoiceCurrency}
+              />
+              <ReconciliationMetric
+                label="Calculated Subtotal"
+                value={calculatedSubtotal}
+                currency={savedInvoiceCurrency}
+              />
+              <ReconciliationMetric
+                label="Calculated Tax"
+                value={calculatedTaxTotal}
+                currency={savedInvoiceCurrency}
+              />
+              <ReconciliationMetric
+                label="Calculated Total"
+                value={calculatedTotal}
+                currency={savedInvoiceCurrency}
+              />
+              <ReconciliationMetric
+                label="Difference"
+                value={reconciliationDifference}
+                currency={savedInvoiceCurrency}
+              />
+            </div>
+          </PageSection>
+
+          <PageSection>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-muted-foreground">
@@ -1516,19 +1631,227 @@ function ReceiptLinesTable({
           const requiresBatch = productRequiresBatch(line.product);
           return (
             <TableRow key={line.id}>
-              <TableCell className="min-w-[220px] whitespace-normal">
-                <div className="font-medium">{line.product.name}</div>
+              <TableCell className="min-w-[260px] whitespace-normal align-top">
+                <div className="font-medium">
+                  {line.product.name}
+                </div>
                 <div className="text-xs text-muted-foreground">
                   {line.product.internal_sku}
                 </div>
+
                 <div className="mt-1 flex flex-wrap gap-1">
                   {line.product.track_batches ? (
-                    <Badge variant="outline">Batch</Badge>
+                    <Badge variant="outline">
+                      Batch
+                    </Badge>
                   ) : null}
                   {line.product.track_expiry ? (
-                    <Badge variant="outline">Expiry</Badge>
+                    <Badge variant="outline">
+                      Expiry
+                    </Badge>
                   ) : null}
                 </div>
+
+                <details className="mt-3 rounded-md border bg-muted/20">
+                  <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium">
+                    Commercial / Reconciliation
+                  </summary>
+
+                  <div className="grid gap-3 border-t p-3 sm:grid-cols-2">
+                    <Field label="Supplier item code">
+                      <Input
+                        value={line.supplier_item_code}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            supplier_item_code:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="Supplier SKU / code"
+                      />
+                    </Field>
+
+                    <Field label="Supplier unit price">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.supplier_unit_price}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            supplier_unit_price:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0.00"
+                      />
+                    </Field>
+
+                    <Field label="Supplier description">
+                      <Input
+                        value={line.supplier_description}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            supplier_description:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="Supplier invoice description"
+                      />
+                    </Field>
+
+                    <Field label="Discount %">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={line.discount_percent}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            discount_percent:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </Field>
+
+                    <Field label="Discount amount">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.discount_amount}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            discount_amount:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0.00"
+                      />
+                    </Field>
+
+                    <Field label="Tax %">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={line.tax_rate}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            tax_rate:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </Field>
+
+                    <Field label="Tax amount">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.tax_amount}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            tax_amount:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0.00"
+                      />
+                    </Field>
+
+                    <Field label="Net unit cost">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.net_unit_cost}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            net_unit_cost:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0.00"
+                      />
+                    </Field>
+
+                    <Field label="Line total">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={line.line_total}
+                        onChange={(event) =>
+                          onUpdate(line.id, {
+                            line_total:
+                              event.target.value,
+                          })
+                        }
+                        placeholder="0.00"
+                      />
+                    </Field>
+
+                    <Field label="Discrepancy status">
+                      <NativeSelect
+                        value={line.discrepancy_status}
+                        onChange={(value) =>
+                          onUpdate(line.id, {
+                            discrepancy_status: value,
+                          })
+                        }
+                        placeholder="No discrepancy status"
+                        options={[
+                          {
+                            value: "matched",
+                            label: "Matched",
+                          },
+                          {
+                            value: "short",
+                            label: "Short",
+                          },
+                          {
+                            value: "over",
+                            label: "Over",
+                          },
+                          {
+                            value: "damaged",
+                            label: "Damaged",
+                          },
+                          {
+                            value: "rejected",
+                            label: "Rejected",
+                          },
+                          {
+                            value: "other",
+                            label: "Other",
+                          },
+                        ]}
+                      />
+                    </Field>
+
+                    <div className="sm:col-span-2">
+                      <Field label="Discrepancy reason">
+                        <Textarea
+                          value={line.discrepancy_reason}
+                          onChange={(event) =>
+                            onUpdate(line.id, {
+                              discrepancy_reason:
+                                event.target.value,
+                            })
+                          }
+                          placeholder="Explain quantity, condition, pricing, or other discrepancy"
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                </details>
               </TableCell>
               <TableCell>
                 <Input
@@ -1710,6 +2033,43 @@ function ReceiptLinesTable({
         })}
       </TableBody>
     </Table>
+  );
+}
+
+function ReconciliationMetric({
+  label,
+  value,
+  currency,
+}: {
+  label: string;
+  value: string | null;
+  currency: string;
+}) {
+  const numeric =
+    value === null || value === ""
+      ? null
+      : Number(value);
+
+  const display =
+    numeric !== null && Number.isFinite(numeric)
+      ? `${currency || "KES"} ${numeric.toLocaleString(
+          undefined,
+          {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          },
+        )}`
+      : "Not saved";
+
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <div className="text-xs text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 font-medium tabular-nums">
+        {display}
+      </div>
+    </div>
   );
 }
 
