@@ -424,6 +424,58 @@ export class InventoryService extends BaseService<InventoryStockSummary> {
     return response.data.item;
   }
 
+  async reviewGoodsReceipt(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.REVIEW_GOODS_RECEIPT(id),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async cancelGoodsReceipt(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.CANCEL_GOODS_RECEIPT(id),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async approveGoodsReceipt(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.APPROVE_GOODS_RECEIPT(id),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
+  async postGoodsReceipt(
+    id: string,
+    config?: AxiosRequestConfig,
+  ): Promise<GoodsReceipt> {
+    const response = await this.postRequest<GoodsReceiptResponse>(
+      API_ENDPOINTS.INVENTORY.POST_GOODS_RECEIPT(id),
+      {},
+      config,
+    );
+
+    return response.data.item;
+  }
+
   async listGoodsReceipts(
     params?: ListGoodsReceiptsRequest,
     config?: AxiosRequestConfig,

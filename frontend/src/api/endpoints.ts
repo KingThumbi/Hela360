@@ -276,6 +276,18 @@ export const API_ENDPOINTS = {
     COMPLETE_GOODS_RECEIPT_RECEIVING: (id: string) =>
       `${byId("/inventory/goods-receipts", id)}/complete-receiving`,
 
+    REVIEW_GOODS_RECEIPT: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/review`,
+
+    CANCEL_GOODS_RECEIPT: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/cancel`,
+
+    APPROVE_GOODS_RECEIPT: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/approve`,
+
+    POST_GOODS_RECEIPT: (id: string) =>
+      `${byId("/inventory/goods-receipts", id)}/post`,
+
     STOCK_COUNTS: "/inventory/stock-counts",
 
     STOCK_COUNT: (id: string) =>
