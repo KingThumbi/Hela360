@@ -71,8 +71,8 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
 
     product_type = db.Column(db.String(30), nullable=False, default="stockable")
     track_inventory = db.Column(db.Boolean, nullable=False, default=True)
-    track_batches = db.Column(db.Boolean, nullable=False, default=False)
-    track_expiry = db.Column(db.Boolean, nullable=False, default=False)
+    track_batches = db.Column(db.Boolean, nullable=False, default=True)
+    track_expiry = db.Column(db.Boolean, nullable=False, default=True)
     requires_prescription = db.Column(db.Boolean, nullable=False, default=False)
 
     allow_negative_stock = db.Column(db.Boolean, nullable=False, default=False)

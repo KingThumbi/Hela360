@@ -516,11 +516,11 @@ def create_product():
             ),
             track_batches=_to_bool(
                 data.get("track_batches"),
-                False,
+                True,
             ),
             track_expiry=_to_bool(
                 data.get("track_expiry"),
-                False,
+                True,
             ),
             requires_prescription=_to_bool(
                 data.get("requires_prescription"),

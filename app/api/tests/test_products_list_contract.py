@@ -1224,6 +1224,62 @@ def test_create_product_duplicate_internal_sku_returns_conflict(client):
     )
 
 
+def test_create_product_defaults_batch_and_expiry_tracking(client):
+    response = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "DEFAULT-TRACKING-001",
+            "name": "Default Tracking Product",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json["ok"] is True
+
+    item = response.json["item"]
+
+    assert item["track_batches"] is True
+    assert item["track_expiry"] is True
+
+    persisted = db.session.get(
+        Product,
+        item["id"],
+    )
+
+    assert persisted is not None
+    assert persisted.track_batches is True
+    assert persisted.track_expiry is True
+
+
+def test_create_product_preserves_explicit_disabled_tracking(client):
+    response = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "DISABLED-TRACKING-001",
+            "name": "Explicit Disabled Tracking Product",
+            "track_batches": False,
+            "track_expiry": False,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json["ok"] is True
+
+    item = response.json["item"]
+
+    assert item["track_batches"] is False
+    assert item["track_expiry"] is False
+
+    persisted = db.session.get(
+        Product,
+        item["id"],
+    )
+
+    assert persisted is not None
+    assert persisted.track_batches is False
+    assert persisted.track_expiry is False
+
+
 def test_product_detail_exposes_master_item_lineage(client):
     master_item = MasterItem(
         master_code="HMI-PRODUCT-LINEAGE",

@@ -256,8 +256,8 @@ class MasterCatalogueAdoptionService:
             description=None,
             product_type="stockable",
             track_inventory=True,
-            track_batches=False,
-            track_expiry=False,
+            track_batches=True,
+            track_expiry=True,
             requires_prescription=(
                 master_item.requires_prescription
                 is True

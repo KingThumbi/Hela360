@@ -142,6 +142,8 @@ def test_adoption_creates_linked_tenant_product(app):
         assert product.manufacturer == "Example Pharma"
         assert product.country_of_origin == "Kenya"
         assert product.requires_prescription is True
+        assert product.track_batches is True
+        assert product.track_expiry is True
 
         assert product.internal_sku != item.master_code
         assert product.default_sale_price is None
