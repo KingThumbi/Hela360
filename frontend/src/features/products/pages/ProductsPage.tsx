@@ -55,6 +55,7 @@ import { ProductDetailDialog } from "../components/ProductDetailDialog";
 import { ProductEditDialog } from "../components/ProductEditDialog";
 import { ProductFormDialog } from "../components/ProductFormDialog";
 import { ProductLifecycleDialog } from "../components/ProductLifecycleDialog";
+import { ProductUnitsDialog } from "../components/ProductUnitsDialog";
 import { ProductsTable } from "../components/ProductsTable";
 
 const DEFAULT_PAGE_SIZE = 25;
@@ -137,6 +138,11 @@ export function ProductsPage() {
   const [
     editProduct,
     setEditProduct,
+  ] = useState<Product | null>(null);
+
+  const [
+    unitsProduct,
+    setUnitsProduct,
   ] = useState<Product | null>(null);
 
   const [
@@ -551,13 +557,14 @@ export function ProductsPage() {
             />
           ) : (
             <div className="space-y-4">
-              <div className="rounded-lg border bg-background">
+              <div className="overflow-hidden rounded-xl border bg-background shadow-sm">
                 <ProductsTable
                   products={products}
                   canEdit={canEdit}
                   canDelete={canDelete}
                   onView={setDetailProduct}
                   onEdit={setEditProduct}
+                  onUnits={setUnitsProduct}
                   onLifecycle={
                     setLifecycleProduct
                   }
@@ -699,6 +706,15 @@ export function ProductsPage() {
           }
         }}
         onSubmit={handleUpdate}
+      />
+
+      <ProductUnitsDialog
+        product={unitsProduct}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUnitsProduct(null);
+          }
+        }}
       />
 
       <ProductLifecycleDialog
