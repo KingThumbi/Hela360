@@ -20,6 +20,10 @@ from app.services.tenant.products import (
     ProductNotFoundError,
     ProductReferenceService,
     ProductSkuConflictError,
+    ProductUnitCommandService,
+    ProductUnitConflictError,
+    ProductUnitNotFoundError,
+    ProductUnitValidationError,
     ProductValidationError,
 )
 from app.auth.jwt import get_current_identity
@@ -348,6 +352,291 @@ def list_product_units(product_id: str):
         {
             "ok": True,
             "items": [_serialize_product_unit(unit) for unit in units],
+        }
+    )
+
+
+@bp.post("/products/<product_id>/units")
+@require_permission("products.edit")
+def create_product_unit(product_id: str):
+    identity = _current_identity()
+    tenant_id = identity.tenant_id
+    data = request.get_json(silent=True) or {}
+
+    try:
+        unit_id = (
+            str(data.get("unit_id") or "").strip()
+            or None
+        )
+
+        if unit_id is None:
+            unit = ProductReferenceService(
+                db.session
+            ).resolve_unit(
+                tenant_id=tenant_id,
+                unit_code=data.get("unit_code"),
+                unit_name=data.get("unit_name"),
+            )
+
+            if unit is None:
+                return _json_error(
+                    "unit_id or unit_code/unit_name is required."
+                )
+
+            unit_id = str(unit.id)
+
+        service = ProductUnitCommandService(
+            db.session
+        )
+
+        product_unit = service.create(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            unit_id=unit_id,
+            conversion_factor_to_base=data.get(
+                "conversion_factor_to_base"
+            ),
+            can_sell=data.get(
+                "can_sell",
+                True,
+            ),
+            can_receive=data.get(
+                "can_receive",
+                True,
+            ),
+            sale_price=data.get("sale_price"),
+            minimum_sale_price=data.get(
+                "minimum_sale_price"
+            ),
+        )
+
+        db.session.commit()
+
+    except ProductUnitConflictError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            409,
+        )
+
+    except ProductUnitNotFoundError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            404,
+        )
+
+    except (
+        ProductUnitValidationError,
+        ValueError,
+    ) as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to create product unit: {exc}",
+            500,
+        )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": (
+                    "Product unit created successfully."
+                ),
+                "item": _serialize_product_unit(
+                    product_unit
+                ),
+            }
+        ),
+        201,
+    )
+
+
+@bp.patch(
+    "/products/<product_id>/units/<product_unit_id>"
+)
+@require_permission("products.edit")
+def update_product_unit(
+    product_id: str,
+    product_unit_id: str,
+):
+    identity = _current_identity()
+    tenant_id = identity.tenant_id
+    data = request.get_json(silent=True) or {}
+
+    try:
+        service = ProductUnitCommandService(
+            db.session
+        )
+
+        product_unit = service.update(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            product_unit_id=product_unit_id,
+            changes=data,
+        )
+
+        db.session.commit()
+
+    except ProductUnitNotFoundError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            404,
+        )
+
+    except ProductUnitValidationError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to update product unit: {exc}",
+            500,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "Product unit updated successfully."
+            ),
+            "item": _serialize_product_unit(
+                product_unit
+            ),
+        }
+    )
+
+
+@bp.post(
+    "/products/<product_id>/units/"
+    "<product_unit_id>/archive"
+)
+@require_permission("products.edit")
+def archive_product_unit(
+    product_id: str,
+    product_unit_id: str,
+):
+    identity = _current_identity()
+    tenant_id = identity.tenant_id
+
+    try:
+        service = ProductUnitCommandService(
+            db.session
+        )
+
+        result = service.archive(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            product_unit_id=product_unit_id,
+        )
+
+        db.session.commit()
+
+    except ProductUnitNotFoundError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            404,
+        )
+
+    except ProductUnitValidationError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to archive product unit: {exc}",
+            500,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "Product unit archived successfully."
+                if result.changed
+                else "Product unit was already archived."
+            ),
+            "item": _serialize_product_unit(
+                result.product_unit
+            ),
+        }
+    )
+
+
+@bp.post(
+    "/products/<product_id>/units/"
+    "<product_unit_id>/restore"
+)
+@require_permission("products.edit")
+def restore_product_unit(
+    product_id: str,
+    product_unit_id: str,
+):
+    identity = _current_identity()
+    tenant_id = identity.tenant_id
+
+    try:
+        service = ProductUnitCommandService(
+            db.session
+        )
+
+        result = service.restore(
+            tenant_id=tenant_id,
+            product_id=product_id,
+            product_unit_id=product_unit_id,
+        )
+
+        db.session.commit()
+
+    except ProductUnitNotFoundError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            404,
+        )
+
+    except ProductUnitValidationError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to restore product unit: {exc}",
+            500,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "Product unit restored successfully."
+                if result.changed
+                else "Product unit was already active."
+            ),
+            "item": _serialize_product_unit(
+                result.product_unit
+            ),
         }
     )
 

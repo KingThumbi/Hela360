@@ -20,6 +20,14 @@ from .product_identity_service import (
 from .product_reference_service import (
     ProductReferenceService,
 )
+from .product_unit_command_service import (
+    ProductUnitCommandError,
+    ProductUnitCommandService,
+    ProductUnitConflictError,
+    ProductUnitLifecycleResult,
+    ProductUnitNotFoundError,
+    ProductUnitValidationError,
+)
 
 __all__ = [
     "ProductCommandError",
@@ -34,4 +42,10 @@ __all__ = [
     "ProductSkuConflictError",
     "ProductUpdate",
     "ProductValidationError",
+    "ProductUnitCommandError",
+    "ProductUnitCommandService",
+    "ProductUnitConflictError",
+    "ProductUnitLifecycleResult",
+    "ProductUnitNotFoundError",
+    "ProductUnitValidationError",
 ]

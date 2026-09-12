@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from flask import Flask
+from sqlalchemy import text
 
 from app.api.errors import register_error_handlers
 from app.api.products import bp as products_bp
@@ -66,6 +67,25 @@ def app_context():
         SaleRefundItem.__table__.create(db.engine)
 
         ProductUnit.__table__.create(db.engine)
+
+        if db.engine.dialect.name == "sqlite":
+            with db.engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "DROP INDEX IF EXISTS "
+                        "ix_product_units_one_base_per_product"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "CREATE UNIQUE INDEX "
+                        "ix_product_units_one_base_per_product "
+                        "ON product_units "
+                        "(tenant_id, product_id) "
+                        "WHERE is_base = 1"
+                    )
+                )
+
         ProductCode.__table__.create(db.engine)
 
         db.session.add_all(
@@ -1310,3 +1330,583 @@ def test_product_detail_exposes_master_item_lineage(client):
         response.json["item"]["master_item_id"]
         == master_item.id
     )
+
+
+# ============================================================================
+# Product Unit write contract
+# ============================================================================
+
+
+def _add_unit(
+    *,
+    unit_id: str,
+    tenant_id: str = "tenant-1",
+    code: str,
+    name: str,
+) -> UnitOfMeasure:
+    unit = UnitOfMeasure(
+        id=unit_id,
+        tenant_id=tenant_id,
+        code=code,
+        name=name,
+        base_factor=Decimal("1"),
+    )
+    db.session.add(unit)
+    db.session.flush()
+    return unit
+
+
+def _add_product_with_base_unit(
+    *,
+    product_id: str = "product-units-1",
+    tenant_id: str = "tenant-1",
+) -> tuple[Product, UnitOfMeasure, ProductUnit]:
+    base_unit = _add_unit(
+        unit_id=f"{product_id}-tablet",
+        tenant_id=tenant_id,
+        code=f"{product_id[:8].upper()}-TAB",
+        name="Tablet",
+    )
+
+    product = Product(
+        id=product_id,
+        tenant_id=tenant_id,
+        internal_sku=f"SKU-{product_id}",
+        name="Product Unit Test Item",
+        unit_id=base_unit.id,
+        is_active=True,
+    )
+
+    db.session.add(product)
+    db.session.flush()
+
+    product_unit = ProductUnit(
+        id=f"{product_id}-base-unit",
+        tenant_id=tenant_id,
+        product_id=product.id,
+        unit_id=base_unit.id,
+        conversion_factor_to_base=Decimal("1"),
+        is_base=True,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    return product, base_unit, product_unit
+
+
+def test_create_product_unit_adds_product_specific_pack_size(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit()
+
+    strip = _add_unit(
+        unit_id="unit-strip-write",
+        code="STRIP-WRITE",
+        name="Strip",
+    )
+    db.session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/units",
+        json={
+            "unit_id": strip.id,
+            "conversion_factor_to_base": "10",
+            "can_sell": True,
+            "can_receive": True,
+            "sale_price": "50.25",
+            "minimum_sale_price": "45.10",
+        },
+    )
+
+    assert response.status_code == 201
+
+    item = response.json["item"]
+
+    assert item["product_id"] == product.id
+    assert item["unit"]["id"] == strip.id
+    assert item["unit"]["name"] == "Strip"
+    assert Decimal(
+        item["conversion_factor_to_base"]
+    ) == Decimal("10")
+    assert item["is_base"] is False
+    assert item["can_sell"] is True
+    assert item["can_receive"] is True
+    assert Decimal(item["sale_price"]) == Decimal("50.25")
+    assert Decimal(
+        item["minimum_sale_price"]
+    ) == Decimal("45.10")
+    assert item["is_active"] is True
+
+    persisted = (
+        ProductUnit.query.filter_by(
+            tenant_id="tenant-1",
+            product_id=product.id,
+            unit_id=strip.id,
+        ).one()
+    )
+
+    assert persisted.is_base is False
+    assert (
+        persisted.conversion_factor_to_base
+        == Decimal("10")
+    )
+
+
+def test_create_product_unit_can_create_reference_unit_from_code_and_name(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-units-reference"
+    )
+
+    response = client.post(
+        f"/api/products/{product.id}/units",
+        json={
+            "unit_code": "BOX-NEW",
+            "unit_name": "Box",
+            "conversion_factor_to_base": "100",
+            "can_sell": True,
+            "can_receive": True,
+        },
+    )
+
+    assert response.status_code == 201
+
+    item = response.json["item"]
+
+    assert item["unit"]["code"] == "BOX-NEW"
+    assert item["unit"]["name"] == "Box"
+    assert Decimal(
+        item["conversion_factor_to_base"]
+    ) == Decimal("100")
+
+    created_unit = UnitOfMeasure.query.filter_by(
+        tenant_id="tenant-1",
+        code="BOX-NEW",
+    ).one()
+
+    assert created_unit.name == "Box"
+
+
+def test_create_product_unit_rejects_duplicate_product_unit(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-units-duplicate"
+    )
+
+    strip = _add_unit(
+        unit_id="unit-strip-duplicate",
+        code="STRIP-DUP",
+        name="Strip",
+    )
+
+    db.session.add(
+        ProductUnit(
+            id="existing-product-unit",
+            tenant_id="tenant-1",
+            product_id=product.id,
+            unit_id=strip.id,
+            conversion_factor_to_base=Decimal("10"),
+            is_base=False,
+            can_sell=True,
+            can_receive=True,
+            is_active=True,
+        )
+    )
+    db.session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/units",
+        json={
+            "unit_id": strip.id,
+            "conversion_factor_to_base": "10",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "already configured" in response.json["error"]
+
+
+@pytest.mark.parametrize(
+    "factor",
+    [
+        "0",
+        "-1",
+        "-0.01",
+    ],
+)
+def test_create_product_unit_requires_positive_conversion_factor(
+    client,
+    factor,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id=f"product-factor-{factor.replace('.', '-')}"
+    )
+
+    box = _add_unit(
+        unit_id=f"unit-factor-{factor.replace('.', '-')}",
+        code=f"BOX-{factor.replace('.', '-')}",
+        name="Box",
+    )
+    db.session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/units",
+        json={
+            "unit_id": box.id,
+            "conversion_factor_to_base": factor,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "greater than zero" in response.json["error"]
+
+
+def test_create_product_unit_cannot_use_other_tenant_unit(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-other-tenant-unit"
+    )
+
+    other_unit = _add_unit(
+        unit_id="tenant-2-box",
+        tenant_id="tenant-2",
+        code="BOX-T2",
+        name="Box",
+    )
+    db.session.commit()
+
+    response = client.post(
+        f"/api/products/{product.id}/units",
+        json={
+            "unit_id": other_unit.id,
+            "conversion_factor_to_base": "100",
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_product_unit_changes_operational_configuration(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-update"
+    )
+
+    box = _add_unit(
+        unit_id="update-box",
+        code="UPDATE-BOX",
+        name="Box",
+    )
+
+    product_unit = ProductUnit(
+        id="product-unit-update-box",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("100"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("500"),
+        minimum_sale_price=Decimal("450"),
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "conversion_factor_to_base": "120",
+            "can_sell": False,
+            "can_receive": True,
+            "sale_price": "625.75",
+            "minimum_sale_price": "600.25",
+        },
+    )
+
+    assert response.status_code == 200
+
+    item = response.json["item"]
+
+    assert Decimal(
+        item["conversion_factor_to_base"]
+    ) == Decimal("120")
+    assert item["can_sell"] is False
+    assert item["can_receive"] is True
+    assert Decimal(item["sale_price"]) == Decimal("625.75")
+    assert Decimal(
+        item["minimum_sale_price"]
+    ) == Decimal("600.25")
+
+
+@pytest.mark.parametrize(
+    "protected_change",
+    [
+        {"unit_id": "some-other-unit"},
+        {"is_base": True},
+        {"is_active": False},
+        {"product_id": "another-product"},
+    ],
+)
+def test_update_product_unit_rejects_structural_fields(
+    client,
+    protected_change,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-protected"
+    )
+
+    strip = _add_unit(
+        unit_id="protected-strip",
+        code="PROTECTED-STRIP",
+        name="Strip",
+    )
+
+    product_unit = ProductUnit(
+        id="protected-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=strip.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json=protected_change,
+    )
+
+    assert response.status_code == 400
+    assert "cannot be changed" in response.json["error"]
+
+
+def test_update_base_product_unit_cannot_change_factor_from_one(
+    client,
+):
+    product, _, base_product_unit = (
+        _add_product_with_base_unit(
+            product_id="product-base-factor"
+        )
+    )
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{base_product_unit.id}"
+        ),
+        json={
+            "conversion_factor_to_base": "2",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "must remain 1" in response.json["error"]
+
+
+def test_update_product_unit_rejects_minimum_price_above_sale_price(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-price-floor"
+    )
+
+    box = _add_unit(
+        unit_id="price-floor-box",
+        code="PRICE-FLOOR-BOX",
+        name="Box",
+    )
+
+    product_unit = ProductUnit(
+        id="price-floor-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("100"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("500"),
+        minimum_sale_price=Decimal("450"),
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "sale_price": "400",
+            "minimum_sale_price": "450",
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        "minimum_sale_price cannot exceed sale_price"
+        in response.json["error"]
+    )
+
+
+def test_archive_product_unit_deactivates_non_base_unit(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-archive"
+    )
+
+    strip = _add_unit(
+        unit_id="archive-strip",
+        code="ARCHIVE-STRIP",
+        name="Strip",
+    )
+
+    product_unit = ProductUnit(
+        id="archive-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=strip.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}/archive"
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json["item"]["is_active"] is False
+
+    db.session.refresh(product_unit)
+    assert product_unit.is_active is False
+
+
+def test_archive_base_product_unit_is_rejected(
+    client,
+):
+    product, _, base_product_unit = (
+        _add_product_with_base_unit(
+            product_id="product-base-archive"
+        )
+    )
+
+    response = client.post(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{base_product_unit.id}/archive"
+        )
+    )
+
+    assert response.status_code == 400
+    assert (
+        "base product unit cannot be archived"
+        in response.json["error"]
+    )
+
+
+def test_restore_product_unit_reactivates_archived_unit(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-restore"
+    )
+
+    box = _add_unit(
+        unit_id="restore-box",
+        code="RESTORE-BOX",
+        name="Box",
+    )
+
+    product_unit = ProductUnit(
+        id="restore-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("100"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=False,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}/restore"
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json["item"]["is_active"] is True
+
+    db.session.refresh(product_unit)
+    assert product_unit.is_active is True
+
+
+def test_product_unit_mutation_cannot_cross_tenant_boundary(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="tenant-1-unit-boundary"
+    )
+
+    other_product, _, other_base_unit = (
+        _add_product_with_base_unit(
+            product_id="tenant-2-unit-boundary",
+            tenant_id="tenant-2",
+        )
+    )
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{other_base_unit.id}"
+        ),
+        json={
+            "can_sell": False,
+        },
+    )
+
+    assert response.status_code == 404
+
+    db.session.refresh(other_product)
+    db.session.refresh(other_base_unit)
+
+    assert other_base_unit.can_sell is True
