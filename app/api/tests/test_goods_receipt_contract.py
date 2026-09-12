@@ -997,7 +997,12 @@ def test_goods_receipt_history_requires_receive_permission(
     response = app_context.test_client().get("/api/inventory/goods-receipts")
 
     assert response.status_code == 403
-    assert captured["kwargs"]["permission"] == "inventory.receive"
+    assert captured["kwargs"]["permission"] is None
+    assert captured["kwargs"]["any_permissions"] == (
+        "inventory.receive",
+        "inventory.approve",
+        "inventory.post",
+    )
 
 
 def test_goods_receipt_history_is_branch_and_tenant_scoped(client):
