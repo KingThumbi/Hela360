@@ -34,8 +34,10 @@ import type {
 
 import type {
   CreateProductRequest,
+  CreateProductUnitRequest,
   ListProductsRequest,
   UpdateProductRequest,
+  UpdateProductUnitRequest,
 } from "@/types/requests";
 
 import type {
@@ -70,6 +72,14 @@ interface ProductUnitListResponse {
   ok: true;
 
   items: ProductUnit[];
+}
+
+interface ProductUnitItemResponse {
+  ok: true;
+
+  item: ProductUnit;
+
+  message?: string;
 }
 
 interface ProductTaxCodeListResponse {
@@ -269,11 +279,81 @@ class ProductService extends BaseService<
   ): Promise<ProductUnit[]> {
     const response =
       await this.getRequest<ProductUnitListResponse>(
-        this.resourceUrl(productId, "units"),
+        API_ENDPOINTS.PRODUCTS.UNITS(productId),
         config,
       );
 
     return response.data.items;
+  }
+
+  async createProductUnit(
+    productId: string | number,
+    payload: CreateProductUnitRequest,
+    config?: AxiosRequestConfig,
+  ): Promise<ProductUnit> {
+    const response =
+      await this.postRequest<ProductUnitItemResponse>(
+        API_ENDPOINTS.PRODUCTS.UNITS(productId),
+        payload,
+        config,
+      );
+
+    return response.data.item;
+  }
+
+  async updateProductUnit(
+    productId: string | number,
+    productUnitId: string | number,
+    payload: UpdateProductUnitRequest,
+    config?: AxiosRequestConfig,
+  ): Promise<ProductUnit> {
+    const response =
+      await this.patchRequest<ProductUnitItemResponse>(
+        API_ENDPOINTS.PRODUCTS.UNIT(
+          productId,
+          productUnitId,
+        ),
+        payload,
+        config,
+      );
+
+    return response.data.item;
+  }
+
+  async archiveProductUnit(
+    productId: string | number,
+    productUnitId: string | number,
+    config?: AxiosRequestConfig,
+  ): Promise<ProductUnit> {
+    const response =
+      await this.postRequest<ProductUnitItemResponse>(
+        API_ENDPOINTS.PRODUCTS.ARCHIVE_UNIT(
+          productId,
+          productUnitId,
+        ),
+        {},
+        config,
+      );
+
+    return response.data.item;
+  }
+
+  async restoreProductUnit(
+    productId: string | number,
+    productUnitId: string | number,
+    config?: AxiosRequestConfig,
+  ): Promise<ProductUnit> {
+    const response =
+      await this.postRequest<ProductUnitItemResponse>(
+        API_ENDPOINTS.PRODUCTS.RESTORE_UNIT(
+          productId,
+          productUnitId,
+        ),
+        {},
+        config,
+      );
+
+    return response.data.item;
   }
 
   async listTaxCodes(

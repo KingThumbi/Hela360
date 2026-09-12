@@ -53,6 +53,12 @@ export type {
   UpdateProductRequest,
 } from "./update-product-request";
 export type {
+  CreateProductUnitRequest,
+} from "./create-product-unit-request";
+export type {
+  UpdateProductUnitRequest,
+} from "./update-product-unit-request";
+export type {
   ListProductsRequest,
 } from "./list-products-request";
 export type {

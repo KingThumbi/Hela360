@@ -168,6 +168,42 @@ export const API_ENDPOINTS = {
     RESTORE: (id: string) =>
       `${byId("/products", id)}/restore`,
 
+    UNITS: (id: string | number) =>
+      `${byId("/products", String(id))}/units`,
+
+    UNIT: (
+      productId: string | number,
+      productUnitId: string | number,
+    ) =>
+      `${byId(
+        "/products",
+        String(productId),
+      )}/units/${encodeURIComponent(
+        String(productUnitId),
+      )}`,
+
+    ARCHIVE_UNIT: (
+      productId: string | number,
+      productUnitId: string | number,
+    ) =>
+      `${byId(
+        "/products",
+        String(productId),
+      )}/units/${encodeURIComponent(
+        String(productUnitId),
+      )}/archive`,
+
+    RESTORE_UNIT: (
+      productId: string | number,
+      productUnitId: string | number,
+    ) =>
+      `${byId(
+        "/products",
+        String(productId),
+      )}/units/${encodeURIComponent(
+        String(productUnitId),
+      )}/restore`,
+
     TAX_CODES: "/products/tax-codes",
   },
 
