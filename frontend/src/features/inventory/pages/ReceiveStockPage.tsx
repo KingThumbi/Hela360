@@ -59,6 +59,7 @@ import {
   useUpdateGoodsReceipt,
 } from "@/hooks/queries/inventory";
 import {
+  useProductUnits,
   useProducts,
 } from "@/hooks/queries/products";
 import {
@@ -75,6 +76,7 @@ import type {
   GoodsReceipt,
   GoodsReceiptStatus,
   Product,
+  ProductUnit,
 } from "@/types/entities";
 import type {
   CreateGoodsReceiptDraftRequest,
@@ -1595,6 +1597,236 @@ export function ReceiveStockPage() {
   );
 }
 
+function receivingUnitLabel(
+  productUnit: ProductUnit,
+): string {
+  const unitName =
+    productUnit.unit?.name ??
+    productUnit.unit?.code ??
+    "Unit";
+
+  const factor = numericValue(
+    productUnit.conversion_factor_to_base,
+  );
+
+  if (
+    Number.isFinite(factor) &&
+    factor !== 1
+  ) {
+    return `${unitName} · ×${factor}`;
+  }
+
+  if (productUnit.is_base) {
+    return `${unitName} · base`;
+  }
+
+  return unitName;
+}
+
+
+function displayQuantity(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  return value.toLocaleString(
+    undefined,
+    {
+      maximumFractionDigits: 6,
+    },
+  );
+}
+
+
+function ReceivingUnitSelector({
+  product,
+  value,
+  quantityValue,
+  onChange,
+}: {
+  product: Product;
+  value: string;
+  quantityValue: string;
+  onChange: (productUnitId: string) => void;
+}) {
+  const productUnitsQuery =
+    useProductUnits(product.id);
+
+  const allProductUnits = useMemo(
+    () =>
+      productUnitsQuery.data ?? [],
+    [productUnitsQuery.data],
+  );
+
+  const receivingUnits = useMemo(
+    () =>
+      allProductUnits.filter(
+        (productUnit) =>
+          productUnit.is_active &&
+          productUnit.can_receive,
+      ),
+    [allProductUnits],
+  );
+
+  const selectedUnit =
+    allProductUnits.find(
+      (productUnit) =>
+        productUnit.id === value,
+    ) ?? null;
+
+  const visibleUnits = useMemo(() => {
+    if (
+      !selectedUnit ||
+      receivingUnits.some(
+        (productUnit) =>
+          productUnit.id === selectedUnit.id,
+      )
+    ) {
+      return receivingUnits;
+    }
+
+    return [
+      selectedUnit,
+      ...receivingUnits,
+    ];
+  }, [
+    receivingUnits,
+    selectedUnit,
+  ]);
+
+  useEffect(() => {
+    if (
+      value ||
+      productUnitsQuery.isLoading ||
+      productUnitsQuery.isError ||
+      receivingUnits.length === 0
+    ) {
+      return;
+    }
+
+    const defaultUnit =
+      receivingUnits.find(
+        (productUnit) =>
+          productUnit.is_base,
+      ) ??
+      receivingUnits.find(
+        (productUnit) =>
+          numericValue(
+            productUnit.conversion_factor_to_base,
+          ) === 1,
+      ) ??
+      receivingUnits[0];
+
+    if (defaultUnit) {
+      onChange(defaultUnit.id);
+    }
+  }, [
+    onChange,
+    productUnitsQuery.isError,
+    productUnitsQuery.isLoading,
+    receivingUnits,
+    value,
+  ]);
+
+  const factor = selectedUnit
+    ? numericValue(
+        selectedUnit.conversion_factor_to_base,
+      )
+    : 1;
+
+  const enteredQuantity =
+    numericValue(quantityValue);
+
+  const baseQuantity =
+    enteredQuantity * factor;
+
+  const selectedUnitName =
+    selectedUnit?.unit?.name ??
+    selectedUnit?.unit?.code ??
+    "unit";
+
+  return (
+    <div className="min-w-[190px] space-y-1.5">
+      <NativeSelect
+        value={value}
+        onChange={onChange}
+        disabled={
+          productUnitsQuery.isLoading
+        }
+        placeholder={
+          productUnitsQuery.isLoading
+            ? "Loading units"
+            : (
+                product.unit?.name
+                  ? `${product.unit.name} · default`
+                  : "Select receiving unit"
+              )
+        }
+        options={
+          visibleUnits.map(
+            (productUnit) => ({
+              value: productUnit.id,
+              label:
+                `${
+                  receivingUnitLabel(
+                    productUnit,
+                  )
+                }${
+                  !productUnit.is_active
+                    ? " · archived"
+                    : !productUnit.can_receive
+                      ? " · no longer receivable"
+                      : ""
+                }`,
+            }),
+          )
+        }
+      />
+
+      {productUnitsQuery.isError ? (
+        <p className="text-xs text-destructive">
+          Unable to load receiving units.
+        </p>
+      ) : null}
+
+      {selectedUnit ? (
+        <div className="space-y-0.5 text-xs text-muted-foreground">
+          <div>
+            1 {selectedUnitName} ={" "}
+            {displayQuantity(factor)}{" "}
+            base units
+          </div>
+
+          {Number.isFinite(
+            enteredQuantity,
+          ) &&
+          enteredQuantity >= 0 ? (
+            <div>
+              Stock equivalent:{" "}
+              <span className="font-medium text-foreground">
+                {displayQuantity(
+                  baseQuantity,
+                )}{" "}
+                base units
+              </span>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        !productUnitsQuery.isLoading &&
+        receivingUnits.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No receivable Product Units are configured.
+            The backend will resolve the product base unit
+            where available.
+          </p>
+        ) : null
+      )}
+    </div>
+  );
+}
+
+
 function ReceiptLinesTable({
   lines,
   onUpdate,
@@ -1609,9 +1841,10 @@ function ReceiptLinesTable({
 }) {
   return (
     <Table>
-      <TableHeader>
+      <TableHeader className="sticky top-0 z-20 bg-background shadow-sm">
         <TableRow>
           <TableHead>Product</TableHead>
+          <TableHead>Receiving Unit</TableHead>
           <TableHead>Invoice Qty</TableHead>
           <TableHead>Physical Qty</TableHead>
           <TableHead>Accepted</TableHead>
@@ -1619,6 +1852,7 @@ function ReceiptLinesTable({
           <TableHead>Bonus</TableHead>
           <TableHead>Stock Qty</TableHead>
           <TableHead>Unit Cost</TableHead>
+          <TableHead>Line Total</TableHead>
           <TableHead>Batch</TableHead>
           <TableHead>Manufacture</TableHead>
           <TableHead>Expiry</TableHead>
@@ -1782,22 +2016,6 @@ function ReceiptLinesTable({
                       />
                     </Field>
 
-                    <Field label="Line total">
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={line.line_total}
-                        onChange={(event) =>
-                          onUpdate(line.id, {
-                            line_total:
-                              event.target.value,
-                          })
-                        }
-                        placeholder="0.00"
-                      />
-                    </Field>
-
                     <Field label="Discrepancy status">
                       <NativeSelect
                         value={line.discrepancy_status}
@@ -1853,6 +2071,21 @@ function ReceiptLinesTable({
                   </div>
                 </details>
               </TableCell>
+
+              <TableCell className="align-top">
+                <ReceivingUnitSelector
+                  product={line.product}
+                  value={line.product_unit_id}
+                  quantityValue={line.quantity}
+                  onChange={(productUnitId) =>
+                    onUpdate(line.id, {
+                      product_unit_id:
+                        productUnitId,
+                    })
+                  }
+                />
+              </TableCell>
+
               <TableCell>
                 <Input
                   type="number"
@@ -1964,9 +2197,28 @@ function ReceiptLinesTable({
                       unit_cost: event.target.value,
                     })
                   }
-                  className="w-28"
+                  className="w-32"
+                  aria-label={`Unit cost for ${line.product.name}`}
                 />
               </TableCell>
+
+              <TableCell>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={line.line_total}
+                  onChange={(event) =>
+                    onUpdate(line.id, {
+                      line_total: event.target.value,
+                    })
+                  }
+                  className="w-32"
+                  aria-label={`Line total for ${line.product.name}`}
+                  placeholder="0.00"
+                />
+              </TableCell>
+
               <TableCell>
                 <Input
                   value={line.batch_number}
@@ -2093,6 +2345,7 @@ function NativeSelect({
   onChange,
   options,
   placeholder,
+  disabled = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -2101,12 +2354,14 @@ function NativeSelect({
     label: string;
   }>;
   placeholder: string;
+  disabled?: boolean;
 }) {
   return (
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+      disabled={disabled}
+      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
     >
       <option value="">
         {placeholder}
