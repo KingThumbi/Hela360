@@ -27,8 +27,10 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import (
+    GoodsReceiptItem,
     Product,
     ProductUnit,
+    SaleItem,
     UnitOfMeasure,
 )
 
@@ -307,26 +309,38 @@ class ProductUnitCommandService:
                 + "."
             )
 
-        if (
-            product_unit.is_base
-            and "conversion_factor_to_base" in changes
-        ):
+        if "conversion_factor_to_base" in changes:
             proposed_factor = self._positive_decimal(
                 changes["conversion_factor_to_base"],
                 "conversion_factor_to_base",
             )
 
-            if proposed_factor != Decimal("1"):
+            if (
+                product_unit.is_base
+                and proposed_factor != Decimal("1")
+            ):
                 raise ProductUnitValidationError(
                     "The base product unit conversion factor must remain 1."
                 )
 
-        if "conversion_factor_to_base" in changes:
-            product_unit.conversion_factor_to_base = (
-                self._positive_decimal(
-                    changes["conversion_factor_to_base"],
-                    "conversion_factor_to_base",
+            current_factor = Decimal(
+                str(product_unit.conversion_factor_to_base)
+            )
+
+            if (
+                proposed_factor != current_factor
+                and self._has_operational_history(
+                    product_unit_id=str(product_unit.id),
                 )
+            ):
+                raise ProductUnitValidationError(
+                    "conversion_factor_to_base cannot be changed "
+                    "after the product unit has been used in a "
+                    "goods receipt or sale."
+                )
+
+            product_unit.conversion_factor_to_base = (
+                proposed_factor
             )
 
         for field in (
@@ -434,6 +448,46 @@ class ProductUnitCommandService:
             product_unit=product_unit,
             changed=True,
         )
+
+    # ------------------------------------------------------------------
+    # Historical integrity
+    # ------------------------------------------------------------------
+
+    def _has_operational_history(
+        self,
+        *,
+        product_unit_id: str,
+    ) -> bool:
+        """
+        Return True once a ProductUnit has participated in
+        stock-bearing or sale history.
+
+        ProductCode references are intentionally excluded because
+        assigning a barcode/code is identifier configuration rather
+        than transactional evidence.
+        """
+        goods_receipt_usage = (
+            self.session.query(GoodsReceiptItem.id)
+            .filter(
+                GoodsReceiptItem.product_unit_id
+                == product_unit_id
+            )
+            .first()
+        )
+
+        if goods_receipt_usage is not None:
+            return True
+
+        sale_usage = (
+            self.session.query(SaleItem.id)
+            .filter(
+                SaleItem.product_unit_id
+                == product_unit_id
+            )
+            .first()
+        )
+
+        return sale_usage is not None
 
     # ------------------------------------------------------------------
     # Validation

@@ -1652,6 +1652,211 @@ def test_update_product_unit_changes_operational_configuration(
     ) == Decimal("600.25")
 
 
+def test_update_product_unit_rejects_factor_change_after_goods_receipt_use(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-used-grn"
+    )
+
+    box = _add_unit(
+        unit_id="used-grn-box",
+        code="USED-GRN-BOX",
+        name="Box",
+    )
+
+    product_unit = ProductUnit(
+        id="product-unit-used-grn-box",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("100"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.flush()
+
+    db.session.add(
+        GoodsReceiptItem(
+            goods_receipt_id="receipt-product-unit-history",
+            product_id=product.id,
+            product_unit_id=product_unit.id,
+            line_number=1,
+            quantity=Decimal("1"),
+            base_quantity=Decimal("100"),
+            conversion_factor_to_base=Decimal("100"),
+            unit_cost=Decimal("500"),
+            base_unit_cost=Decimal("5"),
+        )
+    )
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "conversion_factor_to_base": "120",
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        "cannot be changed after"
+        in response.json["error"]
+    )
+
+    db.session.refresh(product_unit)
+    assert (
+        product_unit.conversion_factor_to_base
+        == Decimal("100")
+    )
+
+
+def test_update_product_unit_rejects_factor_change_after_sale_use(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-used-sale"
+    )
+
+    strip = _add_unit(
+        unit_id="used-sale-strip",
+        code="USED-SALE-STRIP",
+        name="Strip",
+    )
+
+    product_unit = ProductUnit(
+        id="product-unit-used-sale-strip",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=strip.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.flush()
+
+    db.session.add(
+        SaleItem(
+            sale_id="sale-product-unit-history",
+            product_id=product.id,
+            product_unit_id=product_unit.id,
+            quantity=Decimal("2"),
+            base_quantity=Decimal("20"),
+            unit_price=Decimal("50"),
+            conversion_factor_to_base=Decimal("10"),
+            line_total=Decimal("100"),
+        )
+    )
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "conversion_factor_to_base": "12",
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        "cannot be changed after"
+        in response.json["error"]
+    )
+
+    db.session.refresh(product_unit)
+    assert (
+        product_unit.conversion_factor_to_base
+        == Decimal("10")
+    )
+
+
+def test_used_product_unit_allows_non_structural_commercial_updates(
+    client,
+):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-used-commercial"
+    )
+
+    box = _add_unit(
+        unit_id="used-commercial-box",
+        code="USED-COMMERCIAL-BOX",
+        name="Box",
+    )
+
+    product_unit = ProductUnit(
+        id="product-unit-used-commercial-box",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("100"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("500"),
+        minimum_sale_price=Decimal("450"),
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.flush()
+
+    db.session.add(
+        SaleItem(
+            sale_id="sale-product-unit-commercial",
+            product_id=product.id,
+            product_unit_id=product_unit.id,
+            quantity=Decimal("1"),
+            base_quantity=Decimal("100"),
+            unit_price=Decimal("500"),
+            conversion_factor_to_base=Decimal("100"),
+            line_total=Decimal("500"),
+        )
+    )
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "can_sell": False,
+            "can_receive": True,
+            "sale_price": "550",
+            "minimum_sale_price": "500",
+        },
+    )
+
+    assert response.status_code == 200
+
+    item = response.json["item"]
+
+    assert item["can_sell"] is False
+    assert item["can_receive"] is True
+    assert Decimal(item["sale_price"]) == Decimal("550")
+    assert (
+        Decimal(item["minimum_sale_price"])
+        == Decimal("500")
+    )
+    assert (
+        Decimal(item["conversion_factor_to_base"])
+        == Decimal("100")
+    )
+
+
 @pytest.mark.parametrize(
     "protected_change",
     [
