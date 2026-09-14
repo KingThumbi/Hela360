@@ -33,6 +33,8 @@ from app.models.master_catalogue import (
     MasterItemSupplierMapping,
     SupplierItemPrice,
 )
+
+from app.models.canonical_uom import CanonicalUnitOfMeasure
 from app.models.customer import Customer
 from app.models.supplier import Supplier
 from app.models.inventory import (
@@ -95,6 +97,7 @@ __all__ = [
     "CatalogueSupplier",
     "MasterItemSupplierMapping",
     "SupplierItemPrice",
+    "CanonicalUnitOfMeasure",
     "Customer",
     "Supplier",
     "Warehouse",
