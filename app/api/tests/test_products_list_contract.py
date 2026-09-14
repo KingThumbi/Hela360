@@ -749,6 +749,8 @@ def test_new_product_always_starts_active(client):
         json={
             "internal_sku": "LIFECYCLE-CREATE-001",
             "name": "Lifecycle Creation Product",
+            "unit_code": "LIFECYCLE-EA",
+            "unit_name": "Each",
             "is_active": False,
         },
     )
@@ -1216,12 +1218,85 @@ def test_delete_product_requires_products_delete_permission(
     assert captured.get("permission") == "products.delete"
 
 
+def test_create_inventory_product_requires_unit_of_measure(
+    client,
+):
+    response = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "INVENTORY-NO-UOM-001",
+            "name": "Inventory Product Without Unit",
+            "track_inventory": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["ok"] is False
+    assert (
+        response.json["error"]
+        == (
+            "A unit of measure is required for an "
+            "inventory-tracked product."
+        )
+    )
+
+    persisted = (
+        db.session.query(Product)
+        .filter(
+            Product.internal_sku
+            == "INVENTORY-NO-UOM-001"
+        )
+        .one_or_none()
+    )
+
+    assert persisted is None
+
+
+def test_create_non_inventory_product_allows_no_unit(
+    client,
+):
+    response = client.post(
+        "/api/products",
+        json={
+            "internal_sku": "NON-INVENTORY-NO-UOM-001",
+            "name": "Non Inventory Product Without Unit",
+            "track_inventory": False,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json["ok"] is True
+
+    item = response.json["item"]
+
+    persisted = db.session.get(
+        Product,
+        item["id"],
+    )
+
+    assert persisted is not None
+    assert persisted.track_inventory is False
+    assert persisted.unit_id is None
+
+    product_units = (
+        db.session.query(ProductUnit)
+        .filter(
+            ProductUnit.product_id == persisted.id
+        )
+        .count()
+    )
+
+    assert product_units == 0
+
+
 def test_create_product_duplicate_internal_sku_returns_conflict(client):
     first = client.post(
         "/api/products",
         json={
             "internal_sku": "DUPLICATE-CREATE-001",
             "name": "First Duplicate Test Product",
+            "unit_code": "DUPLICATE-EA",
+            "unit_name": "Each",
         },
     )
 
@@ -1233,6 +1308,8 @@ def test_create_product_duplicate_internal_sku_returns_conflict(client):
         json={
             "internal_sku": "DUPLICATE-CREATE-001",
             "name": "Second Duplicate Test Product",
+            "unit_code": "DUPLICATE-EA",
+            "unit_name": "Each",
         },
     )
 
@@ -1250,6 +1327,8 @@ def test_create_product_defaults_batch_and_expiry_tracking(client):
         json={
             "internal_sku": "DEFAULT-TRACKING-001",
             "name": "Default Tracking Product",
+            "unit_code": "DEFAULT-TRACKING-EA",
+            "unit_name": "Each",
         },
     )
 
@@ -1277,6 +1356,8 @@ def test_create_product_preserves_explicit_disabled_tracking(client):
         json={
             "internal_sku": "DISABLED-TRACKING-001",
             "name": "Explicit Disabled Tracking Product",
+            "unit_code": "DISABLED-TRACKING-EA",
+            "unit_name": "Each",
             "track_batches": False,
             "track_expiry": False,
         },

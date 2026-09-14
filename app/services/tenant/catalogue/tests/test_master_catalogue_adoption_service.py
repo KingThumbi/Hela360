@@ -23,6 +23,7 @@ from app.services.common.audit_modules import (
     AuditModule,
 )
 from app.services.tenant.catalogue import (
+    MasterCatalogueAdoptionError,
     MasterCatalogueAdoptionService,
     MasterItemAlreadyAdoptedError,
     MasterItemNotAvailableError,
@@ -128,6 +129,8 @@ def test_adoption_creates_linked_tenant_product(app):
         result = service.adopt(
             tenant_id=str(tenant.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
         )
 
         product = result.product
@@ -174,6 +177,8 @@ def test_adoption_uses_canonical_brand_and_category(app):
         result = service.adopt(
             tenant_id=str(tenant.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="MANUAL-REF-001",
         )
 
@@ -217,6 +222,8 @@ def test_explicit_name_brand_and_category_override_canonical(app):
         result = service.adopt(
             tenant_id=str(tenant.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="OVERRIDE-001",
             name="Tenant Product Name",
             brand_name="Tenant Brand",
@@ -289,7 +296,9 @@ def test_explicit_unit_creates_base_product_unit(app):
         db.session.rollback()
 
 
-def test_no_explicit_unit_does_not_infer_pack_unit(app):
+def test_no_explicit_unit_rejects_adoption_and_does_not_infer_pack_unit(
+    app,
+):
     with app.app_context():
         tenant = _tenant(
             name="No Unit Adoption Tenant"
@@ -307,25 +316,26 @@ def test_no_explicit_unit_does_not_infer_pack_unit(app):
             audit_service=AuditSpy(),
         )
 
-        result = service.adopt(
-            tenant_id=str(tenant.id),
-            master_item_id=str(item.id),
-            internal_sku="NO-UNIT-001",
-        )
-
-        assert result.product.unit_id is None
-        assert result.product_unit is None
-
-        count = (
-            db.session.query(ProductUnit)
-            .filter(
-                ProductUnit.product_id
-                == result.product.id
+        with pytest.raises(
+            MasterCatalogueAdoptionError,
+            match="tenant unit of measure is required",
+        ):
+            service.adopt(
+                tenant_id=str(tenant.id),
+                master_item_id=str(item.id),
+                internal_sku="NO-UNIT-001",
             )
-            .count()
+
+        product = (
+            db.session.query(Product)
+            .filter(
+                Product.tenant_id == str(tenant.id),
+                Product.master_item_id == str(item.id),
+            )
+            .one_or_none()
         )
 
-        assert count == 0
+        assert product is None
 
         db.session.rollback()
 
@@ -351,6 +361,8 @@ def test_same_master_item_cannot_be_adopted_twice_by_tenant(
         first = service.adopt(
             tenant_id=str(tenant.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="DUP-001",
         )
 
@@ -396,12 +408,16 @@ def test_same_master_item_can_be_adopted_by_different_tenants(
         first = service.adopt(
             tenant_id=str(tenant_one.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="T1-001",
         )
 
         second = service.adopt(
             tenant_id=str(tenant_two.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="T2-001",
         )
 
@@ -476,6 +492,8 @@ def test_adoption_records_transactional_audit(app):
         result = service.adopt(
             tenant_id=str(tenant.id),
             master_item_id=str(item.id),
+            unit_code="EA",
+            unit_name="Each",
             internal_sku="AUDIT-001",
             user_id="user-1",
             branch_id="branch-1",

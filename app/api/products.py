@@ -705,6 +705,14 @@ def create_product():
         brand_id = data.get("brand_id")
         unit_id = data.get("unit_id")
 
+        product_type = (
+            (data.get("product_type") or "stockable").strip()
+        )
+        track_inventory = _to_bool(
+            data.get("track_inventory"),
+            True,
+        )
+
         category = None
         brand = None
         unit = None
@@ -773,6 +781,13 @@ def create_product():
                 unit_name=data.get("unit_name"),
             )
 
+        if track_inventory and unit is None:
+            return _json_error(
+                "A unit of measure is required for an "
+                "inventory-tracked product.",
+                400,
+            )
+
         # -------------------------------------------------------------
         # Product
         # -------------------------------------------------------------
@@ -796,13 +811,8 @@ def create_product():
                 (data.get("description") or "").strip()
                 or None
             ),
-            product_type=(
-                (data.get("product_type") or "stockable").strip()
-            ),
-            track_inventory=_to_bool(
-                data.get("track_inventory"),
-                True,
-            ),
+            product_type=product_type,
+            track_inventory=track_inventory,
             track_batches=_to_bool(
                 data.get("track_batches"),
                 True,

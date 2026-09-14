@@ -231,6 +231,12 @@ class MasterCatalogueAdoptionService:
             )
         )
 
+        if unit is None:
+            raise MasterCatalogueAdoptionError(
+                "A tenant unit of measure is required when "
+                "adopting a catalogue item."
+            )
+
         product = Product(
             tenant_id=tenant_id,
             master_item_id=str(master_item.id),

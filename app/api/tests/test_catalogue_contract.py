@@ -542,6 +542,8 @@ def test_catalogue_adoption_creates_tenant_product(client):
         f"/api/catalogue/items/{item.id}/adopt",
         json={
             "internal_sku": "CAT-001",
+            "unit_code": "EA",
+            "unit_name": "Each",
         },
     )
 
@@ -586,7 +588,10 @@ def test_catalogue_adoption_uses_generated_sku_when_omitted(
 
     response = client.post(
         f"/api/catalogue/items/{item.id}/adopt",
-        json={},
+        json={
+            "unit_code": "EA",
+            "unit_name": "Each",
+        },
     )
 
     assert response.status_code == 201
