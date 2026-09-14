@@ -34,6 +34,12 @@ class UnitOfMeasure(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     )
 
     tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)
+    canonical_uom_id = db.Column(
+        db.String(36),
+        db.ForeignKey("canonical_units_of_measure.id"),
+        nullable=True,
+        index=True,
+    )
     code = db.Column(db.String(20), nullable=False)
     name = db.Column(db.String(50), nullable=False)
     base_factor = db.Column(db.Numeric(18, 6), nullable=False, default=1)
