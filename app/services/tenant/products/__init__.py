@@ -29,6 +29,20 @@ from .product_unit_command_service import (
     ProductUnitValidationError,
 )
 
+from .tenant_uom_audit_service import (
+    CANONICALLY_LINKED,
+    CUSTOM_UNMAPPED,
+    DOSAGE_FORM_AS_UOM,
+    HISTORICAL_ONLY,
+    LEGACY_PRODUCT_SPECIFIC,
+    MIXED_PRODUCT_SEMANTICS,
+    SAFE_TO_LINK,
+    TenantUOMAuditItem,
+    TenantUOMAuditResult,
+    TenantUOMAuditService,
+)
+
+
 __all__ = [
     "ProductCommandError",
     "ProductCommandService",
@@ -48,4 +62,14 @@ __all__ = [
     "ProductUnitLifecycleResult",
     "ProductUnitNotFoundError",
     "ProductUnitValidationError",
+    "CANONICALLY_LINKED",
+    "CUSTOM_UNMAPPED",
+    "DOSAGE_FORM_AS_UOM",
+    "HISTORICAL_ONLY",
+    "LEGACY_PRODUCT_SPECIFIC",
+    "MIXED_PRODUCT_SEMANTICS",
+    "SAFE_TO_LINK",
+    "TenantUOMAuditItem",
+    "TenantUOMAuditResult",
+    "TenantUOMAuditService",
 ]

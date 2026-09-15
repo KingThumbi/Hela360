@@ -3,12 +3,15 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app import create_app
 from app.extensions import db
-from app.models import CanonicalUnitOfMeasure
+from app.models import (
+    CanonicalUnitOfMeasure,
+    UnitOfMeasure,
+)
 from app.services.platform.canonical_uom_catalogue_service import (
     CanonicalUOMCatalogueService,
 )
@@ -33,6 +36,16 @@ def canonical_uom_session():
         )
 
         try:
+            session.execute(
+                update(UnitOfMeasure)
+                .where(
+                    UnitOfMeasure.canonical_uom_id.isnot(None)
+                )
+                .values(
+                    canonical_uom_id=None
+                )
+            )
+
             session.execute(
                 delete(CanonicalUnitOfMeasure)
             )
