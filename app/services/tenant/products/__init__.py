@@ -40,8 +40,22 @@ from .tenant_uom_audit_service import (
     TenantUOMAuditItem,
     TenantUOMAuditResult,
     TenantUOMAuditService,
+    TenantUOMProductSemanticEvidence,
 )
 
+
+from .tenant_uom_remediation_planner import (
+    LINK_EXISTING_UOM,
+    NO_ACTION,
+    PRESERVE_HISTORICAL_UNIT,
+    REVIEW_LEGACY_UNIT,
+    REVIEW_OPERATIONAL_UNIT,
+    SPLIT_CURRENT_PRODUCTS,
+    TenantUOMProductPlan,
+    TenantUOMRemediationPlan,
+    TenantUOMRemediationPlanner,
+    TenantUOMRemediationResult,
+)
 
 __all__ = [
     "ProductCommandError",
@@ -72,4 +86,15 @@ __all__ = [
     "TenantUOMAuditItem",
     "TenantUOMAuditResult",
     "TenantUOMAuditService",
+    "TenantUOMProductSemanticEvidence",
+    "LINK_EXISTING_UOM",
+    "NO_ACTION",
+    "PRESERVE_HISTORICAL_UNIT",
+    "REVIEW_LEGACY_UNIT",
+    "REVIEW_OPERATIONAL_UNIT",
+    "SPLIT_CURRENT_PRODUCTS",
+    "TenantUOMProductPlan",
+    "TenantUOMRemediationPlan",
+    "TenantUOMRemediationPlanner",
+    "TenantUOMRemediationResult",
 ]

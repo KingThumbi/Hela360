@@ -236,11 +236,13 @@ class TenantUOMAuditResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _ProductSemanticEvidence:
+class TenantUOMProductSemanticEvidence:
     product_id: str
-    sku: str
-    expected_codes: frozenset[str]
-    incompatible_dosage_forms: frozenset[str]
+    internal_sku: str
+    product_name: str
+    expected_canonical_codes: tuple[str, ...]
+    incompatible_dosage_forms: tuple[str, ...]
+    evidence_reasons: tuple[str, ...]
 
 
 class TenantUOMAuditService:
@@ -393,7 +395,7 @@ class TenantUOMAuditService:
         )
 
         evidence = tuple(
-            self._product_semantic_evidence(product)
+            self.product_semantic_evidence(product=product)
             for product in products
         )
 
@@ -479,12 +481,14 @@ class TenantUOMAuditService:
             (code, name)
         )
 
-    def _product_semantic_evidence(
+    def product_semantic_evidence(
         self,
+        *,
         product: Product,
-    ) -> _ProductSemanticEvidence:
+    ) -> TenantUOMProductSemanticEvidence:
         expected_codes: set[str] = set()
         incompatible_forms: set[str] = set()
+        reasons: list[str] = []
 
         master_item = (
             self.session.get(
@@ -514,6 +518,11 @@ class TenantUOMAuditService:
                 expected_codes.add(
                     canonical_code
                 )
+                reasons.append(
+                    "Master Catalogue dosage form "
+                    f"{dosage_form!r} supports canonical "
+                    f"{canonical_code}."
+                )
 
             elif (
                 dosage_form in DOSAGE_FORM_TERMS
@@ -523,6 +532,12 @@ class TenantUOMAuditService:
                 incompatible_forms.add(
                     dosage_form
                 )
+                reasons.append(
+                    "Master Catalogue dosage form "
+                    f"{dosage_form!r} is presentation "
+                    "evidence but does not by itself "
+                    "determine an operational UOM."
+                )
 
         product_name = product.name or ""
 
@@ -530,15 +545,25 @@ class TenantUOMAuditService:
             if pattern.search(product_name):
                 expected_codes.add(code)
 
-        return _ProductSemanticEvidence(
+                reason = (
+                    "Product name contains presentation "
+                    f"evidence supporting canonical {code}."
+                )
+
+                if reason not in reasons:
+                    reasons.append(reason)
+
+        return TenantUOMProductSemanticEvidence(
             product_id=str(product.id),
-            sku=product.internal_sku,
-            expected_codes=frozenset(
-                expected_codes
+            internal_sku=product.internal_sku,
+            product_name=product.name,
+            expected_canonical_codes=tuple(
+                sorted(expected_codes)
             ),
-            incompatible_dosage_forms=frozenset(
-                incompatible_forms
+            incompatible_dosage_forms=tuple(
+                sorted(incompatible_forms)
             ),
+            evidence_reasons=tuple(reasons),
         )
 
     def _contradictions(
@@ -546,7 +571,7 @@ class TenantUOMAuditService:
         *,
         candidate_code: str | None,
         evidence: tuple[
-            _ProductSemanticEvidence,
+            TenantUOMProductSemanticEvidence,
             ...
         ],
     ) -> tuple[str, ...]:
@@ -558,13 +583,13 @@ class TenantUOMAuditService:
         for item in evidence:
             other_codes = sorted(
                 code
-                for code in item.expected_codes
+                for code in item.expected_canonical_codes
                 if code != candidate_code
             )
 
             if other_codes:
                 contradictions.append(
-                    f"{item.sku}: expected "
+                    f"{item.internal_sku}: expected "
                     + "/".join(other_codes)
                     + f", not {candidate_code}"
                 )
@@ -575,7 +600,7 @@ class TenantUOMAuditService:
                 and item.incompatible_dosage_forms
             ):
                 contradictions.append(
-                    f"{item.sku}: dosage form "
+                    f"{item.internal_sku}: dosage form "
                     + "/".join(
                         sorted(
                             item.incompatible_dosage_forms
@@ -735,4 +760,5 @@ __all__ = [
     "TenantUOMAuditItem",
     "TenantUOMAuditResult",
     "TenantUOMAuditService",
+    "TenantUOMProductSemanticEvidence",
 ]
