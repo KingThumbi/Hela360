@@ -35,6 +35,10 @@ from app.models.master_catalogue import (
 )
 
 from app.models.canonical_uom import CanonicalUnitOfMeasure
+from app.models.uom_remediation import (
+    TenantUOMRemediationProductDecision,
+    TenantUOMRemediationReview,
+)
 from app.models.customer import Customer
 from app.models.supplier import Supplier
 from app.models.inventory import (
@@ -98,6 +102,8 @@ __all__ = [
     "MasterItemSupplierMapping",
     "SupplierItemPrice",
     "CanonicalUnitOfMeasure",
+    "TenantUOMRemediationProductDecision",
+    "TenantUOMRemediationReview",
     "Customer",
     "Supplier",
     "Warehouse",
