@@ -25,6 +25,8 @@ from app.services.tenant.products import (
     ProductUnitNotFoundError,
     ProductUnitValidationError,
     ProductValidationError,
+    TenantUOMRemediationReviewError,
+    TenantUOMRemediationReviewService,
 )
 from app.auth.jwt import get_current_identity
 from app.auth.exceptions import AuthenticationError
@@ -207,6 +209,124 @@ def _serialize_product_unit(product_unit: ProductUnit) -> dict:
     }
 
 
+def _serialize_uom_remediation_review(review) -> dict:
+    return {
+        "id": str(review.id),
+        "tenant_id": str(review.tenant_id),
+        "source_uom_id": str(review.source_uom_id),
+        "status": review.status,
+        "audit_classification": review.audit_classification,
+        "recommended_action": review.recommended_action,
+        "suggested_canonical_code": (
+            review.suggested_canonical_code
+        ),
+        "selected_action": review.selected_action,
+        "selected_canonical_uom_id": (
+            str(review.selected_canonical_uom_id)
+            if review.selected_canonical_uom_id
+            else None
+        ),
+        "planner_version": review.planner_version,
+        "planner_fingerprint": review.planner_fingerprint,
+        "planner_snapshot": review.planner_snapshot,
+        "created_by": str(review.created_by),
+        "reviewed_by": (
+            str(review.reviewed_by)
+            if review.reviewed_by
+            else None
+        ),
+        "reviewed_at": (
+            review.reviewed_at.isoformat()
+            if review.reviewed_at
+            else None
+        ),
+        "review_reason": review.review_reason,
+        "created_at": (
+            review.created_at.isoformat()
+            if review.created_at
+            else None
+        ),
+        "updated_at": (
+            review.updated_at.isoformat()
+            if review.updated_at
+            else None
+        ),
+    }
+
+
+def _serialize_uom_remediation_product_decision(
+    decision,
+) -> dict:
+    return {
+        "id": str(decision.id),
+        "review_id": str(decision.review_id),
+        "tenant_id": str(decision.tenant_id),
+        "product_id": str(decision.product_id),
+        "source_product_unit_id": (
+            str(decision.source_product_unit_id)
+            if decision.source_product_unit_id
+            else None
+        ),
+        "recommended_action": decision.recommended_action,
+        "suggested_canonical_code": (
+            decision.suggested_canonical_code
+        ),
+        "selected_action": decision.selected_action,
+        "target_canonical_uom_id": (
+            str(decision.target_canonical_uom_id)
+            if decision.target_canonical_uom_id
+            else None
+        ),
+        "target_tenant_uom_id": (
+            str(decision.target_tenant_uom_id)
+            if decision.target_tenant_uom_id
+            else None
+        ),
+        "preserve_historical_unit": bool(
+            decision.preserve_historical_unit
+        ),
+        "review_note": decision.review_note,
+        "created_at": (
+            decision.created_at.isoformat()
+            if decision.created_at
+            else None
+        ),
+        "updated_at": (
+            decision.updated_at.isoformat()
+            if decision.updated_at
+            else None
+        ),
+    }
+
+
+def _serialize_uom_remediation_staleness(
+    staleness,
+) -> dict | None:
+    if staleness is None:
+        return None
+
+    return {
+        "review_id": staleness.review_id,
+        "tenant_id": staleness.tenant_id,
+        "source_uom_id": staleness.source_uom_id,
+        "is_stale": staleness.is_stale,
+        "reasons": list(staleness.reasons),
+        "stored_planner_version": (
+            staleness.stored_planner_version
+        ),
+        "current_planner_version": (
+            staleness.current_planner_version
+        ),
+        "stored_fingerprint": (
+            staleness.stored_fingerprint
+        ),
+        "current_fingerprint": (
+            staleness.current_fingerprint
+        ),
+        "current_snapshot": staleness.current_snapshot,
+    }
+
+
 def _get_or_create_brand(
     tenant_id: str,
     brand_name: str | None,
@@ -296,6 +416,100 @@ def list_products():
         "count": total,
         "items": [_serialize_product(item) for item in items],
     })
+
+
+@bp.get("/products/uom-remediation-reviews")
+@require_permission("products.view")
+def list_uom_remediation_reviews():
+    """
+    List tenant-scoped UOM remediation governance reviews.
+
+    This endpoint is read-only and does not execute remediation.
+    """
+    identity = _current_identity()
+
+    status = request.args.get("status")
+
+    try:
+        reviews = TenantUOMRemediationReviewService(
+            db.session
+        ).list_reviews(
+            tenant_id=identity.tenant_id,
+            status=status,
+        )
+
+    except TenantUOMRemediationReviewError as exc:
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(reviews),
+            "items": [
+                _serialize_uom_remediation_review(
+                    review
+                )
+                for review in reviews
+            ],
+        }
+    )
+
+
+@bp.get(
+    "/products/uom-remediation-reviews/<review_id>"
+)
+@require_permission("products.view")
+def get_uom_remediation_review(
+    review_id: str,
+):
+    """
+    Retrieve one tenant-scoped UOM remediation review.
+
+    Stored review evidence is returned alongside current
+    read-only stale-plan assessment.
+    """
+    identity = _current_identity()
+
+    try:
+        detail = TenantUOMRemediationReviewService(
+            db.session
+        ).get_review_detail(
+            tenant_id=identity.tenant_id,
+            review_id=review_id,
+            include_staleness=True,
+        )
+
+    except TenantUOMRemediationReviewError as exc:
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "item": (
+                _serialize_uom_remediation_review(
+                    detail["review"]
+                )
+            ),
+            "product_decisions": [
+                _serialize_uom_remediation_product_decision(
+                    decision
+                )
+                for decision
+                in detail["product_decisions"]
+            ],
+            "staleness": (
+                _serialize_uom_remediation_staleness(
+                    detail["staleness"]
+                )
+            ),
+        }
+    )
 
 
 @bp.get("/products/<product_id>")
