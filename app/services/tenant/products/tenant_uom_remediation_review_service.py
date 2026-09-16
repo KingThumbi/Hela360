@@ -10,6 +10,7 @@ catalogue records. Execution belongs to C5E3.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -72,6 +73,24 @@ PRODUCT_SELECTED_ACTIONS = frozenset(
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class TenantUOMRemediationStaleness:
+    review_id: str
+    tenant_id: str
+    source_uom_id: str
+
+    is_stale: bool
+    reasons: tuple[str, ...]
+
+    stored_planner_version: str
+    current_planner_version: str
+
+    stored_fingerprint: str
+    current_fingerprint: str
+
+    current_snapshot: dict
 
 
 class TenantUOMRemediationReviewError(Exception):
@@ -275,6 +294,109 @@ class TenantUOMRemediationReviewService:
             )
 
         return review
+
+    def get_review_detail(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        include_staleness: bool = True,
+    ) -> dict:
+        """
+        Return tenant-scoped review governance state.
+
+        The stored planner snapshot remains immutable evidence.
+        Current staleness is calculated separately.
+        """
+        review = self.get_review(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        decisions = self._review_decisions(
+            tenant_id=tenant_id,
+            review_id=review.id,
+        )
+
+        detail = {
+            "review": review,
+            "product_decisions": decisions,
+            "staleness": None,
+        }
+
+        if include_staleness:
+            detail["staleness"] = (
+                self.assess_staleness(
+                    tenant_id=tenant_id,
+                    review_id=review.id,
+                )
+            )
+
+        return detail
+
+    def assess_staleness(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+    ) -> TenantUOMRemediationStaleness:
+        """
+        Recompute planner evidence and compare it with the
+        immutable evidence stored on the review.
+
+        This method is read-only. It never changes review status
+        and never mutates operational UOM/Product/ProductUnit data.
+        """
+        review = self.get_review(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        current_plan = self.planner.plan_unit(
+            tenant_id=tenant_id,
+            uom_id=review.source_uom_id,
+        )
+
+        current_snapshot = self._serialize_plan(
+            current_plan
+        )
+        current_fingerprint = self._fingerprint(
+            current_snapshot
+        )
+
+        reasons = []
+
+        if review.planner_version != PLANNER_VERSION:
+            reasons.append(
+                "planner_version_changed"
+            )
+
+        if (
+            review.planner_fingerprint
+            != current_fingerprint
+        ):
+            reasons.append(
+                "planner_fingerprint_changed"
+            )
+
+        return TenantUOMRemediationStaleness(
+            review_id=str(review.id),
+            tenant_id=str(review.tenant_id),
+            source_uom_id=str(
+                review.source_uom_id
+            ),
+            is_stale=bool(reasons),
+            reasons=tuple(reasons),
+            stored_planner_version=(
+                review.planner_version
+            ),
+            current_planner_version=PLANNER_VERSION,
+            stored_fingerprint=(
+                review.planner_fingerprint
+            ),
+            current_fingerprint=current_fingerprint,
+            current_snapshot=current_snapshot,
+        )
 
     def list_reviews(
         self,
@@ -1066,4 +1188,5 @@ __all__ = [
     "REVIEW_SELECTED_ACTIONS",
     "TenantUOMRemediationReviewError",
     "TenantUOMRemediationReviewService",
+    "TenantUOMRemediationStaleness",
 ]

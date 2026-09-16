@@ -869,3 +869,232 @@ def test_pending_and_approved_reviews_can_be_superseded(app):
         )
 
         db.session.rollback()
+
+
+def test_new_review_is_not_stale(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            _reviewer,
+            source,
+            _product_row,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        result = service.assess_staleness(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+        )
+
+        assert result.is_stale is False
+        assert result.reasons == ()
+        assert (
+            result.stored_fingerprint
+            == result.current_fingerprint
+        )
+        assert (
+            result.stored_planner_version
+            == result.current_planner_version
+        )
+
+        db.session.rollback()
+
+
+def test_review_becomes_stale_when_product_semantics_change(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            _reviewer,
+            source,
+            product,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        stored_snapshot = dict(
+            review.planner_snapshot
+        )
+        stored_fingerprint = (
+            review.planner_fingerprint
+        )
+
+        product.name = (
+            "Paracetamol Capsules 500mg"
+        )
+        db.session.flush()
+
+        result = service.assess_staleness(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+        )
+
+        assert result.is_stale is True
+        assert (
+            "planner_fingerprint_changed"
+            in result.reasons
+        )
+
+        assert (
+            result.current_fingerprint
+            != stored_fingerprint
+        )
+
+        # Stored review evidence must remain unchanged.
+        assert (
+            review.planner_fingerprint
+            == stored_fingerprint
+        )
+        assert (
+            review.planner_snapshot
+            == stored_snapshot
+        )
+
+        db.session.rollback()
+
+
+def test_review_is_stale_when_planner_version_changes(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            _reviewer,
+            source,
+            _product_row,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        review.planner_version = "older-version"
+        db.session.flush()
+
+        result = service.assess_staleness(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+        )
+
+        assert result.is_stale is True
+        assert (
+            "planner_version_changed"
+            in result.reasons
+        )
+
+        db.session.rollback()
+
+
+def test_staleness_assessment_is_tenant_isolated(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            _reviewer,
+            source,
+            _product_row,
+            _product_unit,
+        ) = _safe_fixture()
+
+        other = _tenant(
+            "Staleness Other Tenant"
+        )
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.assess_staleness(
+                tenant_id=str(other.id),
+                review_id=review.id,
+            )
+
+        assert exc.value.status_code == 404
+
+        db.session.rollback()
+
+
+def test_review_detail_includes_decisions_and_staleness(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            _reviewer,
+            source,
+            _product_row,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        detail = service.get_review_detail(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+        )
+
+        assert detail["review"].id == review.id
+        assert len(
+            detail["product_decisions"]
+        ) == 1
+        assert (
+            detail["staleness"].is_stale
+            is False
+        )
+
+        without_staleness = (
+            service.get_review_detail(
+                tenant_id=str(tenant.id),
+                review_id=review.id,
+                include_staleness=False,
+            )
+        )
+
+        assert (
+            without_staleness["staleness"]
+            is None
+        )
+
+        db.session.rollback()

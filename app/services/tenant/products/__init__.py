@@ -66,6 +66,7 @@ from .tenant_uom_remediation_review_service import (
     REVIEW_SELECTED_ACTIONS,
     TenantUOMRemediationReviewError,
     TenantUOMRemediationReviewService,
+    TenantUOMRemediationStaleness,
 )
 
 __all__ = [
@@ -116,4 +117,5 @@ __all__ = [
     "REVIEW_SELECTED_ACTIONS",
     "TenantUOMRemediationReviewError",
     "TenantUOMRemediationReviewService",
+    "TenantUOMRemediationStaleness",
 ]
