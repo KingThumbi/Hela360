@@ -214,16 +214,15 @@ class TenantUOMRemediationPlanner:
             action
             not in {
                 NO_ACTION,
-                LINK_EXISTING_UOM,
                 PRESERVE_HISTORICAL_UNIT,
             }
         )
 
-        can_apply_automatically = (
-            action == LINK_EXISTING_UOM
-            and item.safe_to_link
-            and item.historical_reference_count == 0
-        )
+        # C5E remediation is deliberately review-gated.
+        #
+        # Even a SAFE_TO_LINK alias is evidence for a reviewer,
+        # not authority to mutate tenant operational data.
+        can_apply_automatically = False
 
         return TenantUOMRemediationPlan(
             tenant_id=item.tenant_id,

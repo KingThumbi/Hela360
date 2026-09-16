@@ -172,8 +172,8 @@ def test_safe_alias_produces_link_plan(app):
             == LINK_EXISTING_UOM
         )
         assert plan.suggested_canonical_code == "TAB"
-        assert plan.can_apply_automatically is True
-        assert plan.requires_human_approval is False
+        assert plan.can_apply_automatically is False
+        assert plan.requires_human_approval is True
 
         db.session.rollback()
 
