@@ -57,6 +57,12 @@ from .tenant_uom_remediation_planner import (
     TenantUOMRemediationResult,
 )
 
+from .tenant_uom_remediation_executor import (
+    TenantUOMRemediationExecutionError,
+    TenantUOMRemediationExecutionPreflight,
+    TenantUOMRemediationExecutor,
+)
+
 from .tenant_uom_remediation_review_service import (
     KEEP_CURRENT_PRODUCT,
     KEEP_UNMAPPED,
@@ -118,4 +124,7 @@ __all__ = [
     "TenantUOMRemediationReviewError",
     "TenantUOMRemediationReviewService",
     "TenantUOMRemediationStaleness",
+    "TenantUOMRemediationExecutionError",
+    "TenantUOMRemediationExecutionPreflight",
+    "TenantUOMRemediationExecutor",
 ]

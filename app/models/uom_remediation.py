@@ -129,6 +129,20 @@ class TenantUOMRemediationReview(
         db.Text,
     )
 
+    executed_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+
+    executed_at = db.Column(
+        db.DateTime(timezone=True),
+    )
+
+    execution_summary = db.Column(
+        db.JSON,
+    )
+
 
 class TenantUOMRemediationProductDecision(
     UUIDPrimaryKeyMixin,

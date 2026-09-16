@@ -50,12 +50,24 @@ def test_review_table_contract():
         assert columns["planner_snapshot"]["nullable"] is False
         assert columns["created_by"]["nullable"] is False
 
+        assert columns["executed_by"]["nullable"] is True
+        assert columns["executed_at"]["nullable"] is True
+        assert columns["execution_summary"]["nullable"] is True
+
         indexes = {
             index["name"]: index
             for index in inspector.get_indexes(
                 "tenant_uom_remediation_reviews"
             )
         }
+
+        assert (
+            "ix_tenant_uom_remediation_reviews_executed_by"
+            in indexes
+        )
+        assert indexes[
+            "ix_tenant_uom_remediation_reviews_executed_by"
+        ]["column_names"] == ["executed_by"]
 
         active = indexes[
             "ix_tenant_uom_remediation_reviews_one_active"
@@ -137,6 +149,10 @@ def test_review_foreign_keys_do_not_cascade_operational_records():
         )
         assert (
             by_column["reviewed_by"]["referred_table"]
+            == "users"
+        )
+        assert (
+            by_column["executed_by"]["referred_table"]
             == "users"
         )
 
