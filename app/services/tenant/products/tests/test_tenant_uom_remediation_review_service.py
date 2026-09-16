@@ -1098,3 +1098,49 @@ def test_review_detail_includes_decisions_and_staleness(app):
         )
 
         db.session.rollback()
+
+
+def test_stale_review_cannot_be_approved(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            product,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        product.name = "Paracetamol Capsules 500mg"
+        db.session.flush()
+
+        canonical = _canonical("TAB")
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=review.id,
+                reviewed_by=str(reviewer.id),
+                selected_action=LINK_EXISTING_UOM,
+                selected_canonical_uom_id=str(
+                    canonical.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value).lower()
+        assert review.status == "pending"
+
+        db.session.rollback()

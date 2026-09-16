@@ -479,6 +479,19 @@ class TenantUOMRemediationReviewService:
                 409,
             )
 
+        staleness = self.assess_staleness(
+            tenant_id=tenant_id,
+            review_id=review.id,
+        )
+
+        if staleness.is_stale:
+            raise TenantUOMRemediationReviewError(
+                "The remediation review is stale. "
+                "Supersede it and create a new review "
+                "before approval.",
+                409,
+            )
+
         selected_action = (
             selected_action or ""
         ).strip()

@@ -418,6 +418,288 @@ def list_products():
     })
 
 
+@bp.post("/products/uom-remediation-reviews")
+@require_permission("products.edit")
+def create_uom_remediation_review():
+    """
+    Create a pending human-governance review for one tenant UOM.
+
+    This endpoint persists review evidence only. It does not
+    execute operational UOM remediation.
+    """
+    identity = _current_identity()
+    data = request.get_json(silent=True)
+
+    if data is None:
+        data = {}
+
+    if not isinstance(data, dict):
+        return _json_error(
+            "A remediation review object is required.",
+            400,
+        )
+
+    source_uom_id = str(
+        data.get("source_uom_id") or ""
+    ).strip()
+
+    if not source_uom_id:
+        return _json_error(
+            "source_uom_id is required.",
+            400,
+        )
+
+    try:
+        review = TenantUOMRemediationReviewService(
+            db.session
+        ).create_pending_review(
+            tenant_id=identity.tenant_id,
+            source_uom_id=source_uom_id,
+            created_by=identity.user_id,
+        )
+
+        db.session.commit()
+
+    except TenantUOMRemediationReviewError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": (
+                    "UOM remediation review created."
+                ),
+                "item": (
+                    _serialize_uom_remediation_review(
+                        review
+                    )
+                ),
+            }
+        ),
+        201,
+    )
+
+
+@bp.post(
+    "/products/uom-remediation-reviews/"
+    "<review_id>/approve"
+)
+@require_permission("products.edit")
+def approve_uom_remediation_review(
+    review_id: str,
+):
+    """
+    Approve a pending remediation governance decision.
+
+    Approval records the human decision only. Execution remains
+    a separate C5E3 concern.
+    """
+    identity = _current_identity()
+    data = request.get_json(silent=True)
+
+    if data is None:
+        data = {}
+
+    if not isinstance(data, dict):
+        return _json_error(
+            "A remediation approval object is required.",
+            400,
+        )
+
+    selected_action = str(
+        data.get("selected_action") or ""
+    ).strip()
+
+    if not selected_action:
+        return _json_error(
+            "selected_action is required.",
+            400,
+        )
+
+    product_decisions = data.get(
+        "product_decisions"
+    )
+
+    if (
+        product_decisions is not None
+        and not isinstance(
+            product_decisions,
+            list,
+        )
+    ):
+        return _json_error(
+            "product_decisions must be an array.",
+            400,
+        )
+
+    selected_canonical_uom_id = (
+        str(
+            data.get(
+                "selected_canonical_uom_id"
+            )
+            or ""
+        ).strip()
+        or None
+    )
+
+    try:
+        review = TenantUOMRemediationReviewService(
+            db.session
+        ).approve_review(
+            tenant_id=identity.tenant_id,
+            review_id=review_id,
+            reviewed_by=identity.user_id,
+            selected_action=selected_action,
+            selected_canonical_uom_id=(
+                selected_canonical_uom_id
+            ),
+            product_decisions=product_decisions,
+            review_reason=data.get(
+                "review_reason"
+            ),
+        )
+
+        db.session.commit()
+
+    except TenantUOMRemediationReviewError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "UOM remediation review approved."
+            ),
+            "item": (
+                _serialize_uom_remediation_review(
+                    review
+                )
+            ),
+        }
+    )
+
+
+@bp.post(
+    "/products/uom-remediation-reviews/"
+    "<review_id>/reject"
+)
+@require_permission("products.edit")
+def reject_uom_remediation_review(
+    review_id: str,
+):
+    identity = _current_identity()
+    data = request.get_json(silent=True)
+
+    if data is None:
+        data = {}
+
+    if not isinstance(data, dict):
+        return _json_error(
+            "A remediation rejection object is required.",
+            400,
+        )
+
+    try:
+        review = TenantUOMRemediationReviewService(
+            db.session
+        ).reject_review(
+            tenant_id=identity.tenant_id,
+            review_id=review_id,
+            reviewed_by=identity.user_id,
+            review_reason=data.get(
+                "review_reason"
+            ),
+        )
+
+        db.session.commit()
+
+    except TenantUOMRemediationReviewError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "UOM remediation review rejected."
+            ),
+            "item": (
+                _serialize_uom_remediation_review(
+                    review
+                )
+            ),
+        }
+    )
+
+
+@bp.post(
+    "/products/uom-remediation-reviews/"
+    "<review_id>/supersede"
+)
+@require_permission("products.edit")
+def supersede_uom_remediation_review(
+    review_id: str,
+):
+    identity = _current_identity()
+    data = request.get_json(silent=True)
+
+    if data is None:
+        data = {}
+
+    if not isinstance(data, dict):
+        return _json_error(
+            "A remediation supersession object is required.",
+            400,
+        )
+
+    try:
+        review = TenantUOMRemediationReviewService(
+            db.session
+        ).supersede_review(
+            tenant_id=identity.tenant_id,
+            review_id=review_id,
+            reviewed_by=identity.user_id,
+            review_reason=data.get(
+                "review_reason"
+            ),
+        )
+
+        db.session.commit()
+
+    except TenantUOMRemediationReviewError as exc:
+        db.session.rollback()
+        return _json_error(
+            str(exc),
+            exc.status_code,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": (
+                "UOM remediation review superseded."
+            ),
+            "item": (
+                _serialize_uom_remediation_review(
+                    review
+                )
+            ),
+        }
+    )
+
+
 @bp.get("/products/uom-remediation-reviews")
 @require_permission("products.view")
 def list_uom_remediation_reviews():
