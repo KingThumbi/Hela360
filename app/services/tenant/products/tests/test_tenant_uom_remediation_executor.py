@@ -1,14 +1,38 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
+from app import create_app
+from app.extensions import db
+from app.models import (
+    CanonicalUnitOfMeasure,
+    Product,
+    ProductUnit,
+    Tenant,
+    UnitOfMeasure,
+    User,
+)
+from app.services.common.audit_actions import AuditAction
+from app.services.common.audit_modules import AuditModule
+from app.services.platform.canonical_uom_catalogue_service import (
+    CanonicalUOMCatalogueService,
+)
 from app.services.tenant.products import (
     LINK_EXISTING_UOM,
     TenantUOMRemediationExecutionError,
     TenantUOMRemediationExecutor,
+)
+from app.services.tenant.products.tenant_uom_audit_service import (
+    MIXED_PRODUCT_SEMANTICS,
+    SAFE_TO_LINK,
+)
+from app.services.tenant.products.tenant_uom_remediation_review_service import (
+    TenantUOMRemediationReviewService,
 )
 
 
@@ -420,3 +444,727 @@ def test_preflight_does_not_mutate_review():
     session.delete.assert_not_called()
     session.flush.assert_not_called()
     session.commit.assert_not_called()
+
+
+# ==================================================================
+# C5E3B — real database LINK_EXISTING_UOM execution contract
+# ==================================================================
+
+
+@pytest.fixture()
+def integration_app():
+    app = create_app()
+    app.config.update(TESTING=True)
+    return app
+
+
+class ExecutionAuditSpy:
+    def __init__(self):
+        self.calls = []
+
+    def log(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            id=str(uuid4())
+        )
+
+
+def _db_tenant(name: str) -> Tenant:
+    suffix = uuid4().hex[:8].upper()
+
+    tenant = Tenant(
+        legal_name=name,
+        display_name=name,
+        business_code=f"EX{suffix}",
+        workspace_slug=(
+            f"uom-executor-{uuid4().hex}"
+        ),
+    )
+
+    db.session.add(tenant)
+    db.session.flush()
+
+    return tenant
+
+
+def _db_user(
+    *,
+    tenant: Tenant,
+    name: str,
+) -> User:
+    user = User(
+        tenant_id=str(tenant.id),
+        first_name=name,
+        password_hash="test-password-hash",
+        is_active=True,
+    )
+
+    db.session.add(user)
+    db.session.flush()
+
+    return user
+
+
+def _db_canonical(
+    code: str,
+) -> CanonicalUnitOfMeasure:
+    return (
+        db.session.query(
+            CanonicalUnitOfMeasure
+        )
+        .filter(
+            CanonicalUnitOfMeasure.code == code
+        )
+        .one()
+    )
+
+
+def _db_unit(
+    *,
+    tenant: Tenant,
+    code: str,
+    name: str,
+) -> UnitOfMeasure:
+    unit = UnitOfMeasure(
+        tenant_id=str(tenant.id),
+        canonical_uom_id=None,
+        code=code,
+        name=name,
+        base_factor=Decimal("1"),
+    )
+
+    db.session.add(unit)
+    db.session.flush()
+
+    return unit
+
+
+def _db_product(
+    *,
+    tenant: Tenant,
+    unit: UnitOfMeasure,
+    sku: str,
+    name: str,
+) -> tuple[Product, ProductUnit]:
+    product = Product(
+        tenant_id=str(tenant.id),
+        unit_id=str(unit.id),
+        internal_sku=sku,
+        name=name,
+        product_type="stockable",
+        track_inventory=True,
+        track_batches=True,
+        track_expiry=True,
+        requires_prescription=False,
+        allow_negative_stock=False,
+        reorder_level=Decimal("0"),
+        reorder_qty=Decimal("0"),
+        is_active=True,
+    )
+
+    db.session.add(product)
+    db.session.flush()
+
+    product_unit = ProductUnit(
+        tenant_id=str(tenant.id),
+        product_id=str(product.id),
+        unit_id=str(unit.id),
+        conversion_factor_to_base=Decimal("1"),
+        is_base=True,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.flush()
+
+    return product, product_unit
+
+
+def _prepare_execution_catalogue():
+    CanonicalUOMCatalogueService(
+        db.session
+    ).synchronize()
+
+
+def _approved_link_fixture():
+    tenant = _db_tenant(
+        "UOM Executor Tenant"
+    )
+
+    creator = _db_user(
+        tenant=tenant,
+        name="Creator",
+    )
+    reviewer = _db_user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+    executor_user = _db_user(
+        tenant=tenant,
+        name="Executor",
+    )
+
+    source = _db_unit(
+        tenant=tenant,
+        code="TAB",
+        name="Tablet",
+    )
+
+    product, product_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=f"EXEC-TAB-{uuid4().hex[:8]}",
+        name="Paracetamol Tablets 500mg",
+    )
+
+    canonical = _db_canonical("TAB")
+
+    review_audit = ExecutionAuditSpy()
+
+    review_service = (
+        TenantUOMRemediationReviewService(
+            db.session,
+            audit_service=review_audit,
+        )
+    )
+
+    review = review_service.create_pending_review(
+        tenant_id=str(tenant.id),
+        source_uom_id=str(source.id),
+        created_by=str(creator.id),
+    )
+
+    review_service.approve_review(
+        tenant_id=str(tenant.id),
+        review_id=str(review.id),
+        reviewed_by=str(reviewer.id),
+        selected_action=LINK_EXISTING_UOM,
+        selected_canonical_uom_id=str(
+            canonical.id
+        ),
+        review_reason=(
+            "Approved for canonical UOM linkage."
+        ),
+    )
+
+    return SimpleNamespace(
+        tenant=tenant,
+        creator=creator,
+        reviewer=reviewer,
+        executor=executor_user,
+        source=source,
+        product=product,
+        product_unit=product_unit,
+        canonical=canonical,
+        review=review,
+        review_service=review_service,
+    )
+
+
+def test_execute_link_existing_uom_changes_only_canonical_link(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        source = fixture.source
+        product = fixture.product
+        product_unit = fixture.product_unit
+        review = fixture.review
+
+        product_before = {
+            "unit_id": product.unit_id,
+        }
+
+        product_unit_before = {
+            "id": str(product_unit.id),
+            "unit_id": product_unit.unit_id,
+            "conversion_factor_to_base": Decimal(
+                str(
+                    product_unit
+                    .conversion_factor_to_base
+                )
+            ),
+            "is_base": product_unit.is_base,
+            "can_sell": product_unit.can_sell,
+            "can_receive":
+                product_unit.can_receive,
+            "is_active":
+                product_unit.is_active,
+        }
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=audit,
+        )
+
+        result = (
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(review.id),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+        )
+
+        assert result.status == "executed"
+        assert result.changed is True
+        assert (
+            result.selected_action
+            == LINK_EXISTING_UOM
+        )
+        assert (
+            result.selected_canonical_uom_id
+            == str(fixture.canonical.id)
+        )
+
+        assert (
+            source.canonical_uom_id
+            == str(fixture.canonical.id)
+        )
+
+        assert review.status == "executed"
+        assert review.executed_by == str(
+            fixture.executor.id
+        )
+        assert review.executed_at is not None
+
+        summary = review.execution_summary
+
+        assert (
+            summary["action"]
+            == LINK_EXISTING_UOM
+        )
+        assert (
+            summary["audit_classification"]
+            == SAFE_TO_LINK
+        )
+        assert (
+            summary["source_uom_id"]
+            == str(source.id)
+        )
+        assert (
+            summary["canonical_uom_id"]
+            == str(fixture.canonical.id)
+        )
+        assert (
+            summary["operational_link_changed"]
+            is True
+        )
+        assert summary["product_changes"] == 0
+        assert (
+            summary["product_unit_changes"]
+            == 0
+        )
+        assert (
+            summary["historical_records_changed"]
+            == 0
+        )
+
+        assert (
+            product.unit_id
+            == product_before["unit_id"]
+        )
+
+        assert (
+            str(product_unit.id)
+            == product_unit_before["id"]
+        )
+        assert (
+            product_unit.unit_id
+            == product_unit_before["unit_id"]
+        )
+        assert Decimal(
+            str(
+                product_unit
+                .conversion_factor_to_base
+            )
+        ) == product_unit_before[
+            "conversion_factor_to_base"
+        ]
+        assert (
+            product_unit.is_base
+            == product_unit_before["is_base"]
+        )
+        assert (
+            product_unit.can_sell
+            == product_unit_before["can_sell"]
+        )
+        assert (
+            product_unit.can_receive
+            == product_unit_before[
+                "can_receive"
+            ]
+        )
+        assert (
+            product_unit.is_active
+            == product_unit_before[
+                "is_active"
+            ]
+        )
+
+        assert len(audit.calls) == 1
+
+        call = audit.calls[0]
+
+        assert (
+            call["module"]
+            == AuditModule.CATALOGUE
+        )
+        assert (
+            call["action"]
+            == AuditAction
+            .UOM_REMEDIATION_REVIEW_EXECUTED
+        )
+        assert call["commit"] is False
+        assert (
+            call["tenant_id"]
+            == str(fixture.tenant.id)
+        )
+        assert (
+            call["entity_id"]
+            == str(review.id)
+        )
+        assert (
+            call["user_id"]
+            == str(fixture.executor.id)
+        )
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_rejects_replay(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        service.execute_link_existing_uom(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(
+                fixture.executor.id
+            ),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already" in str(
+            exc.value
+        ).lower()
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_rejects_stale_review(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.product.name = (
+            "Changed Product Semantics"
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(
+            exc.value
+        ).lower()
+
+        assert (
+            fixture.source.canonical_uom_id
+            is None
+        )
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_rejects_non_link_action(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.review.selected_action = (
+            "NO_ACTION"
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+
+        assert (
+            fixture.source.canonical_uom_id
+            is None
+        )
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_defends_safe_classification(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.review.audit_classification = (
+            MIXED_PRODUCT_SEMANTICS
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert "safe_to_link" in str(
+            exc.value
+        ).lower()
+
+        assert (
+            fixture.source.canonical_uom_id
+            is None
+        )
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_requires_canonical_target(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.review.selected_canonical_uom_id = (
+            None
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert "canonical uom" in str(
+            exc.value
+        ).lower()
+
+        assert (
+            fixture.source.canonical_uom_id
+            is None
+        )
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_rejects_already_linked_source(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.source.canonical_uom_id = str(
+            fixture.canonical.id
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 409
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_link_existing_uom_rejects_inactive_canonical_target(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_link_fixture()
+
+        fixture.canonical.is_active = False
+        db.session.flush()
+
+        # Isolate canonical-target validation from the planner's
+        # broader stale-state protection.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+                SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_link_existing_uom(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+
+        assert exc.value.status_code == 404
+        assert "inactive" in str(
+            exc.value
+        ).lower()
+
+        assert (
+            fixture.source.canonical_uom_id
+            is None
+        )
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
