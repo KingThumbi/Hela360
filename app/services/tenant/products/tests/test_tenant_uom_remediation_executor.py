@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -10,12 +11,16 @@ import pytest
 from app import create_app
 from app.extensions import db
 from app.models import (
+    Branch,
     CanonicalUnitOfMeasure,
+    GoodsReceipt,
+    GoodsReceiptItem,
     Product,
     ProductUnit,
     Tenant,
     UnitOfMeasure,
     User,
+    Warehouse,
 )
 from app.services.common.audit_actions import AuditAction
 from app.services.common.audit_modules import AuditModule
@@ -24,6 +29,7 @@ from app.services.platform.canonical_uom_catalogue_service import (
 )
 from app.services.tenant.products import (
     LINK_EXISTING_UOM,
+    SPLIT_CURRENT_PRODUCTS,
     TenantUOMRemediationExecutionError,
     TenantUOMRemediationExecutor,
 )
@@ -32,6 +38,8 @@ from app.services.tenant.products.tenant_uom_audit_service import (
     SAFE_TO_LINK,
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
+    KEEP_CURRENT_PRODUCT,
+    MOVE_CURRENT_PRODUCT,
     TenantUOMRemediationReviewService,
 )
 
@@ -524,10 +532,18 @@ def _db_unit(
     tenant: Tenant,
     code: str,
     name: str,
+    canonical_code: str | None = None,
 ) -> UnitOfMeasure:
+    canonical_uom_id = None
+
+    if canonical_code is not None:
+        canonical_uom_id = str(
+            _db_canonical(canonical_code).id
+        )
+
     unit = UnitOfMeasure(
         tenant_id=str(tenant.id),
-        canonical_uom_id=None,
+        canonical_uom_id=canonical_uom_id,
         code=code,
         name=name,
         base_factor=Decimal("1"),
@@ -580,6 +596,94 @@ def _db_product(
     db.session.flush()
 
     return product, product_unit
+
+
+def _db_branch_and_warehouse(
+    *,
+    tenant: Tenant,
+) -> tuple[Branch, Warehouse]:
+    suffix = uuid4().hex[:8].upper()
+
+    branch = Branch(
+        tenant_id=str(tenant.id),
+        code=f"BR{suffix}",
+        name=f"Executor Branch {suffix}",
+        is_active=True,
+    )
+
+    db.session.add(branch)
+    db.session.flush()
+
+    warehouse = Warehouse(
+        tenant_id=str(tenant.id),
+        branch_id=str(branch.id),
+        code=f"WH{suffix}",
+        name=f"Executor Warehouse {suffix}",
+        warehouse_type="main",
+        is_active=True,
+    )
+
+    db.session.add(warehouse)
+    db.session.flush()
+
+    return branch, warehouse
+
+
+def _db_historical_receipt_evidence(
+    *,
+    tenant: Tenant,
+    branch: Branch,
+    warehouse: Warehouse,
+    product: Product,
+    product_unit: ProductUnit,
+    source_uom: UnitOfMeasure,
+    user: User,
+) -> tuple[GoodsReceipt, GoodsReceiptItem]:
+    now = datetime.now(timezone.utc)
+    suffix = uuid4().hex
+
+    receipt = GoodsReceipt(
+        tenant_id=str(tenant.id),
+        branch_id=str(branch.id),
+        warehouse_id=str(warehouse.id),
+        supplier_id=None,
+        receipt_number=f"GRN-UOM-{suffix[:12]}",
+        supplier_reference="UOM-HISTORY",
+        idempotency_key=f"uom-history-{suffix}",
+        request_fingerprint=(suffix * 2)[:64],
+        created_by=str(user.id),
+        received_at=now,
+        received_by=str(user.id),
+        status="received",
+    )
+
+    db.session.add(receipt)
+    db.session.flush()
+
+    item = GoodsReceiptItem(
+        goods_receipt_id=str(receipt.id),
+        product_id=str(product.id),
+        product_unit_id=str(product_unit.id),
+        batch_id=None,
+        line_number=1,
+        quantity=Decimal("5.0000"),
+        received_quantity=Decimal("5.0000"),
+        accepted_quantity=Decimal("5.0000"),
+        rejected_quantity=Decimal("0.0000"),
+        bonus_quantity=Decimal("0.0000"),
+        base_quantity=Decimal("5.0000"),
+        unit_code_snapshot=source_uom.code,
+        unit_name_snapshot=source_uom.name,
+        conversion_factor_to_base=Decimal("1.000000"),
+        batch_number="UOM-HISTORY-BATCH",
+        unit_cost=Decimal("12.50"),
+        base_unit_cost=Decimal("12.50"),
+    )
+
+    db.session.add(item)
+    db.session.flush()
+
+    return receipt, item
 
 
 def _prepare_execution_catalogue():
@@ -1166,5 +1270,867 @@ def test_execute_link_existing_uom_rejects_inactive_canonical_target(
             is None
         )
         assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def _approved_split_fixture(
+    *,
+    with_history: bool = False,
+):
+    tenant = _db_tenant(
+        "UOM Split Executor Tenant"
+    )
+
+    creator = _db_user(
+        tenant=tenant,
+        name="Creator",
+    )
+    reviewer = _db_user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+    executor_user = _db_user(
+        tenant=tenant,
+        name="Executor",
+    )
+
+    source = _db_unit(
+        tenant=tenant,
+        code="TAB",
+        name="Tablet",
+    )
+
+    tablet, tablet_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=f"SPLIT-TAB-{uuid4().hex[:8]}",
+        name="Paracetamol Tablets 500mg",
+    )
+
+    capsule, capsule_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=f"SPLIT-CAP-{uuid4().hex[:8]}",
+        name="Amoxicillin Capsules 500mg",
+    )
+
+    target = _db_unit(
+        tenant=tenant,
+        code="CAP-SPLIT",
+        name="Capsule Split Target",
+        canonical_code="CAP",
+    )
+
+    tablet_canonical = _db_canonical("TAB")
+    capsule_canonical = _db_canonical("CAP")
+
+    branch = None
+    warehouse = None
+    historical_receipt = None
+    historical_receipt_item = None
+
+    if with_history:
+        branch, warehouse = (
+            _db_branch_and_warehouse(
+                tenant=tenant,
+            )
+        )
+
+        (
+            historical_receipt,
+            historical_receipt_item,
+        ) = _db_historical_receipt_evidence(
+            tenant=tenant,
+            branch=branch,
+            warehouse=warehouse,
+            product=capsule,
+            product_unit=capsule_unit,
+            source_uom=source,
+            user=creator,
+        )
+
+    review_service = (
+        TenantUOMRemediationReviewService(
+            db.session,
+            audit_service=ExecutionAuditSpy(),
+        )
+    )
+
+    review = review_service.create_pending_review(
+        tenant_id=str(tenant.id),
+        source_uom_id=str(source.id),
+        created_by=str(creator.id),
+    )
+
+    assert (
+        review.audit_classification
+        == MIXED_PRODUCT_SEMANTICS
+    )
+
+    review_service.approve_review(
+        tenant_id=str(tenant.id),
+        review_id=str(review.id),
+        reviewed_by=str(reviewer.id),
+        selected_action=SPLIT_CURRENT_PRODUCTS,
+        selected_canonical_uom_id=str(
+            tablet_canonical.id
+        ),
+        product_decisions=[
+            {
+                "product_id": str(tablet.id),
+                "selected_action":
+                    KEEP_CURRENT_PRODUCT,
+                "preserve_historical_unit":
+                    True,
+            },
+            {
+                "product_id": str(capsule.id),
+                "selected_action":
+                    MOVE_CURRENT_PRODUCT,
+                "target_canonical_uom_id":
+                    str(capsule_canonical.id),
+                "target_tenant_uom_id":
+                    str(target.id),
+                "preserve_historical_unit":
+                    True,
+            },
+        ],
+        review_reason=(
+            "Split tablet and capsule semantics."
+        ),
+    )
+
+    return SimpleNamespace(
+        tenant=tenant,
+        creator=creator,
+        reviewer=reviewer,
+        executor=executor_user,
+        source=source,
+        target=target,
+        tablet=tablet,
+        tablet_unit=tablet_unit,
+        capsule=capsule,
+        capsule_unit=capsule_unit,
+        tablet_canonical=tablet_canonical,
+        capsule_canonical=capsule_canonical,
+        review=review,
+        review_service=review_service,
+        branch=branch,
+        warehouse=warehouse,
+        historical_receipt=historical_receipt,
+        historical_receipt_item=historical_receipt_item,
+    )
+
+
+def test_execute_split_current_products_preserves_old_product_unit(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        old_capsule_unit = fixture.capsule_unit
+
+        old_id = str(old_capsule_unit.id)
+        old_unit_id = str(
+            old_capsule_unit.unit_id
+        )
+        old_factor = Decimal(
+            str(
+                old_capsule_unit
+                .conversion_factor_to_base
+            )
+        )
+
+        tablet_product_unit_id = (
+            fixture.tablet.unit_id
+        )
+        tablet_base_id = str(
+            fixture.tablet_unit.id
+        )
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=(
+                fixture.review_service
+            ),
+            audit_service=audit,
+        )
+
+        result = (
+            service.execute_split_current_products(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+        )
+
+        assert result.status == "executed"
+        assert result.changed is True
+        assert (
+            result.selected_action
+            == SPLIT_CURRENT_PRODUCTS
+        )
+
+        # KEEP_CURRENT_PRODUCT establishes the identity
+        # retained by the source UOM.
+        assert (
+            fixture.source.canonical_uom_id
+            == str(
+                fixture.tablet_canonical.id
+            )
+        )
+
+        # Tablet remains structurally unchanged.
+        assert (
+            fixture.tablet.unit_id
+            == tablet_product_unit_id
+        )
+        assert (
+            str(fixture.tablet_unit.id)
+            == tablet_base_id
+        )
+        assert fixture.tablet_unit.is_base is True
+        assert fixture.tablet_unit.is_active is True
+
+        # Capsule now uses the explicit CAP tenant UOM.
+        assert (
+            fixture.capsule.unit_id
+            == str(fixture.target.id)
+        )
+
+        # Old ProductUnit is historical evidence:
+        # identity/unit/factor are immutable.
+        assert str(old_capsule_unit.id) == old_id
+        assert (
+            str(old_capsule_unit.unit_id)
+            == old_unit_id
+        )
+        assert Decimal(
+            str(
+                old_capsule_unit
+                .conversion_factor_to_base
+            )
+        ) == old_factor
+
+        assert old_capsule_unit.is_base is False
+        assert old_capsule_unit.is_active is False
+        assert old_capsule_unit.can_sell is False
+        assert old_capsule_unit.can_receive is False
+
+        new_base = (
+            db.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id
+                == str(fixture.tenant.id),
+                ProductUnit.product_id
+                == str(fixture.capsule.id),
+                ProductUnit.is_base.is_(True),
+            )
+            .one()
+        )
+
+        assert (
+            new_base.unit_id
+            == str(fixture.target.id)
+        )
+        assert Decimal(
+            str(
+                new_base
+                .conversion_factor_to_base
+            )
+        ) == Decimal("1")
+        assert new_base.is_active is True
+        assert new_base.can_sell is True
+        assert new_base.can_receive is True
+
+        assert str(new_base.id) != old_id
+
+        assert (
+            fixture.review.status
+            == "executed"
+        )
+        assert (
+            fixture.review.executed_by
+            == str(fixture.executor.id)
+        )
+        assert (
+            fixture.review.executed_at
+            is not None
+        )
+
+        summary = (
+            fixture.review.execution_summary
+        )
+
+        assert (
+            summary["action"]
+            == SPLIT_CURRENT_PRODUCTS
+        )
+        assert (
+            summary["keep_product_count"]
+            == 1
+        )
+        assert (
+            summary["moved_product_count"]
+            == 1
+        )
+        assert (
+            summary["historical_records_changed"]
+            == 0
+        )
+
+        assert len(audit.calls) == 1
+        assert (
+            audit.calls[0]["action"]
+            == AuditAction
+            .UOM_REMEDIATION_REVIEW_EXECUTED
+        )
+        assert (
+            audit.calls[0]["commit"]
+            is False
+        )
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_rejects_replay(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        service.execute_split_current_products(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already been executed" in str(
+            exc.value
+        )
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_rejects_stale_review(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        fixture.source.name = "Changed After Approval"
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value).lower()
+
+        assert fixture.review.status == "approved"
+        assert fixture.source.canonical_uom_id is None
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_defends_already_linked_source(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        fixture.source.canonical_uom_id = str(
+            fixture.tablet_canonical.id
+        )
+        db.session.flush()
+
+        # Isolate the locked-state guard from planner staleness.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+                SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already canonically linked" in str(
+            exc.value
+        )
+
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_defends_product_unit_drift(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        original_source_product_unit_id = str(
+            fixture.capsule_unit.id
+        )
+
+        replacement = ProductUnit(
+            tenant_id=str(fixture.tenant.id),
+            product_id=str(fixture.capsule.id),
+            unit_id=str(fixture.target.id),
+            conversion_factor_to_base=Decimal("1"),
+            is_base=False,
+            can_sell=True,
+            can_receive=True,
+            is_active=True,
+        )
+
+        db.session.add(replacement)
+        db.session.flush()
+
+        fixture.capsule_unit.is_base = False
+        fixture.capsule_unit.is_active = False
+
+        # Release the existing base row first. This mirrors the
+        # database invariant enforced by the partial unique index.
+        db.session.flush()
+
+        replacement.is_base = True
+        fixture.capsule.unit_id = str(
+            fixture.target.id
+        )
+
+        db.session.flush()
+
+        # Isolate execution's structural guards.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+                SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+
+        assert (
+            "no longer uses the source" in str(exc.value)
+            or "source ProductUnit" in str(exc.value)
+        )
+
+        old_row = db.session.get(
+            ProductUnit,
+            original_source_product_unit_id,
+        )
+
+        assert old_row is not None
+        assert (
+            str(old_row.unit_id)
+            == str(fixture.source.id)
+        )
+
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_promotes_existing_factor_one_target(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        existing_target = ProductUnit(
+            tenant_id=str(fixture.tenant.id),
+            product_id=str(fixture.capsule.id),
+            unit_id=str(fixture.target.id),
+            conversion_factor_to_base=Decimal("1"),
+            is_base=False,
+            can_sell=False,
+            can_receive=False,
+            is_active=False,
+        )
+
+        db.session.add(existing_target)
+        db.session.flush()
+
+        existing_id = str(existing_target.id)
+        old_id = str(fixture.capsule_unit.id)
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        result = service.execute_split_current_products(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        assert result.status == "executed"
+
+        db.session.refresh(existing_target)
+        db.session.refresh(fixture.capsule_unit)
+
+        assert str(existing_target.id) == existing_id
+        assert existing_target.is_base is True
+        assert existing_target.is_active is True
+        assert existing_target.can_sell is True
+        assert existing_target.can_receive is True
+        assert Decimal(
+            str(existing_target.conversion_factor_to_base)
+        ) == Decimal("1")
+
+        assert fixture.capsule.unit_id == str(
+            fixture.target.id
+        )
+
+        assert str(fixture.capsule_unit.id) == old_id
+        assert fixture.capsule_unit.is_base is False
+        assert fixture.capsule_unit.is_active is False
+
+        rows = (
+            db.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id
+                == str(fixture.tenant.id),
+                ProductUnit.product_id
+                == str(fixture.capsule.id),
+            )
+            .all()
+        )
+
+        assert len(rows) == 2
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_rejects_non_one_existing_target_factor(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        existing_target = ProductUnit(
+            tenant_id=str(fixture.tenant.id),
+            product_id=str(fixture.capsule.id),
+            unit_id=str(fixture.target.id),
+            conversion_factor_to_base=Decimal("10"),
+            is_base=False,
+            can_sell=True,
+            can_receive=True,
+            is_active=True,
+        )
+
+        db.session.add(existing_target)
+        db.session.flush()
+
+        target_id = str(existing_target.id)
+        old_base_id = str(
+            fixture.capsule_unit.id
+        )
+        old_product_unit_id = str(
+            fixture.capsule.unit_id
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "conversion factor" in str(
+            exc.value
+        ).lower()
+
+        db.session.refresh(existing_target)
+        db.session.refresh(fixture.capsule_unit)
+        db.session.refresh(fixture.capsule)
+
+        assert str(existing_target.id) == target_id
+        assert Decimal(
+            str(existing_target.conversion_factor_to_base)
+        ) == Decimal("10")
+        assert existing_target.is_base is False
+
+        assert (
+            str(fixture.capsule_unit.id)
+            == old_base_id
+        )
+        assert fixture.capsule_unit.is_base is True
+        assert (
+            fixture.capsule.unit_id
+            == old_product_unit_id
+        )
+
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_preserves_goods_receipt_evidence(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+
+        fixture = _approved_split_fixture(
+            with_history=True
+        )
+
+        receipt_item = (
+            fixture.historical_receipt_item
+        )
+        old_product_unit = (
+            fixture.capsule_unit
+        )
+
+        assert receipt_item is not None
+        assert fixture.historical_receipt is not None
+
+        receipt_item_id = str(
+            receipt_item.id
+        )
+        historical_product_unit_id = str(
+            receipt_item.product_unit_id
+        )
+
+        old_product_unit_id = str(
+            old_product_unit.id
+        )
+        old_unit_id = str(
+            old_product_unit.unit_id
+        )
+        old_factor = Decimal(
+            str(
+                old_product_unit
+                .conversion_factor_to_base
+            )
+        )
+
+        snapshot_unit_code = (
+            receipt_item.unit_code_snapshot
+        )
+        snapshot_unit_name = (
+            receipt_item.unit_name_snapshot
+        )
+        snapshot_factor = Decimal(
+            str(
+                receipt_item
+                .conversion_factor_to_base
+            )
+        )
+        snapshot_base_quantity = Decimal(
+            str(receipt_item.base_quantity)
+        )
+        snapshot_quantity = Decimal(
+            str(receipt_item.quantity)
+        )
+
+        assert (
+            historical_product_unit_id
+            == old_product_unit_id
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        result = (
+            service.execute_split_current_products(
+                tenant_id=str(
+                    fixture.tenant.id
+                ),
+                review_id=str(
+                    fixture.review.id
+                ),
+                executed_by=str(
+                    fixture.executor.id
+                ),
+            )
+        )
+
+        assert result.status == "executed"
+
+        db.session.refresh(receipt_item)
+        db.session.refresh(old_product_unit)
+        db.session.refresh(fixture.capsule)
+
+        # The transactional evidence row itself survives.
+        assert (
+            str(receipt_item.id)
+            == receipt_item_id
+        )
+
+        # The GRN still references the exact historical
+        # ProductUnit that represented the received stock.
+        assert (
+            str(receipt_item.product_unit_id)
+            == historical_product_unit_id
+        )
+        assert (
+            str(receipt_item.product_unit_id)
+            == old_product_unit_id
+        )
+
+        # Receipt snapshots remain immutable evidence.
+        assert (
+            receipt_item.unit_code_snapshot
+            == snapshot_unit_code
+        )
+        assert (
+            receipt_item.unit_name_snapshot
+            == snapshot_unit_name
+        )
+        assert Decimal(
+            str(
+                receipt_item
+                .conversion_factor_to_base
+            )
+        ) == snapshot_factor
+        assert Decimal(
+            str(receipt_item.base_quantity)
+        ) == snapshot_base_quantity
+        assert Decimal(
+            str(receipt_item.quantity)
+        ) == snapshot_quantity
+
+        # The old ProductUnit remains the exact historical
+        # identity referenced by the receipt.
+        assert (
+            str(old_product_unit.id)
+            == old_product_unit_id
+        )
+        assert (
+            str(old_product_unit.unit_id)
+            == old_unit_id
+        )
+        assert Decimal(
+            str(
+                old_product_unit
+                .conversion_factor_to_base
+            )
+        ) == old_factor
+
+        # It is retired from current operations only.
+        assert old_product_unit.is_base is False
+        assert old_product_unit.is_active is False
+        assert old_product_unit.can_sell is False
+        assert old_product_unit.can_receive is False
+
+        # Current product truth moves to CAP.
+        assert (
+            fixture.capsule.unit_id
+            == str(fixture.target.id)
+        )
+
+        new_base = (
+            db.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id
+                == str(fixture.tenant.id),
+                ProductUnit.product_id
+                == str(fixture.capsule.id),
+                ProductUnit.is_base.is_(True),
+            )
+            .one()
+        )
+
+        assert (
+            str(new_base.id)
+            != old_product_unit_id
+        )
+        assert (
+            new_base.unit_id
+            == str(fixture.target.id)
+        )
+        assert Decimal(
+            str(
+                new_base
+                .conversion_factor_to_base
+            )
+        ) == Decimal("1")
+        assert new_base.is_active is True
 
         db.session.rollback()

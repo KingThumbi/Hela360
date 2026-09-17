@@ -2,13 +2,14 @@
 Tenant UOM remediation execution boundary.
 
 C5E3A established execution preflight and provenance.
+C5E3B added governed LINK_EXISTING_UOM execution.
+C5E3C adds governed SPLIT_CURRENT_PRODUCTS execution.
 
-C5E3B adds execution of LINK_EXISTING_UOM only.
+C5E3C may replace the current Product/ProductUnit base-unit
+structure only through explicit approved product decisions.
 
-This phase deliberately does NOT mutate:
-- Product.unit_id
-- ProductUnit rows
-- inventory, sales, receipts, or historical evidence
+Historical ProductUnit identity, unit identity, conversion factors,
+and transactional evidence must never be rewritten.
 
 Transaction ownership remains with the caller.
 """
@@ -17,9 +18,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.models import (
     CanonicalUnitOfMeasure,
+    Product,
+    ProductUnit,
+    TenantUOMRemediationProductDecision,
     TenantUOMRemediationReview,
     UnitOfMeasure,
     User,
@@ -28,12 +33,16 @@ from app.services.common.audit_actions import AuditAction
 from app.services.common.audit_modules import AuditModule
 from app.services.common.audit_service import AuditService
 from app.services.tenant.products.tenant_uom_audit_service import (
+    MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
 )
 from app.services.tenant.products.tenant_uom_remediation_planner import (
     LINK_EXISTING_UOM,
+    SPLIT_CURRENT_PRODUCTS,
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
+    KEEP_CURRENT_PRODUCT,
+    MOVE_CURRENT_PRODUCT,
     REVIEW_SELECTED_ACTIONS,
     TenantUOMRemediationReviewService,
 )
@@ -73,7 +82,7 @@ class TenantUOMRemediationExecutionResult:
     tenant_id: str
     source_uom_id: str
     selected_action: str
-    selected_canonical_uom_id: str
+    selected_canonical_uom_id: str | None
     status: str
     changed: bool
     execution_summary: dict
@@ -83,7 +92,8 @@ class TenantUOMRemediationExecutor:
     """
     Governed tenant UOM remediation execution boundary.
 
-    C5E3B supports LINK_EXISTING_UOM only.
+    Supports the explicitly implemented C5E3 execution actions:
+    LINK_EXISTING_UOM and SPLIT_CURRENT_PRODUCTS.
 
     Transaction ownership remains with the caller.
     """
@@ -408,6 +418,552 @@ class TenantUOMRemediationExecutor:
             ),
         )
 
+    def execute_split_current_products(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        executed_by: str,
+    ) -> TenantUOMRemediationExecutionResult:
+        """
+        Execute an approved mixed-semantics product split.
+
+        C5E3C may mutate:
+        - Product.unit_id
+        - current ProductUnit lifecycle/base flags
+        - source UnitOfMeasure.canonical_uom_id when KEEP decisions
+          establish the identity retained by the source UOM
+
+        Historical ProductUnit identity, unit_id, and conversion
+        factor are never rewritten.
+        """
+
+        preflight = self.preflight(
+            tenant_id=tenant_id,
+            review_id=review_id,
+            executed_by=executed_by,
+        )
+
+        if (
+            preflight.selected_action
+            != SPLIT_CURRENT_PRODUCTS
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "C5E3C can execute only SPLIT_CURRENT_PRODUCTS "
+                "remediation reviews.",
+                409,
+            )
+
+        review = self._get_review_for_update(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        if review.status == "executed":
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review has already been executed.",
+                409,
+            )
+
+        if review.status != "approved":
+            raise TenantUOMRemediationExecutionError(
+                "Only an approved remediation review may be executed.",
+                409,
+            )
+
+        if (
+            review.selected_action
+            != SPLIT_CURRENT_PRODUCTS
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review no longer contains "
+                "SPLIT_CURRENT_PRODUCTS as its approved action.",
+                409,
+            )
+
+        if (
+            review.audit_classification
+            != MIXED_PRODUCT_SEMANTICS
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "Only MIXED_PRODUCT_SEMANTICS reviews may "
+                "execute SPLIT_CURRENT_PRODUCTS.",
+                409,
+            )
+
+        actor = self._get_user(
+            tenant_id=tenant_id,
+            user_id=executed_by,
+        )
+
+        source_uom = self._get_tenant_uom_for_update(
+            tenant_id=tenant_id,
+            uom_id=str(review.source_uom_id),
+        )
+
+        decisions = self._get_decisions_for_update(
+            tenant_id=tenant_id,
+            review_id=str(review.id),
+        )
+
+        if not decisions:
+            raise TenantUOMRemediationExecutionError(
+                "The split remediation review contains no "
+                "product decisions.",
+                409,
+            )
+
+        keep_decisions = [
+            row
+            for row in decisions
+            if row.selected_action
+            == KEEP_CURRENT_PRODUCT
+        ]
+
+        move_decisions = [
+            row
+            for row in decisions
+            if row.selected_action
+            == MOVE_CURRENT_PRODUCT
+        ]
+
+        if (
+            len(keep_decisions)
+            + len(move_decisions)
+            != len(decisions)
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The split remediation review contains an "
+                "unsupported product decision.",
+                409,
+            )
+
+        retained_canonical = None
+
+        if keep_decisions:
+            if not review.selected_canonical_uom_id:
+                raise TenantUOMRemediationExecutionError(
+                    "KEEP_CURRENT_PRODUCT decisions require the "
+                    "approved source canonical UOM identity.",
+                    409,
+                )
+
+            retained_canonical = self._get_canonical_uom(
+                canonical_uom_id=str(
+                    review.selected_canonical_uom_id
+                )
+            )
+
+            if source_uom.canonical_uom_id is not None:
+                raise TenantUOMRemediationExecutionError(
+                    "The source tenant UOM is already canonically "
+                    "linked. The approved split review no longer "
+                    "matches the executable state.",
+                    409,
+                )
+
+        prepared_moves = []
+
+        for decision in decisions:
+            product = self._get_product_for_update(
+                tenant_id=tenant_id,
+                product_id=str(decision.product_id),
+            )
+
+            if product.unit_id != str(source_uom.id):
+                raise TenantUOMRemediationExecutionError(
+                    "A reviewed product no longer uses the source "
+                    "tenant UOM.",
+                    409,
+                )
+
+            product_units = (
+                self._get_product_units_for_update(
+                    tenant_id=tenant_id,
+                    product_id=str(product.id),
+                )
+            )
+
+            base_units = [
+                row
+                for row in product_units
+                if row.is_base
+            ]
+
+            if len(base_units) != 1:
+                raise TenantUOMRemediationExecutionError(
+                    "Reviewed product must have exactly one "
+                    "current base ProductUnit.",
+                    409,
+                )
+
+            current_base = base_units[0]
+
+            if (
+                current_base.unit_id
+                != product.unit_id
+            ):
+                raise TenantUOMRemediationExecutionError(
+                    "Product base ProductUnit does not match "
+                    "Product.unit_id.",
+                    409,
+                )
+
+            if Decimal(
+                str(
+                    current_base
+                    .conversion_factor_to_base
+                )
+            ) != Decimal("1"):
+                raise TenantUOMRemediationExecutionError(
+                    "Current base ProductUnit must have "
+                    "conversion_factor_to_base = 1.",
+                    409,
+                )
+
+            if (
+                decision.source_product_unit_id
+                and str(current_base.id)
+                != str(
+                    decision.source_product_unit_id
+                )
+            ):
+                raise TenantUOMRemediationExecutionError(
+                    "The reviewed source ProductUnit no longer "
+                    "matches the current base ProductUnit.",
+                    409,
+                )
+
+            if (
+                decision.selected_action
+                == KEEP_CURRENT_PRODUCT
+            ):
+                continue
+
+            if not decision.target_tenant_uom_id:
+                raise TenantUOMRemediationExecutionError(
+                    "MOVE_CURRENT_PRODUCT requires an approved "
+                    "target_tenant_uom_id.",
+                    409,
+                )
+
+            target_uom = self._get_tenant_uom_for_update(
+                tenant_id=tenant_id,
+                uom_id=str(
+                    decision.target_tenant_uom_id
+                ),
+            )
+
+            if str(target_uom.id) == str(source_uom.id):
+                raise TenantUOMRemediationExecutionError(
+                    "MOVE_CURRENT_PRODUCT target must differ "
+                    "from the source tenant UOM.",
+                    409,
+                )
+
+            if decision.target_canonical_uom_id:
+                target_canonical = (
+                    self._get_canonical_uom(
+                        canonical_uom_id=str(
+                            decision
+                            .target_canonical_uom_id
+                        )
+                    )
+                )
+
+                if (
+                    target_uom.canonical_uom_id
+                    is not None
+                    and str(
+                        target_uom.canonical_uom_id
+                    )
+                    != str(target_canonical.id)
+                ):
+                    raise TenantUOMRemediationExecutionError(
+                        "Target tenant UOM canonical identity "
+                        "no longer matches the approved decision.",
+                        409,
+                    )
+
+            target_product_unit = next(
+                (
+                    row
+                    for row in product_units
+                    if row.unit_id
+                    == str(target_uom.id)
+                ),
+                None,
+            )
+
+            if target_product_unit is not None:
+                if Decimal(
+                    str(
+                        target_product_unit
+                        .conversion_factor_to_base
+                    )
+                ) != Decimal("1"):
+                    raise TenantUOMRemediationExecutionError(
+                        "Existing target ProductUnit cannot become "
+                        "base because its conversion factor is "
+                        "not 1.",
+                        409,
+                    )
+
+            prepared_moves.append(
+                (
+                    product,
+                    current_base,
+                    target_uom,
+                    target_product_unit,
+                )
+            )
+
+        locked_staleness = (
+            self.review_service.assess_staleness(
+                tenant_id=tenant_id,
+                review_id=str(review.id),
+            )
+        )
+
+        if locked_staleness.is_stale:
+            raise TenantUOMRemediationExecutionError(
+                "The approved remediation review became stale "
+                "before split execution. Supersede it and create "
+                "a new review.",
+                409,
+            )
+
+        old_values = {
+            "status": review.status,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "executed_by": review.executed_by,
+            "executed_at": (
+                review.executed_at.isoformat()
+                if review.executed_at
+                else None
+            ),
+        }
+
+        product_summaries = []
+
+        for (
+            product,
+            current_base,
+            target_uom,
+            target_product_unit,
+        ) in prepared_moves:
+            old_base_id = str(current_base.id)
+            old_base_unit_id = str(
+                current_base.unit_id
+            )
+            old_base_factor = str(
+                current_base
+                .conversion_factor_to_base
+            )
+
+            current_base.is_base = False
+            current_base.is_active = False
+            current_base.can_sell = False
+            current_base.can_receive = False
+
+            # Release the partial unique base index before
+            # promoting/creating the replacement base row.
+            self.session.flush()
+
+            if target_product_unit is None:
+                target_product_unit = ProductUnit(
+                    tenant_id=tenant_id,
+                    product_id=str(product.id),
+                    unit_id=str(target_uom.id),
+                    conversion_factor_to_base=Decimal(
+                        "1"
+                    ),
+                    is_base=True,
+                    can_sell=True,
+                    can_receive=True,
+                    is_active=True,
+                )
+
+                self.session.add(
+                    target_product_unit
+                )
+            else:
+                target_product_unit.is_base = True
+                target_product_unit.is_active = True
+                target_product_unit.can_sell = True
+                target_product_unit.can_receive = True
+
+            product.unit_id = str(target_uom.id)
+
+            self.session.flush()
+
+            final_bases = (
+                self.session.query(ProductUnit)
+                .filter(
+                    ProductUnit.tenant_id
+                    == tenant_id,
+                    ProductUnit.product_id
+                    == str(product.id),
+                    ProductUnit.is_base.is_(True),
+                )
+                .all()
+            )
+
+            if len(final_bases) != 1:
+                raise TenantUOMRemediationExecutionError(
+                    "Split execution failed the one-base "
+                    "ProductUnit invariant.",
+                    409,
+                )
+
+            final_base = final_bases[0]
+
+            if (
+                final_base.unit_id
+                != product.unit_id
+                or final_base.unit_id
+                != str(target_uom.id)
+                or not final_base.is_active
+                or Decimal(
+                    str(
+                        final_base
+                        .conversion_factor_to_base
+                    )
+                )
+                != Decimal("1")
+            ):
+                raise TenantUOMRemediationExecutionError(
+                    "Split execution failed the replacement "
+                    "base ProductUnit invariant.",
+                    409,
+                )
+
+            if (
+                str(current_base.id)
+                != old_base_id
+                or str(current_base.unit_id)
+                != old_base_unit_id
+                or str(
+                    current_base
+                    .conversion_factor_to_base
+                )
+                != old_base_factor
+            ):
+                raise TenantUOMRemediationExecutionError(
+                    "Historical ProductUnit identity or factor "
+                    "changed during split execution.",
+                    409,
+                )
+
+            product_summaries.append(
+                {
+                    "product_id":
+                        str(product.id),
+                    "action":
+                        MOVE_CURRENT_PRODUCT,
+                    "old_product_unit_id":
+                        old_base_id,
+                    "old_unit_id":
+                        old_base_unit_id,
+                    "new_product_unit_id":
+                        str(final_base.id),
+                    "new_unit_id":
+                        str(target_uom.id),
+                }
+            )
+
+        if retained_canonical is not None:
+            source_uom.canonical_uom_id = str(
+                retained_canonical.id
+            )
+
+        now = utcnow()
+
+        execution_summary = {
+            "action": SPLIT_CURRENT_PRODUCTS,
+            "audit_classification":
+                review.audit_classification,
+            "source_uom_id":
+                str(source_uom.id),
+            "source_canonical_uom_id": (
+                str(retained_canonical.id)
+                if retained_canonical is not None
+                else None
+            ),
+            "keep_product_count":
+                len(keep_decisions),
+            "moved_product_count":
+                len(prepared_moves),
+            "product_changes":
+                len(prepared_moves),
+            "product_unit_changes":
+                len(prepared_moves) * 2,
+            "historical_records_changed": 0,
+            "products": product_summaries,
+        }
+
+        review.status = "executed"
+        review.executed_by = str(actor.id)
+        review.executed_at = now
+        review.execution_summary = execution_summary
+        review.updated_at = now
+
+        self.session.flush()
+
+        self.audit_service.log(
+            module=AuditModule.CATALOGUE,
+            action=(
+                AuditAction
+                .UOM_REMEDIATION_REVIEW_EXECUTED
+            ),
+            entity_type=(
+                "tenant_uom_remediation_review"
+            ),
+            tenant_id=tenant_id,
+            entity_id=str(review.id),
+            user_id=str(actor.id),
+            old_values=old_values,
+            new_values={
+                "status": "executed",
+                "source_uom_id":
+                    str(source_uom.id),
+                "source_canonical_uom_id": (
+                    str(retained_canonical.id)
+                    if retained_canonical
+                    is not None
+                    else None
+                ),
+                "executed_by":
+                    str(actor.id),
+                "executed_at":
+                    now.isoformat(),
+            },
+            details=execution_summary,
+            reason=review.review_reason,
+            commit=False,
+        )
+
+        self.session.flush()
+
+        return TenantUOMRemediationExecutionResult(
+            review_id=str(review.id),
+            tenant_id=str(review.tenant_id),
+            source_uom_id=str(source_uom.id),
+            selected_action=(
+                SPLIT_CURRENT_PRODUCTS
+            ),
+            selected_canonical_uom_id=(
+                str(retained_canonical.id)
+                if retained_canonical is not None
+                else None
+            ),
+            status="executed",
+            changed=True,
+            execution_summary=execution_summary,
+        )
+
     def _get_user(
         self,
         *,
@@ -484,6 +1040,85 @@ class TenantUOMRemediationExecutor:
             )
 
         return unit
+
+    def _get_decisions_for_update(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+    ) -> tuple[
+        TenantUOMRemediationProductDecision,
+        ...,
+    ]:
+        rows = (
+            self.session.query(
+                TenantUOMRemediationProductDecision
+            )
+            .filter(
+                TenantUOMRemediationProductDecision.tenant_id
+                == tenant_id,
+                TenantUOMRemediationProductDecision.review_id
+                == review_id,
+            )
+            .order_by(
+                TenantUOMRemediationProductDecision.product_id
+            )
+            .with_for_update()
+            .all()
+        )
+
+        return tuple(rows)
+
+    def _get_product_for_update(
+        self,
+        *,
+        tenant_id: str,
+        product_id: str,
+    ) -> Product:
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if product is None:
+            raise TenantUOMRemediationExecutionError(
+                "Reviewed product was not found.",
+                404,
+            )
+
+        return product
+
+    def _get_product_units_for_update(
+        self,
+        *,
+        tenant_id: str,
+        product_id: str,
+    ) -> tuple[ProductUnit, ...]:
+        rows = (
+            self.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id
+                == tenant_id,
+                ProductUnit.product_id
+                == product_id,
+            )
+            .order_by(ProductUnit.id)
+            .with_for_update()
+            .all()
+        )
+
+        if not rows:
+            raise TenantUOMRemediationExecutionError(
+                "Reviewed product has no ProductUnit rows.",
+                409,
+            )
+
+        return tuple(rows)
 
     def _get_canonical_uom(
         self,

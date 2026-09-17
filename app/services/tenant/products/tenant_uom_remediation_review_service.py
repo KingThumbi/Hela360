@@ -885,13 +885,10 @@ class TenantUOMRemediationReviewService:
                 )
 
             if action == MOVE_CURRENT_PRODUCT:
-                if (
-                    target_canonical is None
-                    and target_tenant_uom is None
-                ):
+                if target_tenant_uom is None:
                     raise TenantUOMRemediationReviewError(
-                        "Moving a product requires a target "
-                        "canonical UOM or target tenant UOM.",
+                        "Moving a product requires an explicit "
+                        "target_tenant_uom_id.",
                         400,
                     )
 

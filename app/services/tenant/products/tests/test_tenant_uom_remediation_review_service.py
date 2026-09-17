@@ -33,6 +33,7 @@ from app.services.tenant.products.tenant_uom_remediation_planner import (
     SPLIT_CURRENT_PRODUCTS,
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
+    KEEP_CURRENT_PRODUCT,
     MOVE_CURRENT_PRODUCT,
     TenantUOMRemediationReviewError,
     TenantUOMRemediationReviewService,
@@ -1142,5 +1143,225 @@ def test_stale_review_cannot_be_approved(app):
         assert exc.value.status_code == 409
         assert "stale" in str(exc.value).lower()
         assert review.status == "pending"
+
+        db.session.rollback()
+
+
+def test_mixed_move_requires_explicit_target_tenant_uom(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            _target,
+            tablet,
+            _tablet_unit,
+            capsule,
+            _capsule_unit,
+        ) = _mixed_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        canonical = _canonical("TAB")
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=str(review.id),
+                reviewed_by=str(reviewer.id),
+                selected_action=SPLIT_CURRENT_PRODUCTS,
+                selected_canonical_uom_id=str(
+                    canonical.id
+                ),
+                product_decisions=[
+                    {
+                        "product_id": str(
+                            tablet.id
+                        ),
+                        "selected_action":
+                            MOVE_CURRENT_PRODUCT,
+                        "target_canonical_uom_id":
+                            str(canonical.id),
+                    },
+                    {
+                        "product_id": str(
+                            capsule.id
+                        ),
+                        "selected_action":
+                            KEEP_CURRENT_PRODUCT,
+                    },
+                ],
+            )
+
+        assert exc.value.status_code == 400
+        assert "target_tenant_uom_id" in str(
+            exc.value
+        )
+
+        db.session.rollback()
+
+
+def test_mixed_review_persists_keep_and_move_execution_decisions(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            target,
+            tablet,
+            tablet_unit,
+            capsule,
+            capsule_unit,
+        ) = _mixed_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        tablet_canonical = _canonical("TAB")
+        capsule_canonical = _canonical("CAP")
+
+        source_before = source.canonical_uom_id
+        tablet_product_unit_before = tablet.unit_id
+        capsule_product_unit_before = capsule.unit_id
+        tablet_pu_unit_before = tablet_unit.unit_id
+        capsule_pu_unit_before = capsule_unit.unit_id
+
+        approved = service.approve_review(
+            tenant_id=str(tenant.id),
+            review_id=str(review.id),
+            reviewed_by=str(reviewer.id),
+            selected_action=SPLIT_CURRENT_PRODUCTS,
+            selected_canonical_uom_id=str(
+                tablet_canonical.id
+            ),
+            product_decisions=[
+                {
+                    "product_id": str(tablet.id),
+                    "selected_action":
+                        KEEP_CURRENT_PRODUCT,
+                    "preserve_historical_unit":
+                        True,
+                    "review_note":
+                        "Tablet remains on source TAB UOM.",
+                },
+                {
+                    "product_id": str(capsule.id),
+                    "selected_action":
+                        MOVE_CURRENT_PRODUCT,
+                    "target_canonical_uom_id":
+                        str(capsule_canonical.id),
+                    "target_tenant_uom_id":
+                        str(target.id),
+                    "preserve_historical_unit":
+                        True,
+                    "review_note":
+                        "Capsule moves to CAP tenant UOM.",
+                },
+            ],
+            review_reason=(
+                "Split mixed tablet and capsule semantics."
+            ),
+        )
+
+        assert approved.status == "approved"
+        assert (
+            approved.selected_action
+            == SPLIT_CURRENT_PRODUCTS
+        )
+        assert (
+            approved.selected_canonical_uom_id
+            == str(tablet_canonical.id)
+        )
+
+        decisions = {
+            str(row.product_id): row
+            for row in (
+                db.session.query(
+                    TenantUOMRemediationProductDecision
+                )
+                .filter(
+                    TenantUOMRemediationProductDecision.review_id
+                    == str(review.id)
+                )
+                .all()
+            )
+        }
+
+        tablet_decision = decisions[str(tablet.id)]
+        capsule_decision = decisions[str(capsule.id)]
+
+        assert (
+            tablet_decision.selected_action
+            == KEEP_CURRENT_PRODUCT
+        )
+        assert (
+            tablet_decision.target_tenant_uom_id
+            is None
+        )
+        assert (
+            tablet_decision.target_canonical_uom_id
+            is None
+        )
+        assert (
+            tablet_decision.preserve_historical_unit
+            is True
+        )
+
+        assert (
+            capsule_decision.selected_action
+            == MOVE_CURRENT_PRODUCT
+        )
+        assert (
+            capsule_decision.target_tenant_uom_id
+            == str(target.id)
+        )
+        assert (
+            capsule_decision.target_canonical_uom_id
+            == str(capsule_canonical.id)
+        )
+        assert (
+            capsule_decision.preserve_historical_unit
+            is True
+        )
+
+        # Approval remains review-only.
+        assert source.canonical_uom_id == source_before
+
+        assert (
+            tablet.unit_id
+            == tablet_product_unit_before
+        )
+        assert (
+            capsule.unit_id
+            == capsule_product_unit_before
+        )
+
+        assert (
+            tablet_unit.unit_id
+            == tablet_pu_unit_before
+        )
+        assert (
+            capsule_unit.unit_id
+            == capsule_pu_unit_before
+        )
 
         db.session.rollback()
