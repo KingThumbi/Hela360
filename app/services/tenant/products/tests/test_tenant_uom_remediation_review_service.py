@@ -1550,6 +1550,82 @@ def test_mixed_move_requires_explicit_target_tenant_uom(app):
         db.session.rollback()
 
 
+
+def test_mixed_move_rejects_unmapped_target_tenant_uom(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            _target,
+            tablet,
+            _tablet_unit,
+            capsule,
+            _capsule_unit,
+        ) = _mixed_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        tablet_canonical = _canonical("TAB")
+        capsule_canonical = _canonical("CAP")
+
+        unmapped_target = _unit(
+            tenant=tenant,
+            code="CAP-UNMAPPED",
+            name="Capsule Unmapped Target",
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=str(review.id),
+                reviewed_by=str(reviewer.id),
+                selected_action=SPLIT_CURRENT_PRODUCTS,
+                selected_canonical_uom_id=str(
+                    tablet_canonical.id
+                ),
+                product_decisions=[
+                    {
+                        "product_id": str(tablet.id),
+                        "selected_action":
+                            KEEP_CURRENT_PRODUCT,
+                        "preserve_historical_unit": True,
+                    },
+                    {
+                        "product_id": str(capsule.id),
+                        "selected_action":
+                            MOVE_CURRENT_PRODUCT,
+                        "target_canonical_uom_id":
+                            str(capsule_canonical.id),
+                        "target_tenant_uom_id":
+                            str(unmapped_target.id),
+                        "preserve_historical_unit": True,
+                    },
+                ],
+            )
+
+        assert exc.value.status_code == 400
+        assert "canonically mapped" in str(
+            exc.value
+        )
+
+        assert review.status == "pending"
+        assert unmapped_target.canonical_uom_id is None
+
+        db.session.rollback()
+
+
 def test_mixed_review_persists_keep_and_move_execution_decisions(app):
     with app.app_context():
         _prepare_catalogue()

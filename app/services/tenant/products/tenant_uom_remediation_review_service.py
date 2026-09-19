@@ -932,16 +932,18 @@ class TenantUOMRemediationReviewService:
             if (
                 target_canonical is not None
                 and target_tenant_uom is not None
-                and target_tenant_uom.canonical_uom_id
-                is not None
-                and str(
+                and (
                     target_tenant_uom.canonical_uom_id
+                    is None
+                    or str(
+                        target_tenant_uom.canonical_uom_id
+                    )
+                    != str(target_canonical.id)
                 )
-                != str(target_canonical.id)
             ):
                 raise TenantUOMRemediationReviewError(
-                    "Target tenant UOM canonical mapping does "
-                    "not match target_canonical_uom_id.",
+                    "Target tenant UOM must be canonically mapped "
+                    "to target_canonical_uom_id.",
                     400,
                 )
 

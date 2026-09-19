@@ -740,16 +740,15 @@ class TenantUOMRemediationExecutor:
                 )
 
                 if (
-                    target_uom.canonical_uom_id
-                    is not None
-                    and str(
+                    target_uom.canonical_uom_id is None
+                    or str(
                         target_uom.canonical_uom_id
                     )
                     != str(target_canonical.id)
                 ):
                     raise TenantUOMRemediationExecutionError(
-                        "Target tenant UOM canonical identity "
-                        "no longer matches the approved decision.",
+                        "Target tenant UOM must remain canonically "
+                        "mapped to the approved target canonical UOM.",
                         409,
                     )
 

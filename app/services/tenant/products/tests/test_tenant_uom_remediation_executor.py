@@ -3411,6 +3411,58 @@ def test_execute_split_current_products_promotes_existing_factor_one_target(
         db.session.rollback()
 
 
+
+def test_execute_split_current_products_rejects_unmapped_target_drift(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        assert (
+            fixture.target.canonical_uom_id
+            == str(fixture.capsule_canonical.id)
+        )
+
+        fixture.target.canonical_uom_id = None
+        db.session.flush()
+
+        # Isolate the executor's locked-state canonical guard.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+                SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_split_current_products(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "canonically mapped" in str(
+            exc.value
+        ).lower()
+
+        assert fixture.review.status == "approved"
+        assert (
+            fixture.capsule.unit_id
+            == str(fixture.source.id)
+        )
+        assert fixture.capsule_unit.is_base is True
+
+        db.session.rollback()
+
+
 def test_execute_split_current_products_rejects_non_one_existing_target_factor(
     integration_app,
 ):
