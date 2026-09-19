@@ -524,6 +524,15 @@ class TenantUOMRemediationReviewService:
 
         submitted = product_decisions or []
 
+        if (
+            selected_action == KEEP_UNMAPPED
+            and submitted
+        ):
+            raise TenantUOMRemediationReviewError(
+                "KEEP_UNMAPPED does not accept product decisions.",
+                400,
+            )
+
         self._apply_product_decisions(
             review=review,
             persisted_decisions=decisions,
@@ -746,6 +755,25 @@ class TenantUOMRemediationReviewService:
             if selected_action != NO_ACTION:
                 raise TenantUOMRemediationReviewError(
                     "Already-linked UOMs require NO_ACTION.",
+                    400,
+                )
+
+        if selected_action == KEEP_UNMAPPED:
+            if classification not in {
+                SAFE_TO_LINK,
+                CUSTOM_UNMAPPED,
+                DOSAGE_FORM_AS_UOM,
+                LEGACY_PRODUCT_SPECIFIC,
+            }:
+                raise TenantUOMRemediationReviewError(
+                    "KEEP_UNMAPPED is valid only for unresolved "
+                    "or deliberately unlinked tenant UOMs.",
+                    400,
+                )
+
+            if selected_canonical is not None:
+                raise TenantUOMRemediationReviewError(
+                    "KEEP_UNMAPPED cannot select a canonical UOM.",
                     400,
                 )
 

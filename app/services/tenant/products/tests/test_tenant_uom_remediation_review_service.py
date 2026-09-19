@@ -25,6 +25,9 @@ from app.services.platform.canonical_uom_catalogue_service import (
     CanonicalUOMCatalogueService,
 )
 from app.services.tenant.products.tenant_uom_audit_service import (
+    CUSTOM_UNMAPPED,
+    DOSAGE_FORM_AS_UOM,
+    LEGACY_PRODUCT_SPECIFIC,
     MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
 )
@@ -34,6 +37,7 @@ from app.services.tenant.products.tenant_uom_remediation_planner import (
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
     KEEP_CURRENT_PRODUCT,
+    KEEP_UNMAPPED,
     MOVE_CURRENT_PRODUCT,
     TenantUOMRemediationReviewError,
     TenantUOMRemediationReviewService,
@@ -270,6 +274,51 @@ def _mixed_fixture():
     )
 
 
+
+def _unresolved_fixture(
+    *,
+    code: str,
+    name: str,
+    sku: str,
+    product_name: str,
+):
+    tenant = _tenant(
+        f"Unresolved Review {uuid4().hex[:8]}"
+    )
+
+    creator = _user(
+        tenant=tenant,
+        name="Creator",
+    )
+
+    reviewer = _user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+
+    source = _unit(
+        tenant=tenant,
+        code=code,
+        name=name,
+    )
+
+    product, product_unit = _product(
+        tenant=tenant,
+        unit=source,
+        sku=sku,
+        name=product_name,
+    )
+
+    return (
+        tenant,
+        creator,
+        reviewer,
+        source,
+        product,
+        product_unit,
+    )
+
+
 def _service(audit=None):
     return TenantUOMRemediationReviewService(
         db.session,
@@ -279,6 +328,295 @@ def _service(audit=None):
             else AuditSpy()
         ),
     )
+
+
+
+def test_keep_unmapped_is_valid_for_safe_to_link(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            product,
+            product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        assert review.audit_classification == SAFE_TO_LINK
+
+        source_before = source.canonical_uom_id
+        product_before = product.unit_id
+        product_unit_before = product_unit.unit_id
+
+        approved = service.approve_review(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+            reviewed_by=str(reviewer.id),
+            selected_action=KEEP_UNMAPPED,
+            review_reason=(
+                "Retain this tenant vocabulary without "
+                "canonical linkage."
+            ),
+        )
+
+        assert approved.status == "approved"
+        assert approved.selected_action == KEEP_UNMAPPED
+        assert approved.selected_canonical_uom_id is None
+
+        assert source.canonical_uom_id == source_before
+        assert product.unit_id == product_before
+        assert product_unit.unit_id == product_unit_before
+
+        db.session.rollback()
+
+
+@pytest.mark.parametrize(
+    (
+        "code",
+        "name",
+        "sku",
+        "product_name",
+        "expected_classification",
+    ),
+    [
+        (
+            "WHOLE",
+            "Whole",
+            "REVIEW-CUSTOM-001",
+            "Custom Product",
+            CUSTOM_UNMAPPED,
+        ),
+        (
+            "Syrup",
+            "Syrup",
+            "REVIEW-DOSAGE-001",
+            "Piriton Syrup 100ml",
+            DOSAGE_FORM_AS_UOM,
+        ),
+        (
+            "M084-TAB",
+            "M084 Tablet",
+            "REVIEW-LEGACY-001",
+            "M084 Paracetamol Tablet",
+            LEGACY_PRODUCT_SPECIFIC,
+        ),
+    ],
+)
+def test_keep_unmapped_is_valid_for_unresolved_classifications(
+    app,
+    code,
+    name,
+    sku,
+    product_name,
+    expected_classification,
+):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            product,
+            product_unit,
+        ) = _unresolved_fixture(
+            code=code,
+            name=name,
+            sku=sku,
+            product_name=product_name,
+        )
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        assert (
+            review.audit_classification
+            == expected_classification
+        )
+
+        source_before = source.canonical_uom_id
+        product_before = product.unit_id
+        product_unit_before = product_unit.unit_id
+
+        approved = service.approve_review(
+            tenant_id=str(tenant.id),
+            review_id=review.id,
+            reviewed_by=str(reviewer.id),
+            selected_action=KEEP_UNMAPPED,
+            review_reason=(
+                "Evidence does not justify canonical linkage."
+            ),
+        )
+
+        assert approved.status == "approved"
+        assert approved.selected_action == KEEP_UNMAPPED
+        assert approved.selected_canonical_uom_id is None
+
+        assert source.canonical_uom_id == source_before
+        assert product.unit_id == product_before
+        assert product_unit.unit_id == product_unit_before
+
+        db.session.rollback()
+
+
+def test_keep_unmapped_rejects_canonical_target(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            _product,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        canonical = _canonical("TAB")
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=review.id,
+                reviewed_by=str(reviewer.id),
+                selected_action=KEEP_UNMAPPED,
+                selected_canonical_uom_id=str(
+                    canonical.id
+                ),
+            )
+
+        assert exc.value.status_code == 400
+        assert "cannot select a canonical UOM" in str(
+            exc.value
+        )
+
+        assert review.status == "pending"
+
+        db.session.rollback()
+
+
+def test_keep_unmapped_rejects_product_decisions(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            product,
+            _product_unit,
+        ) = _safe_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=review.id,
+                reviewed_by=str(reviewer.id),
+                selected_action=KEEP_UNMAPPED,
+                product_decisions=[
+                    {
+                        "product_id": str(product.id),
+                        "selected_action":
+                            KEEP_CURRENT_PRODUCT,
+                    }
+                ],
+            )
+
+        assert exc.value.status_code == 400
+        assert (
+            "does not accept product decisions"
+            in str(exc.value)
+        )
+
+        assert review.status == "pending"
+
+        db.session.rollback()
+
+
+def test_keep_unmapped_rejected_for_mixed_semantics(app):
+    with app.app_context():
+        _prepare_catalogue()
+
+        (
+            tenant,
+            creator,
+            reviewer,
+            source,
+            _target,
+            _tablet,
+            _tablet_unit,
+            _capsule,
+            _capsule_unit,
+        ) = _mixed_fixture()
+
+        service = _service()
+
+        review = service.create_pending_review(
+            tenant_id=str(tenant.id),
+            source_uom_id=str(source.id),
+            created_by=str(creator.id),
+        )
+
+        assert (
+            review.audit_classification
+            == MIXED_PRODUCT_SEMANTICS
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationReviewError
+        ) as exc:
+            service.approve_review(
+                tenant_id=str(tenant.id),
+                review_id=review.id,
+                reviewed_by=str(reviewer.id),
+                selected_action=KEEP_UNMAPPED,
+            )
+
+        assert exc.value.status_code == 400
+        assert "SPLIT_CURRENT_PRODUCTS" in str(
+            exc.value
+        )
+
+        assert review.status == "pending"
+
+        db.session.rollback()
 
 
 def test_create_pending_review_snapshots_and_audits(app):
