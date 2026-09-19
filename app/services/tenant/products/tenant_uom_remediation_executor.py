@@ -4,7 +4,9 @@ Tenant UOM remediation execution boundary.
 C5E3A established execution preflight and provenance.
 C5E3B added governed LINK_EXISTING_UOM execution.
 C5E3C added governed SPLIT_CURRENT_PRODUCTS execution.
-C5E3D adds governed non-mutating terminal execution.
+C5E3D added governed non-mutating terminal execution.
+C5E3E added governed KEEP_UNMAPPED terminal execution.
+C5E3F adds generic execution dispatch across approved actions.
 
 C5E3C may replace the current Product/ProductUnit base-unit
 structure only through explicit approved product decisions.
@@ -102,8 +104,12 @@ class TenantUOMRemediationExecutor:
     """
     Governed tenant UOM remediation execution boundary.
 
-    Supports the explicitly implemented C5E3 execution actions:
-    LINK_EXISTING_UOM and SPLIT_CURRENT_PRODUCTS.
+    Supports governed execution for LINK_EXISTING_UOM,
+    SPLIT_CURRENT_PRODUCTS, KEEP_UNMAPPED,
+    PRESERVE_HISTORICAL_UNIT, and NO_ACTION.
+
+    execute_review() is the generic orchestration entry point.
+    Specialized executors remain available and authoritative.
 
     Transaction ownership remains with the caller.
     """
@@ -218,6 +224,58 @@ class TenantUOMRemediationExecutor:
             ),
             is_stale=False,
             can_execute=True,
+        )
+
+    def execute_review(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        executed_by: str,
+    ) -> TenantUOMRemediationExecutionResult:
+        """
+        Dispatch an approved remediation review to its
+        specialized governed executor.
+
+        The specialized executor remains authoritative for
+        preflight, locking, staleness checks, mutation rules,
+        audit provenance, and transaction ownership.
+        """
+        review = self.review_service.get_review(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        selected_action = (
+            review.selected_action or ""
+        ).strip()
+
+        dispatch = {
+            LINK_EXISTING_UOM:
+                self.execute_link_existing_uom,
+            SPLIT_CURRENT_PRODUCTS:
+                self.execute_split_current_products,
+            KEEP_UNMAPPED:
+                self.execute_keep_unmapped,
+            PRESERVE_HISTORICAL_UNIT:
+                self.execute_preserve_historical_unit,
+            NO_ACTION:
+                self.execute_no_action,
+        }
+
+        executor = dispatch.get(selected_action)
+
+        if executor is None:
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review does not contain a "
+                "supported executable action.",
+                409,
+            )
+
+        return executor(
+            tenant_id=tenant_id,
+            review_id=review_id,
+            executed_by=executed_by,
         )
 
     def execute_link_existing_uom(

@@ -776,6 +776,128 @@ def _approved_link_fixture():
     )
 
 
+
+@pytest.mark.parametrize(
+    ("selected_action", "method_name"),
+    [
+        (
+            LINK_EXISTING_UOM,
+            "execute_link_existing_uom",
+        ),
+        (
+            SPLIT_CURRENT_PRODUCTS,
+            "execute_split_current_products",
+        ),
+        (
+            KEEP_UNMAPPED,
+            "execute_keep_unmapped",
+        ),
+        (
+            PRESERVE_HISTORICAL_UNIT,
+            "execute_preserve_historical_unit",
+        ),
+        (
+            NO_ACTION,
+            "execute_no_action",
+        ),
+    ],
+)
+def test_execute_review_dispatches_all_actions(
+    selected_action,
+    method_name,
+):
+    review_service = MagicMock()
+
+    review_service.get_review.return_value = (
+        SimpleNamespace(
+            selected_action=selected_action,
+        )
+    )
+
+    service = TenantUOMRemediationExecutor(
+        MagicMock(),
+        review_service=review_service,
+        audit_service=MagicMock(),
+    )
+
+    expected = SimpleNamespace(
+        selected_action=selected_action,
+    )
+
+    method = MagicMock(
+        return_value=expected
+    )
+
+    setattr(
+        service,
+        method_name,
+        method,
+    )
+
+    result = service.execute_review(
+        tenant_id="tenant-1",
+        review_id="review-1",
+        executed_by="user-1",
+    )
+
+    assert result is expected
+
+    review_service.get_review.assert_called_once_with(
+        tenant_id="tenant-1",
+        review_id="review-1",
+    )
+
+    method.assert_called_once_with(
+        tenant_id="tenant-1",
+        review_id="review-1",
+        executed_by="user-1",
+    )
+
+
+@pytest.mark.parametrize(
+    "selected_action",
+    [
+        None,
+        "",
+        "REVIEW_OPERATIONAL_UNIT",
+        "REVIEW_LEGACY_UNIT",
+        "UNKNOWN_ACTION",
+    ],
+)
+def test_execute_review_rejects_non_executable_action(
+    selected_action,
+):
+    review_service = MagicMock()
+
+    review_service.get_review.return_value = (
+        SimpleNamespace(
+            selected_action=selected_action,
+        )
+    )
+
+    service = TenantUOMRemediationExecutor(
+        MagicMock(),
+        review_service=review_service,
+        audit_service=MagicMock(),
+    )
+
+    with pytest.raises(
+        TenantUOMRemediationExecutionError
+    ) as exc:
+        service.execute_review(
+            tenant_id="tenant-1",
+            review_id="review-1",
+            executed_by="user-1",
+        )
+
+    assert exc.value.status_code == 409
+
+    assert (
+        "supported executable action"
+        in str(exc.value)
+    )
+
+
 def test_execute_link_existing_uom_changes_only_canonical_link(
     integration_app,
 ):
