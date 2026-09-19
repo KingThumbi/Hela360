@@ -35,7 +35,10 @@ from app.services.common.audit_modules import AuditModule
 from app.services.common.audit_service import AuditService
 from app.services.tenant.products.tenant_uom_audit_service import (
     CANONICALLY_LINKED,
+    CUSTOM_UNMAPPED,
+    DOSAGE_FORM_AS_UOM,
     HISTORICAL_ONLY,
+    LEGACY_PRODUCT_SPECIFIC,
     MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
     TenantUOMAuditService,
@@ -48,6 +51,7 @@ from app.services.tenant.products.tenant_uom_remediation_planner import (
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
     KEEP_CURRENT_PRODUCT,
+    KEEP_UNMAPPED,
     MOVE_CURRENT_PRODUCT,
     REVIEW_SELECTED_ACTIONS,
     TenantUOMRemediationReviewService,
@@ -967,6 +971,238 @@ class TenantUOMRemediationExecutor:
             ),
             status="executed",
             changed=True,
+            execution_summary=execution_summary,
+        )
+
+    def execute_keep_unmapped(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        executed_by: str,
+    ) -> TenantUOMRemediationExecutionResult:
+        """
+        Execute an approved KEEP_UNMAPPED review.
+
+        This terminal human decision preserves the tenant UOM
+        without canonical linkage or product-level remediation.
+        """
+        preflight = self.preflight(
+            tenant_id=tenant_id,
+            review_id=review_id,
+            executed_by=executed_by,
+        )
+
+        if preflight.selected_action != KEEP_UNMAPPED:
+            raise TenantUOMRemediationExecutionError(
+                "C5E3E unmapped execution can execute only "
+                "KEEP_UNMAPPED remediation reviews.",
+                409,
+            )
+
+        review = self._get_review_for_update(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        if review.status == "executed":
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review has already been executed.",
+                409,
+            )
+
+        if review.status != "approved":
+            raise TenantUOMRemediationExecutionError(
+                "Only an approved remediation review may be executed.",
+                409,
+            )
+
+        if review.selected_action != KEEP_UNMAPPED:
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review no longer contains "
+                "KEEP_UNMAPPED as its approved action.",
+                409,
+            )
+
+        allowed_classifications = {
+            SAFE_TO_LINK,
+            CUSTOM_UNMAPPED,
+            DOSAGE_FORM_AS_UOM,
+            LEGACY_PRODUCT_SPECIFIC,
+        }
+
+        if (
+            review.audit_classification
+            not in allowed_classifications
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "KEEP_UNMAPPED is not valid for the stored "
+                "audit classification.",
+                409,
+            )
+
+        if review.selected_canonical_uom_id is not None:
+            raise TenantUOMRemediationExecutionError(
+                "KEEP_UNMAPPED cannot execute with a selected "
+                "canonical UOM.",
+                409,
+            )
+
+        actor = self._get_user(
+            tenant_id=tenant_id,
+            user_id=executed_by,
+        )
+
+        source_uom = self._get_tenant_uom_for_update(
+            tenant_id=tenant_id,
+            uom_id=str(review.source_uom_id),
+        )
+
+        decisions = self._get_decisions_for_update(
+            tenant_id=tenant_id,
+            review_id=str(review.id),
+        )
+
+        selected_decisions = [
+            decision
+            for decision in decisions
+            if (
+                decision.selected_action is not None
+                or decision.target_canonical_uom_id is not None
+                or decision.target_tenant_uom_id is not None
+                or decision.preserve_historical_unit is not True
+                or decision.review_note is not None
+            )
+        ]
+
+        if selected_decisions:
+            raise TenantUOMRemediationExecutionError(
+                "KEEP_UNMAPPED cannot execute with product-level "
+                "remediation decisions.",
+                409,
+            )
+
+        locked_staleness = (
+            self.review_service.assess_staleness(
+                tenant_id=tenant_id,
+                review_id=str(review.id),
+            )
+        )
+
+        if locked_staleness.is_stale:
+            raise TenantUOMRemediationExecutionError(
+                "The approved remediation review became stale "
+                "before KEEP_UNMAPPED execution. Supersede it "
+                "and create a new review.",
+                409,
+            )
+
+        locked_audit = TenantUOMAuditService(
+            self.session
+        ).audit_unit(
+            tenant_id=tenant_id,
+            uom_id=str(source_uom.id),
+        )
+
+        if (
+            locked_audit.classification
+            != review.audit_classification
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The source tenant UOM no longer has the "
+                "approved audit classification.",
+                409,
+            )
+
+        if (
+            locked_audit.classification
+            not in allowed_classifications
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The source tenant UOM is no longer eligible "
+                "for KEEP_UNMAPPED.",
+                409,
+            )
+
+        if source_uom.canonical_uom_id is not None:
+            raise TenantUOMRemediationExecutionError(
+                "KEEP_UNMAPPED requires the source tenant UOM "
+                "to remain without canonical linkage.",
+                409,
+            )
+
+        old_values = {
+            "status": review.status,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "executed_by": review.executed_by,
+            "executed_at": (
+                review.executed_at.isoformat()
+                if review.executed_at
+                else None
+            ),
+        }
+
+        now = utcnow()
+
+        execution_summary = {
+            "action": KEEP_UNMAPPED,
+            "audit_classification":
+                review.audit_classification,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "operational_link_changed": False,
+            "product_changes": 0,
+            "product_unit_changes": 0,
+            "historical_records_changed": 0,
+            "product_decision_count": len(decisions),
+            "selected_product_decision_count": 0,
+        }
+
+        review.status = "executed"
+        review.executed_by = str(actor.id)
+        review.executed_at = now
+        review.execution_summary = execution_summary
+        review.updated_at = now
+
+        self.session.flush()
+
+        self.audit_service.log(
+            module=AuditModule.CATALOGUE,
+            action=(
+                AuditAction
+                .UOM_REMEDIATION_REVIEW_EXECUTED
+            ),
+            entity_type="tenant_uom_remediation_review",
+            tenant_id=tenant_id,
+            entity_id=str(review.id),
+            user_id=str(actor.id),
+            old_values=old_values,
+            new_values={
+                "status": "executed",
+                "source_uom_id": str(source_uom.id),
+                "source_canonical_uom_id":
+                    source_uom.canonical_uom_id,
+                "executed_by": str(actor.id),
+                "executed_at": now.isoformat(),
+            },
+            details=execution_summary,
+            reason=review.review_reason,
+            commit=False,
+        )
+
+        self.session.flush()
+
+        return TenantUOMRemediationExecutionResult(
+            review_id=str(review.id),
+            tenant_id=str(review.tenant_id),
+            source_uom_id=str(source_uom.id),
+            selected_action=KEEP_UNMAPPED,
+            selected_canonical_uom_id=None,
+            status="executed",
+            changed=False,
             execution_summary=execution_summary,
         )
 

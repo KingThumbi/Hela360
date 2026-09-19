@@ -18,6 +18,7 @@ from app.models import (
     Product,
     ProductUnit,
     Tenant,
+    TenantUOMRemediationProductDecision,
     UnitOfMeasure,
     User,
     Warehouse,
@@ -36,13 +37,17 @@ from app.services.tenant.products import (
     TenantUOMRemediationExecutor,
 )
 from app.services.tenant.products.tenant_uom_audit_service import (
-    HISTORICAL_ONLY,
     CANONICALLY_LINKED,
+    CUSTOM_UNMAPPED,
+    DOSAGE_FORM_AS_UOM,
+    HISTORICAL_ONLY,
+    LEGACY_PRODUCT_SPECIFIC,
     MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
     KEEP_CURRENT_PRODUCT,
+    KEEP_UNMAPPED,
     MOVE_CURRENT_PRODUCT,
     TenantUOMRemediationReviewService,
 )
@@ -1279,6 +1284,81 @@ def test_execute_link_existing_uom_rejects_inactive_canonical_target(
 
 
 
+
+def _approved_keep_unmapped_fixture(
+    *,
+    code="WHOLE",
+    name="Whole",
+    sku=None,
+    product_name="Custom Product",
+):
+    tenant = _db_tenant(
+        f"UOM Keep Unmapped {uuid4().hex[:8]}"
+    )
+
+    creator = _db_user(
+        tenant=tenant,
+        name="Creator",
+    )
+    reviewer = _db_user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+    executor_user = _db_user(
+        tenant=tenant,
+        name="Executor",
+    )
+
+    source = _db_unit(
+        tenant=tenant,
+        code=code,
+        name=name,
+    )
+
+    product, product_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=(
+            sku
+            or f"KEEP-{uuid4().hex[:8]}"
+        ),
+        name=product_name,
+    )
+
+    review_service = TenantUOMRemediationReviewService(
+        db.session,
+        audit_service=ExecutionAuditSpy(),
+    )
+
+    review = review_service.create_pending_review(
+        tenant_id=str(tenant.id),
+        source_uom_id=str(source.id),
+        created_by=str(creator.id),
+    )
+
+    review_service.approve_review(
+        tenant_id=str(tenant.id),
+        review_id=str(review.id),
+        reviewed_by=str(reviewer.id),
+        selected_action=KEEP_UNMAPPED,
+        review_reason=(
+            "Retain tenant-specific UOM without canonical linkage."
+        ),
+    )
+
+    return SimpleNamespace(
+        tenant=tenant,
+        creator=creator,
+        reviewer=reviewer,
+        executor=executor_user,
+        source=source,
+        product=product,
+        product_unit=product_unit,
+        review=review,
+        review_service=review_service,
+    )
+
+
 def _approved_historical_preservation_fixture():
     tenant = _db_tenant(
         "UOM Historical Executor Tenant"
@@ -1468,6 +1548,394 @@ def _approved_no_action_fixture():
         review=review,
         review_service=review_service,
     )
+
+
+
+@pytest.mark.parametrize(
+    (
+        "code",
+        "name",
+        "product_name",
+        "expected_classification",
+    ),
+    [
+        (
+            "TAB",
+            "Tablet",
+            "Paracetamol Tablets 500mg",
+            SAFE_TO_LINK,
+        ),
+        (
+            "WHOLE",
+            "Whole",
+            "Custom Product",
+            CUSTOM_UNMAPPED,
+        ),
+        (
+            "Syrup",
+            "Syrup",
+            "Piriton Syrup 100ml",
+            DOSAGE_FORM_AS_UOM,
+        ),
+        (
+            "M084-TAB",
+            "M084 Tablet",
+            "M084 Paracetamol Tablet",
+            LEGACY_PRODUCT_SPECIFIC,
+        ),
+    ],
+)
+def test_execute_keep_unmapped_is_non_mutating(
+    integration_app,
+    code,
+    name,
+    product_name,
+    expected_classification,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+
+        fixture = _approved_keep_unmapped_fixture(
+            code=code,
+            name=name,
+            product_name=product_name,
+        )
+
+        assert (
+            fixture.review.audit_classification
+            == expected_classification
+        )
+
+        source_before = {
+            "canonical_uom_id":
+                fixture.source.canonical_uom_id,
+            "code": fixture.source.code,
+            "name": fixture.source.name,
+        }
+
+        product_before = fixture.product.unit_id
+
+        product_unit_before = {
+            "id": str(fixture.product_unit.id),
+            "unit_id":
+                str(fixture.product_unit.unit_id),
+            "factor": Decimal(
+                str(
+                    fixture.product_unit
+                    .conversion_factor_to_base
+                )
+            ),
+            "is_base": fixture.product_unit.is_base,
+            "is_active":
+                fixture.product_unit.is_active,
+            "can_sell": fixture.product_unit.can_sell,
+            "can_receive":
+                fixture.product_unit.can_receive,
+        }
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=audit,
+        )
+
+        result = service.execute_keep_unmapped(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        assert result.status == "executed"
+        assert result.changed is False
+        assert result.selected_action == KEEP_UNMAPPED
+        assert result.selected_canonical_uom_id is None
+
+        db.session.refresh(fixture.source)
+        db.session.refresh(fixture.product)
+        db.session.refresh(fixture.product_unit)
+        db.session.refresh(fixture.review)
+
+        assert (
+            fixture.source.canonical_uom_id
+            == source_before["canonical_uom_id"]
+        )
+        assert fixture.source.code == source_before["code"]
+        assert fixture.source.name == source_before["name"]
+
+        assert fixture.product.unit_id == product_before
+
+        assert (
+            str(fixture.product_unit.id)
+            == product_unit_before["id"]
+        )
+        assert (
+            str(fixture.product_unit.unit_id)
+            == product_unit_before["unit_id"]
+        )
+        assert Decimal(
+            str(
+                fixture.product_unit
+                .conversion_factor_to_base
+            )
+        ) == product_unit_before["factor"]
+        assert (
+            fixture.product_unit.is_base
+            == product_unit_before["is_base"]
+        )
+        assert (
+            fixture.product_unit.is_active
+            == product_unit_before["is_active"]
+        )
+        assert (
+            fixture.product_unit.can_sell
+            == product_unit_before["can_sell"]
+        )
+        assert (
+            fixture.product_unit.can_receive
+            == product_unit_before["can_receive"]
+        )
+
+        assert fixture.review.status == "executed"
+        assert (
+            fixture.review.executed_by
+            == str(fixture.executor.id)
+        )
+        assert fixture.review.executed_at is not None
+
+        summary = fixture.review.execution_summary
+
+        assert summary["action"] == KEEP_UNMAPPED
+        assert (
+            summary["audit_classification"]
+            == expected_classification
+        )
+        assert (
+            summary["operational_link_changed"]
+            is False
+        )
+        assert summary["product_changes"] == 0
+        assert summary["product_unit_changes"] == 0
+        assert (
+            summary["historical_records_changed"]
+            == 0
+        )
+        assert (
+            summary["selected_product_decision_count"]
+            == 0
+        )
+
+        assert len(audit.calls) == 1
+        assert (
+            audit.calls[0]["action"]
+            == AuditAction
+            .UOM_REMEDIATION_REVIEW_EXECUTED
+        )
+        assert audit.calls[0]["commit"] is False
+
+        db.session.rollback()
+
+
+def test_execute_keep_unmapped_rejects_replay(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_keep_unmapped_fixture()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        service.execute_keep_unmapped(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_keep_unmapped(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already been executed" in str(
+            exc.value
+        )
+
+        db.session.rollback()
+
+
+def test_execute_keep_unmapped_rejects_stale_review(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_keep_unmapped_fixture()
+
+        fixture.source.name = "Whole Changed"
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_keep_unmapped(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_keep_unmapped_rejects_selected_canonical(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_keep_unmapped_fixture()
+
+        canonical = (
+            db.session.query(CanonicalUnitOfMeasure)
+            .filter(
+                CanonicalUnitOfMeasure.code == "EA"
+            )
+            .one()
+        )
+
+        fixture.review.selected_canonical_uom_id = str(
+            canonical.id
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_keep_unmapped(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "selected canonical" in str(
+            exc.value
+        ).lower()
+
+        db.session.rollback()
+
+
+def test_execute_keep_unmapped_rejects_product_decision_tamper(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_keep_unmapped_fixture()
+
+        decision = (
+            db.session.query(
+                TenantUOMRemediationProductDecision
+            )
+            .filter(
+                TenantUOMRemediationProductDecision.review_id
+                == str(fixture.review.id)
+            )
+            .one()
+        )
+
+        decision.review_note = "tampered"
+        db.session.flush()
+
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+            SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_keep_unmapped(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "product-level" in str(
+            exc.value
+        ).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_keep_unmapped_defends_locked_classification(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_keep_unmapped_fixture()
+
+        fixture.source.code = "TAB"
+        fixture.source.name = "Tablet"
+        db.session.flush()
+
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+            SimpleNamespace(is_stale=False)
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_keep_unmapped(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "approved audit classification" in str(
+            exc.value
+        ).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
 
 
 def test_execute_preserve_historical_unit_is_non_mutating(
