@@ -830,6 +830,18 @@ class TenantUOMRemediationExecutor:
                 current_base
                 .conversion_factor_to_base
             )
+            replacement_can_sell = (
+                current_base.can_sell
+            )
+            replacement_can_receive = (
+                current_base.can_receive
+            )
+            replacement_sale_price = (
+                current_base.sale_price
+            )
+            replacement_minimum_sale_price = (
+                current_base.minimum_sale_price
+            )
 
             current_base.is_base = False
             current_base.is_active = False
@@ -849,8 +861,12 @@ class TenantUOMRemediationExecutor:
                         "1"
                     ),
                     is_base=True,
-                    can_sell=True,
-                    can_receive=True,
+                    can_sell=replacement_can_sell,
+                    can_receive=replacement_can_receive,
+                    sale_price=replacement_sale_price,
+                    minimum_sale_price=(
+                        replacement_minimum_sale_price
+                    ),
                     is_active=True,
                 )
 
@@ -860,8 +876,6 @@ class TenantUOMRemediationExecutor:
             else:
                 target_product_unit.is_base = True
                 target_product_unit.is_active = True
-                target_product_unit.can_sell = True
-                target_product_unit.can_receive = True
 
             product.unit_id = str(target_uom.id)
 

@@ -3051,6 +3051,85 @@ def test_execute_split_current_products_preserves_old_product_unit(
         db.session.rollback()
 
 
+
+def test_execute_split_current_products_preserves_commercial_state(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        old_base = fixture.capsule_unit
+
+        old_base.can_sell = False
+        old_base.can_receive = True
+        old_base.sale_price = Decimal("125.50")
+        old_base.minimum_sale_price = Decimal("110.00")
+
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        result = service.execute_split_current_products(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        assert result.status == "executed"
+
+        new_base = (
+            db.session.query(ProductUnit)
+            .filter(
+                ProductUnit.tenant_id
+                == str(fixture.tenant.id),
+                ProductUnit.product_id
+                == str(fixture.capsule.id),
+                ProductUnit.is_base.is_(True),
+            )
+            .one()
+        )
+
+        assert (
+            str(new_base.id)
+            != str(old_base.id)
+        )
+
+        assert new_base.can_sell is False
+        assert new_base.can_receive is True
+
+        assert Decimal(
+            str(new_base.sale_price)
+        ) == Decimal("125.50")
+
+        assert Decimal(
+            str(new_base.minimum_sale_price)
+        ) == Decimal("110.00")
+
+        # Historical row identity and commercial values remain,
+        # while operational eligibility is retired.
+        db.session.refresh(old_base)
+
+        assert old_base.is_base is False
+        assert old_base.is_active is False
+        assert old_base.can_sell is False
+        assert old_base.can_receive is False
+
+        assert Decimal(
+            str(old_base.sale_price)
+        ) == Decimal("125.50")
+
+        assert Decimal(
+            str(old_base.minimum_sale_price)
+        ) == Decimal("110.00")
+
+        db.session.rollback()
+
+
 def test_execute_split_current_products_rejects_replay(
     integration_app,
 ):
@@ -3262,6 +3341,8 @@ def test_execute_split_current_products_promotes_existing_factor_one_target(
             is_base=False,
             can_sell=False,
             can_receive=False,
+            sale_price=Decimal("215.75"),
+            minimum_sale_price=Decimal("199.00"),
             is_active=False,
         )
 
@@ -3291,8 +3372,17 @@ def test_execute_split_current_products_promotes_existing_factor_one_target(
         assert str(existing_target.id) == existing_id
         assert existing_target.is_base is True
         assert existing_target.is_active is True
-        assert existing_target.can_sell is True
-        assert existing_target.can_receive is True
+        assert existing_target.can_sell is False
+        assert existing_target.can_receive is False
+
+        assert Decimal(
+            str(existing_target.sale_price)
+        ) == Decimal("215.75")
+
+        assert Decimal(
+            str(existing_target.minimum_sale_price)
+        ) == Decimal("199.00")
+
         assert Decimal(
             str(existing_target.conversion_factor_to_base)
         ) == Decimal("1")
