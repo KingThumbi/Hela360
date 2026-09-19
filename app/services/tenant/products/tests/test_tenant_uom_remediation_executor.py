@@ -29,11 +29,15 @@ from app.services.platform.canonical_uom_catalogue_service import (
 )
 from app.services.tenant.products import (
     LINK_EXISTING_UOM,
+    NO_ACTION,
+    PRESERVE_HISTORICAL_UNIT,
     SPLIT_CURRENT_PRODUCTS,
     TenantUOMRemediationExecutionError,
     TenantUOMRemediationExecutor,
 )
 from app.services.tenant.products.tenant_uom_audit_service import (
+    HISTORICAL_ONLY,
+    CANONICALLY_LINKED,
     MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
 )
@@ -1270,6 +1274,860 @@ def test_execute_link_existing_uom_rejects_inactive_canonical_target(
             is None
         )
         assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+
+def _approved_historical_preservation_fixture():
+    tenant = _db_tenant(
+        "UOM Historical Executor Tenant"
+    )
+
+    creator = _db_user(
+        tenant=tenant,
+        name="Creator",
+    )
+    reviewer = _db_user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+    executor_user = _db_user(
+        tenant=tenant,
+        name="Executor",
+    )
+
+    source = _db_unit(
+        tenant=tenant,
+        code="HIST",
+        name="Historical Unit",
+    )
+
+    product, historical_product_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=f"HIST-{uuid4().hex[:8]}",
+        name="Historical Executor Product",
+    )
+
+    branch, warehouse = _db_branch_and_warehouse(
+        tenant=tenant,
+    )
+
+    historical_receipt, historical_receipt_item = (
+        _db_historical_receipt_evidence(
+            tenant=tenant,
+            branch=branch,
+            warehouse=warehouse,
+            product=product,
+            product_unit=historical_product_unit,
+            source_uom=source,
+            user=creator,
+        )
+    )
+
+    current_uom = _db_unit(
+        tenant=tenant,
+        code=f"EA-HIST-{uuid4().hex[:6].upper()}",
+        name="Current Each Unit",
+        canonical_code="EA",
+    )
+
+    current_product_unit = ProductUnit(
+        tenant_id=str(tenant.id),
+        product_id=str(product.id),
+        unit_id=str(current_uom.id),
+        conversion_factor_to_base=Decimal("1"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(current_product_unit)
+    db.session.flush()
+
+    historical_product_unit.is_base = False
+    historical_product_unit.is_active = False
+    historical_product_unit.can_sell = False
+    historical_product_unit.can_receive = False
+
+    db.session.flush()
+
+    current_product_unit.is_base = True
+    product.unit_id = str(current_uom.id)
+
+    db.session.flush()
+
+    review_service = TenantUOMRemediationReviewService(
+        db.session,
+        audit_service=ExecutionAuditSpy(),
+    )
+
+    review = review_service.create_pending_review(
+        tenant_id=str(tenant.id),
+        source_uom_id=str(source.id),
+        created_by=str(creator.id),
+    )
+
+    assert review.audit_classification == HISTORICAL_ONLY
+
+    review_service.approve_review(
+        tenant_id=str(tenant.id),
+        review_id=str(review.id),
+        reviewed_by=str(reviewer.id),
+        selected_action=PRESERVE_HISTORICAL_UNIT,
+        review_reason=(
+            "Preserve historical UOM and transactional evidence."
+        ),
+    )
+
+    return SimpleNamespace(
+        tenant=tenant,
+        creator=creator,
+        reviewer=reviewer,
+        executor=executor_user,
+        source=source,
+        product=product,
+        historical_product_unit=historical_product_unit,
+        current_uom=current_uom,
+        current_product_unit=current_product_unit,
+        historical_receipt=historical_receipt,
+        historical_receipt_item=historical_receipt_item,
+        review=review,
+        review_service=review_service,
+    )
+
+
+def _approved_no_action_fixture():
+    tenant = _db_tenant(
+        "UOM No Action Executor Tenant"
+    )
+
+    creator = _db_user(
+        tenant=tenant,
+        name="Creator",
+    )
+    reviewer = _db_user(
+        tenant=tenant,
+        name="Reviewer",
+    )
+    executor_user = _db_user(
+        tenant=tenant,
+        name="Executor",
+    )
+
+    source = _db_unit(
+        tenant=tenant,
+        code="EA",
+        name="Each",
+        canonical_code="EA",
+    )
+
+    product, product_unit = _db_product(
+        tenant=tenant,
+        unit=source,
+        sku=f"NOACT-{uuid4().hex[:8]}",
+        name="No Action Executor Product",
+    )
+
+    review_service = TenantUOMRemediationReviewService(
+        db.session,
+        audit_service=ExecutionAuditSpy(),
+    )
+
+    review = review_service.create_pending_review(
+        tenant_id=str(tenant.id),
+        source_uom_id=str(source.id),
+        created_by=str(creator.id),
+    )
+
+    assert (
+        review.audit_classification
+        == CANONICALLY_LINKED
+    )
+
+    review_service.approve_review(
+        tenant_id=str(tenant.id),
+        review_id=str(review.id),
+        reviewed_by=str(reviewer.id),
+        selected_action=NO_ACTION,
+        review_reason=(
+            "Existing canonical linkage requires no mutation."
+        ),
+    )
+
+    return SimpleNamespace(
+        tenant=tenant,
+        creator=creator,
+        reviewer=reviewer,
+        executor=executor_user,
+        source=source,
+        product=product,
+        product_unit=product_unit,
+        review=review,
+        review_service=review_service,
+    )
+
+
+def test_execute_preserve_historical_unit_is_non_mutating(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = (
+            _approved_historical_preservation_fixture()
+        )
+
+        old_product_unit = (
+            fixture.historical_product_unit
+        )
+        receipt_item = fixture.historical_receipt_item
+
+        source_before = {
+            "canonical_uom_id":
+                fixture.source.canonical_uom_id,
+            "code": fixture.source.code,
+            "name": fixture.source.name,
+        }
+
+        product_before = {
+            "unit_id": fixture.product.unit_id,
+        }
+
+        old_product_unit_before = {
+            "id": str(old_product_unit.id),
+            "unit_id": str(old_product_unit.unit_id),
+            "factor": Decimal(
+                str(
+                    old_product_unit
+                    .conversion_factor_to_base
+                )
+            ),
+            "is_base": old_product_unit.is_base,
+            "is_active": old_product_unit.is_active,
+            "can_sell": old_product_unit.can_sell,
+            "can_receive":
+                old_product_unit.can_receive,
+        }
+
+        receipt_before = {
+            "id": str(receipt_item.id),
+            "product_unit_id":
+                str(receipt_item.product_unit_id),
+            "unit_code_snapshot":
+                receipt_item.unit_code_snapshot,
+            "unit_name_snapshot":
+                receipt_item.unit_name_snapshot,
+            "factor": Decimal(
+                str(
+                    receipt_item
+                    .conversion_factor_to_base
+                )
+            ),
+            "quantity": Decimal(
+                str(receipt_item.quantity)
+            ),
+            "base_quantity": Decimal(
+                str(receipt_item.base_quantity)
+            ),
+        }
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=audit,
+        )
+
+        result = (
+            service.execute_preserve_historical_unit(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+        )
+
+        assert result.status == "executed"
+        assert result.changed is False
+        assert (
+            result.selected_action
+            == PRESERVE_HISTORICAL_UNIT
+        )
+
+        db.session.refresh(fixture.source)
+        db.session.refresh(fixture.product)
+        db.session.refresh(old_product_unit)
+        db.session.refresh(receipt_item)
+        db.session.refresh(fixture.review)
+
+        assert (
+            fixture.source.canonical_uom_id
+            == source_before["canonical_uom_id"]
+        )
+        assert fixture.source.code == source_before["code"]
+        assert fixture.source.name == source_before["name"]
+
+        assert (
+            fixture.product.unit_id
+            == product_before["unit_id"]
+        )
+
+        assert (
+            str(old_product_unit.id)
+            == old_product_unit_before["id"]
+        )
+        assert (
+            str(old_product_unit.unit_id)
+            == old_product_unit_before["unit_id"]
+        )
+        assert Decimal(
+            str(
+                old_product_unit
+                .conversion_factor_to_base
+            )
+        ) == old_product_unit_before["factor"]
+        assert (
+            old_product_unit.is_base
+            == old_product_unit_before["is_base"]
+        )
+        assert (
+            old_product_unit.is_active
+            == old_product_unit_before["is_active"]
+        )
+        assert (
+            old_product_unit.can_sell
+            == old_product_unit_before["can_sell"]
+        )
+        assert (
+            old_product_unit.can_receive
+            == old_product_unit_before["can_receive"]
+        )
+
+        assert (
+            str(receipt_item.id)
+            == receipt_before["id"]
+        )
+        assert (
+            str(receipt_item.product_unit_id)
+            == receipt_before["product_unit_id"]
+        )
+        assert (
+            receipt_item.unit_code_snapshot
+            == receipt_before["unit_code_snapshot"]
+        )
+        assert (
+            receipt_item.unit_name_snapshot
+            == receipt_before["unit_name_snapshot"]
+        )
+        assert Decimal(
+            str(
+                receipt_item
+                .conversion_factor_to_base
+            )
+        ) == receipt_before["factor"]
+        assert Decimal(
+            str(receipt_item.quantity)
+        ) == receipt_before["quantity"]
+        assert Decimal(
+            str(receipt_item.base_quantity)
+        ) == receipt_before["base_quantity"]
+
+        assert fixture.review.status == "executed"
+        assert (
+            fixture.review.executed_by
+            == str(fixture.executor.id)
+        )
+        assert fixture.review.executed_at is not None
+
+        summary = fixture.review.execution_summary
+
+        assert (
+            summary["action"]
+            == PRESERVE_HISTORICAL_UNIT
+        )
+        assert (
+            summary["audit_classification"]
+            == HISTORICAL_ONLY
+        )
+        assert (
+            summary["operational_link_changed"]
+            is False
+        )
+        assert summary["product_changes"] == 0
+        assert summary["product_unit_changes"] == 0
+        assert (
+            summary["historical_records_changed"]
+            == 0
+        )
+
+        assert len(audit.calls) == 1
+        assert (
+            audit.calls[0]["action"]
+            == AuditAction
+            .UOM_REMEDIATION_REVIEW_EXECUTED
+        )
+        assert audit.calls[0]["commit"] is False
+
+        db.session.rollback()
+
+
+def test_execute_no_action_is_non_mutating(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_no_action_fixture()
+
+        source_before = {
+            "canonical_uom_id":
+                fixture.source.canonical_uom_id,
+            "code": fixture.source.code,
+            "name": fixture.source.name,
+        }
+
+        product_before = {
+            "unit_id": fixture.product.unit_id,
+        }
+
+        product_unit_before = {
+            "id": str(fixture.product_unit.id),
+            "unit_id":
+                str(fixture.product_unit.unit_id),
+            "factor": Decimal(
+                str(
+                    fixture.product_unit
+                    .conversion_factor_to_base
+                )
+            ),
+            "is_base": fixture.product_unit.is_base,
+            "is_active":
+                fixture.product_unit.is_active,
+            "can_sell": fixture.product_unit.can_sell,
+            "can_receive":
+                fixture.product_unit.can_receive,
+        }
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=audit,
+        )
+
+        result = service.execute_no_action(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        assert result.status == "executed"
+        assert result.changed is False
+        assert result.selected_action == NO_ACTION
+
+        db.session.refresh(fixture.source)
+        db.session.refresh(fixture.product)
+        db.session.refresh(fixture.product_unit)
+        db.session.refresh(fixture.review)
+
+        assert (
+            fixture.source.canonical_uom_id
+            == source_before["canonical_uom_id"]
+        )
+        assert fixture.source.code == source_before["code"]
+        assert fixture.source.name == source_before["name"]
+
+        assert (
+            fixture.product.unit_id
+            == product_before["unit_id"]
+        )
+
+        assert (
+            str(fixture.product_unit.id)
+            == product_unit_before["id"]
+        )
+        assert (
+            str(fixture.product_unit.unit_id)
+            == product_unit_before["unit_id"]
+        )
+        assert Decimal(
+            str(
+                fixture.product_unit
+                .conversion_factor_to_base
+            )
+        ) == product_unit_before["factor"]
+        assert (
+            fixture.product_unit.is_base
+            == product_unit_before["is_base"]
+        )
+        assert (
+            fixture.product_unit.is_active
+            == product_unit_before["is_active"]
+        )
+        assert (
+            fixture.product_unit.can_sell
+            == product_unit_before["can_sell"]
+        )
+        assert (
+            fixture.product_unit.can_receive
+            == product_unit_before["can_receive"]
+        )
+
+        assert fixture.review.status == "executed"
+        assert (
+            fixture.review.executed_by
+            == str(fixture.executor.id)
+        )
+        assert fixture.review.executed_at is not None
+
+        summary = fixture.review.execution_summary
+
+        assert summary["action"] == NO_ACTION
+        assert (
+            summary["audit_classification"]
+            == CANONICALLY_LINKED
+        )
+        assert (
+            summary["operational_link_changed"]
+            is False
+        )
+        assert summary["product_changes"] == 0
+        assert summary["product_unit_changes"] == 0
+        assert (
+            summary["historical_records_changed"]
+            == 0
+        )
+
+        assert len(audit.calls) == 1
+        assert (
+            audit.calls[0]["action"]
+            == AuditAction
+            .UOM_REMEDIATION_REVIEW_EXECUTED
+        )
+        assert audit.calls[0]["commit"] is False
+
+        db.session.rollback()
+
+
+
+def test_execute_preserve_historical_unit_rejects_replay(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = (
+            _approved_historical_preservation_fixture()
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        service.execute_preserve_historical_unit(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_preserve_historical_unit(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already been executed" in str(
+            exc.value
+        )
+
+        db.session.rollback()
+
+
+def test_execute_no_action_rejects_replay(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_no_action_fixture()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        service.execute_no_action(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_no_action(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "already been executed" in str(
+            exc.value
+        )
+
+        db.session.rollback()
+
+
+def test_execute_preserve_historical_unit_rejects_stale_review(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = (
+            _approved_historical_preservation_fixture()
+        )
+
+        fixture.source.name = (
+            "Historical Unit Changed After Approval"
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_preserve_historical_unit(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_no_action_rejects_stale_review(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_no_action_fixture()
+
+        fixture.source.name = (
+            "Each Changed After Approval"
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_no_action(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "stale" in str(exc.value).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_preserve_historical_unit_defends_classification(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = (
+            _approved_historical_preservation_fixture()
+        )
+
+        fixture.review.audit_classification = (
+            SAFE_TO_LINK
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_preserve_historical_unit(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "historical_only" in str(
+            exc.value
+        ).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_no_action_defends_classification(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_no_action_fixture()
+
+        fixture.review.audit_classification = (
+            SAFE_TO_LINK
+        )
+        db.session.flush()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_no_action(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "canonically_linked" in str(
+            exc.value
+        ).lower()
+        assert fixture.review.status == "approved"
+
+        db.session.rollback()
+
+
+def test_execute_preserve_historical_unit_defends_locked_state(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = (
+            _approved_historical_preservation_fixture()
+        )
+
+        # Remove the evidence that made the old UOM
+        # HISTORICAL_ONLY. The post-lock authoritative audit
+        # must independently reject execution.
+        db.session.delete(
+            fixture.historical_receipt_item
+        )
+        db.session.flush()
+
+        # Isolate the executor's locked-state audit from the
+        # planner fingerprint stale-state protection.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+            SimpleNamespace(is_stale=False)
+        )
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=audit,
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_preserve_historical_unit(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "no longer" in str(exc.value).lower()
+        assert "historical_only" in str(
+            exc.value
+        ).lower()
+
+        assert fixture.review.status == "approved"
+        assert len(audit.calls) == 0
+
+        db.session.rollback()
+
+
+def test_execute_no_action_defends_locked_state(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_no_action_fixture()
+
+        # Remove the canonical linkage after approval.
+        # Because EA/Each remains a strict alias, the audit
+        # becomes SAFE_TO_LINK rather than CANONICALLY_LINKED.
+        fixture.source.canonical_uom_id = None
+        db.session.flush()
+
+        # Isolate the executor's locked-state audit from the
+        # planner fingerprint stale-state protection.
+        fixture.review_service.assess_staleness = (
+            lambda **_kwargs:
+            SimpleNamespace(is_stale=False)
+        )
+
+        audit = ExecutionAuditSpy()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=audit,
+        )
+
+        with pytest.raises(
+            TenantUOMRemediationExecutionError
+        ) as exc:
+            service.execute_no_action(
+                tenant_id=str(fixture.tenant.id),
+                review_id=str(fixture.review.id),
+                executed_by=str(fixture.executor.id),
+            )
+
+        assert exc.value.status_code == 409
+        assert "no longer" in str(exc.value).lower()
+        assert "canonically_linked" in str(
+            exc.value
+        ).lower()
+
+        assert fixture.review.status == "approved"
+        assert len(audit.calls) == 0
 
         db.session.rollback()
 

@@ -3,7 +3,8 @@ Tenant UOM remediation execution boundary.
 
 C5E3A established execution preflight and provenance.
 C5E3B added governed LINK_EXISTING_UOM execution.
-C5E3C adds governed SPLIT_CURRENT_PRODUCTS execution.
+C5E3C added governed SPLIT_CURRENT_PRODUCTS execution.
+C5E3D adds governed non-mutating terminal execution.
 
 C5E3C may replace the current Product/ProductUnit base-unit
 structure only through explicit approved product decisions.
@@ -33,11 +34,16 @@ from app.services.common.audit_actions import AuditAction
 from app.services.common.audit_modules import AuditModule
 from app.services.common.audit_service import AuditService
 from app.services.tenant.products.tenant_uom_audit_service import (
+    CANONICALLY_LINKED,
+    HISTORICAL_ONLY,
     MIXED_PRODUCT_SEMANTICS,
     SAFE_TO_LINK,
+    TenantUOMAuditService,
 )
 from app.services.tenant.products.tenant_uom_remediation_planner import (
     LINK_EXISTING_UOM,
+    NO_ACTION,
+    PRESERVE_HISTORICAL_UNIT,
     SPLIT_CURRENT_PRODUCTS,
 )
 from app.services.tenant.products.tenant_uom_remediation_review_service import (
@@ -961,6 +967,370 @@ class TenantUOMRemediationExecutor:
             ),
             status="executed",
             changed=True,
+            execution_summary=execution_summary,
+        )
+
+    def execute_preserve_historical_unit(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        executed_by: str,
+    ) -> TenantUOMRemediationExecutionResult:
+        """
+        Execute an approved HISTORICAL_ONLY preservation review.
+
+        This is intentionally non-mutating for operational UOM,
+        Product, ProductUnit, inventory, sales, and historical
+        transactional evidence.
+        """
+        preflight = self.preflight(
+            tenant_id=tenant_id,
+            review_id=review_id,
+            executed_by=executed_by,
+        )
+
+        if (
+            preflight.selected_action
+            != PRESERVE_HISTORICAL_UNIT
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "C5E3D historical execution can execute only "
+                "PRESERVE_HISTORICAL_UNIT remediation reviews.",
+                409,
+            )
+
+        review = self._get_review_for_update(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        if review.status == "executed":
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review has already been executed.",
+                409,
+            )
+
+        if review.status != "approved":
+            raise TenantUOMRemediationExecutionError(
+                "Only an approved remediation review may be executed.",
+                409,
+            )
+
+        if (
+            review.selected_action
+            != PRESERVE_HISTORICAL_UNIT
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review no longer contains "
+                "PRESERVE_HISTORICAL_UNIT as its approved action.",
+                409,
+            )
+
+        if review.audit_classification != HISTORICAL_ONLY:
+            raise TenantUOMRemediationExecutionError(
+                "Only HISTORICAL_ONLY remediation reviews may "
+                "execute PRESERVE_HISTORICAL_UNIT.",
+                409,
+            )
+
+        actor = self._get_user(
+            tenant_id=tenant_id,
+            user_id=executed_by,
+        )
+
+        source_uom = self._get_tenant_uom_for_update(
+            tenant_id=tenant_id,
+            uom_id=str(review.source_uom_id),
+        )
+
+        locked_staleness = (
+            self.review_service.assess_staleness(
+                tenant_id=tenant_id,
+                review_id=str(review.id),
+            )
+        )
+
+        if locked_staleness.is_stale:
+            raise TenantUOMRemediationExecutionError(
+                "The approved remediation review became stale "
+                "before historical-preservation execution. "
+                "Supersede it and create a new review.",
+                409,
+            )
+
+        locked_audit = TenantUOMAuditService(
+            self.session
+        ).audit_unit(
+            tenant_id=tenant_id,
+            uom_id=str(source_uom.id),
+        )
+
+        if locked_audit.classification != HISTORICAL_ONLY:
+            raise TenantUOMRemediationExecutionError(
+                "The source tenant UOM is no longer "
+                "HISTORICAL_ONLY.",
+                409,
+            )
+
+        old_values = {
+            "status": review.status,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "executed_by": review.executed_by,
+            "executed_at": (
+                review.executed_at.isoformat()
+                if review.executed_at
+                else None
+            ),
+        }
+
+        now = utcnow()
+
+        execution_summary = {
+            "action": PRESERVE_HISTORICAL_UNIT,
+            "audit_classification":
+                review.audit_classification,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "operational_link_changed": False,
+            "product_changes": 0,
+            "product_unit_changes": 0,
+            "historical_records_changed": 0,
+        }
+
+        review.status = "executed"
+        review.executed_by = str(actor.id)
+        review.executed_at = now
+        review.execution_summary = execution_summary
+        review.updated_at = now
+
+        self.session.flush()
+
+        self.audit_service.log(
+            module=AuditModule.CATALOGUE,
+            action=(
+                AuditAction
+                .UOM_REMEDIATION_REVIEW_EXECUTED
+            ),
+            entity_type=(
+                "tenant_uom_remediation_review"
+            ),
+            tenant_id=tenant_id,
+            entity_id=str(review.id),
+            user_id=str(actor.id),
+            old_values=old_values,
+            new_values={
+                "status": "executed",
+                "source_uom_id":
+                    str(source_uom.id),
+                "source_canonical_uom_id":
+                    source_uom.canonical_uom_id,
+                "executed_by":
+                    str(actor.id),
+                "executed_at":
+                    now.isoformat(),
+            },
+            details=execution_summary,
+            reason=review.review_reason,
+            commit=False,
+        )
+
+        self.session.flush()
+
+        return TenantUOMRemediationExecutionResult(
+            review_id=str(review.id),
+            tenant_id=str(review.tenant_id),
+            source_uom_id=str(source_uom.id),
+            selected_action=PRESERVE_HISTORICAL_UNIT,
+            selected_canonical_uom_id=(
+                review.selected_canonical_uom_id
+            ),
+            status="executed",
+            changed=False,
+            execution_summary=execution_summary,
+        )
+
+    def execute_no_action(
+        self,
+        *,
+        tenant_id: str,
+        review_id: str,
+        executed_by: str,
+    ) -> TenantUOMRemediationExecutionResult:
+        """
+        Execute an approved CANONICALLY_LINKED NO_ACTION review.
+
+        Operational state is intentionally left unchanged.
+        """
+        preflight = self.preflight(
+            tenant_id=tenant_id,
+            review_id=review_id,
+            executed_by=executed_by,
+        )
+
+        if preflight.selected_action != NO_ACTION:
+            raise TenantUOMRemediationExecutionError(
+                "C5E3D no-action execution can execute only "
+                "NO_ACTION remediation reviews.",
+                409,
+            )
+
+        review = self._get_review_for_update(
+            tenant_id=tenant_id,
+            review_id=review_id,
+        )
+
+        if review.status == "executed":
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review has already been executed.",
+                409,
+            )
+
+        if review.status != "approved":
+            raise TenantUOMRemediationExecutionError(
+                "Only an approved remediation review may be executed.",
+                409,
+            )
+
+        if review.selected_action != NO_ACTION:
+            raise TenantUOMRemediationExecutionError(
+                "The remediation review no longer contains "
+                "NO_ACTION as its approved action.",
+                409,
+            )
+
+        if (
+            review.audit_classification
+            != CANONICALLY_LINKED
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "Only CANONICALLY_LINKED remediation reviews may "
+                "execute NO_ACTION.",
+                409,
+            )
+
+        actor = self._get_user(
+            tenant_id=tenant_id,
+            user_id=executed_by,
+        )
+
+        source_uom = self._get_tenant_uom_for_update(
+            tenant_id=tenant_id,
+            uom_id=str(review.source_uom_id),
+        )
+
+        locked_staleness = (
+            self.review_service.assess_staleness(
+                tenant_id=tenant_id,
+                review_id=str(review.id),
+            )
+        )
+
+        if locked_staleness.is_stale:
+            raise TenantUOMRemediationExecutionError(
+                "The approved remediation review became stale "
+                "before NO_ACTION execution. Supersede it and "
+                "create a new review.",
+                409,
+            )
+
+        locked_audit = TenantUOMAuditService(
+            self.session
+        ).audit_unit(
+            tenant_id=tenant_id,
+            uom_id=str(source_uom.id),
+        )
+
+        if (
+            locked_audit.classification
+            != CANONICALLY_LINKED
+        ):
+            raise TenantUOMRemediationExecutionError(
+                "The source tenant UOM is no longer "
+                "CANONICALLY_LINKED.",
+                409,
+            )
+
+        old_values = {
+            "status": review.status,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "executed_by": review.executed_by,
+            "executed_at": (
+                review.executed_at.isoformat()
+                if review.executed_at
+                else None
+            ),
+        }
+
+        now = utcnow()
+
+        execution_summary = {
+            "action": NO_ACTION,
+            "audit_classification":
+                review.audit_classification,
+            "source_uom_id": str(source_uom.id),
+            "source_canonical_uom_id":
+                source_uom.canonical_uom_id,
+            "operational_link_changed": False,
+            "product_changes": 0,
+            "product_unit_changes": 0,
+            "historical_records_changed": 0,
+        }
+
+        review.status = "executed"
+        review.executed_by = str(actor.id)
+        review.executed_at = now
+        review.execution_summary = execution_summary
+        review.updated_at = now
+
+        self.session.flush()
+
+        self.audit_service.log(
+            module=AuditModule.CATALOGUE,
+            action=(
+                AuditAction
+                .UOM_REMEDIATION_REVIEW_EXECUTED
+            ),
+            entity_type=(
+                "tenant_uom_remediation_review"
+            ),
+            tenant_id=tenant_id,
+            entity_id=str(review.id),
+            user_id=str(actor.id),
+            old_values=old_values,
+            new_values={
+                "status": "executed",
+                "source_uom_id":
+                    str(source_uom.id),
+                "source_canonical_uom_id":
+                    source_uom.canonical_uom_id,
+                "executed_by":
+                    str(actor.id),
+                "executed_at":
+                    now.isoformat(),
+            },
+            details=execution_summary,
+            reason=review.review_reason,
+            commit=False,
+        )
+
+        self.session.flush()
+
+        return TenantUOMRemediationExecutionResult(
+            review_id=str(review.id),
+            tenant_id=str(review.tenant_id),
+            source_uom_id=str(source_uom.id),
+            selected_action=NO_ACTION,
+            selected_canonical_uom_id=(
+                review.selected_canonical_uom_id
+            ),
+            status="executed",
+            changed=False,
             execution_summary=execution_summary,
         )
 
