@@ -2196,3 +2196,226 @@ def test_product_unit_mutation_cannot_cross_tenant_boundary(
     db.session.refresh(other_base_unit)
 
     assert other_base_unit.can_sell is True
+
+
+def test_archive_product_unit_is_idempotent(client):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-archive-idempotent"
+    )
+
+    pack = _add_unit(
+        unit_id="archive-idempotent-pack",
+        code="ARCH-IDEMP-PACK",
+        name="Pack",
+    )
+
+    product_unit = ProductUnit(
+        id="archive-idempotent-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=pack.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=False,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}/archive"
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json["ok"] is True
+    assert response.json["item"]["is_active"] is False
+    assert (
+        response.json["message"]
+        == "Product unit was already archived."
+    )
+
+    db.session.refresh(product_unit)
+    assert product_unit.is_active is False
+
+
+def test_restore_product_unit_is_idempotent(client):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-restore-idempotent"
+    )
+
+    pack = _add_unit(
+        unit_id="restore-idempotent-pack",
+        code="REST-IDEMP-PACK",
+        name="Pack",
+    )
+
+    product_unit = ProductUnit(
+        id="restore-idempotent-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=pack.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.commit()
+
+    response = client.post(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}/restore"
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.json["ok"] is True
+    assert response.json["item"]["is_active"] is True
+    assert (
+        response.json["message"]
+        == "Product unit was already active."
+    )
+
+    db.session.refresh(product_unit)
+    assert product_unit.is_active is True
+
+
+def test_used_product_unit_allows_same_conversion_factor(client):
+    product, _, _ = _add_product_with_base_unit(
+        product_id="product-unit-used-same-factor"
+    )
+
+    strip = _add_unit(
+        unit_id="used-same-factor-strip",
+        code="USED-SAME-STRIP",
+        name="Strip",
+    )
+
+    product_unit = ProductUnit(
+        id="product-unit-used-same-factor-strip",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=strip.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        is_active=True,
+    )
+
+    db.session.add(product_unit)
+    db.session.flush()
+
+    db.session.add(
+        SaleItem(
+            sale_id="sale-product-unit-same-factor",
+            product_id=product.id,
+            product_unit_id=product_unit.id,
+            quantity=Decimal("2"),
+            base_quantity=Decimal("20"),
+            unit_price=Decimal("50"),
+            conversion_factor_to_base=Decimal("10"),
+            line_total=Decimal("100"),
+        )
+    )
+
+    db.session.commit()
+
+    response = client.patch(
+        (
+            f"/api/products/{product.id}/units/"
+            f"{product_unit.id}"
+        ),
+        json={
+            "conversion_factor_to_base": "10",
+            "can_sell": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json["ok"] is True
+    assert (
+        Decimal(
+            response.json["item"][
+                "conversion_factor_to_base"
+            ]
+        )
+        == Decimal("10")
+    )
+    assert response.json["item"]["can_sell"] is False
+
+    db.session.refresh(product_unit)
+
+    assert (
+        product_unit.conversion_factor_to_base
+        == Decimal("10")
+    )
+    assert product_unit.can_sell is False
+
+
+def test_product_units_list_cannot_cross_tenant_boundary(
+    client,
+):
+    other_product, _, _ = _add_product_with_base_unit(
+        product_id="tenant-2-product-unit-list",
+        tenant_id="tenant-2",
+    )
+
+    response = client.get(
+        f"/api/products/{other_product.id}/units"
+    )
+
+    assert response.status_code == 404
+    assert response.json["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "archive",
+        "restore",
+    ],
+)
+def test_product_unit_lifecycle_cannot_cross_tenant_boundary(
+    client,
+    action,
+):
+    _, _, other_product_unit = (
+        _add_product_with_base_unit(
+            product_id="tenant-2-product-unit-lifecycle",
+            tenant_id="tenant-2",
+        )
+    )
+
+    tenant_one_product, _, _ = (
+        _add_product_with_base_unit(
+            product_id="tenant-1-product-unit-lifecycle"
+        )
+    )
+
+    original_active = other_product_unit.is_active
+
+    response = client.post(
+        (
+            f"/api/products/{tenant_one_product.id}/units/"
+            f"{other_product_unit.id}/{action}"
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.json["ok"] is False
+
+    db.session.refresh(other_product_unit)
+
+    assert (
+        other_product_unit.is_active
+        is original_active
+    )
