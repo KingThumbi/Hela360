@@ -2871,6 +2871,119 @@ def _approved_split_fixture(
     )
 
 
+
+
+def test_bulk_uom_lock_resolves_distinct_requested_rows(
+    integration_app,
+):
+    with integration_app.app_context():
+        tenant = _db_tenant(
+            "UOM Bulk Lock Tenant"
+        )
+
+        first = _db_unit(
+            tenant=tenant,
+            code="LOCK-A",
+            name="Lock A",
+        )
+
+        second = _db_unit(
+            tenant=tenant,
+            code="LOCK-B",
+            name="Lock B",
+        )
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=MagicMock(),
+            audit_service=MagicMock(),
+        )
+
+        resolved = service._get_tenant_uoms_for_update(
+            tenant_id=str(tenant.id),
+            uom_ids={
+                str(second.id),
+                str(first.id),
+                str(second.id),
+            },
+        )
+
+        assert set(resolved) == {
+            str(first.id),
+            str(second.id),
+        }
+
+        assert resolved[str(first.id)] is first
+        assert resolved[str(second.id)] is second
+
+        db.session.rollback()
+
+
+def test_execute_split_current_products_bulk_locks_source_and_target_uoms(
+    integration_app,
+):
+    with integration_app.app_context():
+        _prepare_execution_catalogue()
+        fixture = _approved_split_fixture()
+
+        service = TenantUOMRemediationExecutor(
+            db.session,
+            review_service=fixture.review_service,
+            audit_service=ExecutionAuditSpy(),
+        )
+
+        original_bulk_lock = (
+            service._get_tenant_uoms_for_update
+        )
+
+        captured = {}
+
+        def capture_bulk_lock(
+            *,
+            tenant_id,
+            uom_ids,
+        ):
+            captured["tenant_id"] = tenant_id
+            captured["uom_ids"] = set(uom_ids)
+
+            return original_bulk_lock(
+                tenant_id=tenant_id,
+                uom_ids=uom_ids,
+            )
+
+        def reject_single_lock(**_kwargs):
+            raise AssertionError(
+                "Split execution must not acquire source or "
+                "target UOMs through the single-row lock helper."
+            )
+
+        service._get_tenant_uoms_for_update = (
+            capture_bulk_lock
+        )
+        service._get_tenant_uom_for_update = (
+            reject_single_lock
+        )
+
+        result = service.execute_split_current_products(
+            tenant_id=str(fixture.tenant.id),
+            review_id=str(fixture.review.id),
+            executed_by=str(fixture.executor.id),
+        )
+
+        assert result.status == "executed"
+
+        assert captured["tenant_id"] == str(
+            fixture.tenant.id
+        )
+
+        assert captured["uom_ids"] == {
+            str(fixture.source.id),
+            str(fixture.target.id),
+        }
+
+        db.session.rollback()
+
+
 def test_execute_split_current_products_preserves_old_product_unit(
     integration_app,
 ):

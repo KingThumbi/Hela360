@@ -564,11 +564,6 @@ class TenantUOMRemediationExecutor:
             user_id=executed_by,
         )
 
-        source_uom = self._get_tenant_uom_for_update(
-            tenant_id=tenant_id,
-            uom_id=str(review.source_uom_id),
-        )
-
         decisions = self._get_decisions_for_update(
             tenant_id=tenant_id,
             review_id=str(review.id),
@@ -605,6 +600,25 @@ class TenantUOMRemediationExecutor:
                 "unsupported product decision.",
                 409,
             )
+
+        required_uom_ids = {
+            str(review.source_uom_id),
+        }
+
+        required_uom_ids.update(
+            str(row.target_tenant_uom_id)
+            for row in move_decisions
+            if row.target_tenant_uom_id
+        )
+
+        locked_uoms = self._get_tenant_uoms_for_update(
+            tenant_id=tenant_id,
+            uom_ids=required_uom_ids,
+        )
+
+        source_uom = locked_uoms[
+            str(review.source_uom_id)
+        ]
 
         retained_canonical = None
 
@@ -715,12 +729,9 @@ class TenantUOMRemediationExecutor:
                     409,
                 )
 
-            target_uom = self._get_tenant_uom_for_update(
-                tenant_id=tenant_id,
-                uom_id=str(
-                    decision.target_tenant_uom_id
-                ),
-            )
+            target_uom = locked_uoms[
+                str(decision.target_tenant_uom_id)
+            ]
 
             if str(target_uom.id) == str(source_uom.id):
                 raise TenantUOMRemediationExecutionError(
@@ -1697,6 +1708,54 @@ class TenantUOMRemediationExecutor:
             )
 
         return review
+
+    def _get_tenant_uoms_for_update(
+        self,
+        *,
+        tenant_id: str,
+        uom_ids: set[str],
+    ) -> dict[str, UnitOfMeasure]:
+        ordered_ids = sorted(
+            {
+                str(uom_id)
+                for uom_id in uom_ids
+                if uom_id
+            }
+        )
+
+        if not ordered_ids:
+            return {}
+
+        rows = (
+            self.session.query(UnitOfMeasure)
+            .filter(
+                UnitOfMeasure.tenant_id == tenant_id,
+                UnitOfMeasure.id.in_(ordered_ids),
+            )
+            .order_by(UnitOfMeasure.id)
+            .with_for_update()
+            .all()
+        )
+
+        resolved = {
+            str(row.id): row
+            for row in rows
+        }
+
+        missing = [
+            uom_id
+            for uom_id in ordered_ids
+            if uom_id not in resolved
+        ]
+
+        if missing:
+            raise TenantUOMRemediationExecutionError(
+                "One or more tenant UOMs required for "
+                "remediation were not found.",
+                404,
+            )
+
+        return resolved
 
     def _get_tenant_uom_for_update(
         self,
