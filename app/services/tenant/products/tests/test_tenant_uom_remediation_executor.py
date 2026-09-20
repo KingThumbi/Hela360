@@ -3036,6 +3036,10 @@ def test_execute_split_current_products_preserves_old_product_unit(
             summary["historical_records_changed"]
             == 0
         )
+        assert (
+            summary["product_unit_changes"]
+            == 2
+        )
 
         assert len(audit.calls) == 1
         assert (
@@ -3365,6 +3369,12 @@ def test_execute_split_current_products_promotes_existing_factor_one_target(
         )
 
         assert result.status == "executed"
+        assert (
+            fixture.review.execution_summary[
+                "product_unit_changes"
+            ]
+            == 2
+        )
 
         db.session.refresh(existing_target)
         db.session.refresh(fixture.capsule_unit)

@@ -814,6 +814,7 @@ class TenantUOMRemediationExecutor:
         }
 
         product_summaries = []
+        product_unit_change_count = 0
 
         for (
             product,
@@ -847,6 +848,8 @@ class TenantUOMRemediationExecutor:
             current_base.can_sell = False
             current_base.can_receive = False
 
+            product_unit_change_count += 1
+
             # Release the partial unique base index before
             # promoting/creating the replacement base row.
             self.session.flush()
@@ -872,9 +875,11 @@ class TenantUOMRemediationExecutor:
                 self.session.add(
                     target_product_unit
                 )
+                product_unit_change_count += 1
             else:
                 target_product_unit.is_base = True
                 target_product_unit.is_active = True
+                product_unit_change_count += 1
 
             product.unit_id = str(target_uom.id)
 
@@ -980,7 +985,7 @@ class TenantUOMRemediationExecutor:
             "product_changes":
                 len(prepared_moves),
             "product_unit_changes":
-                len(prepared_moves) * 2,
+                product_unit_change_count,
             "historical_records_changed": 0,
             "products": product_summaries,
         }
