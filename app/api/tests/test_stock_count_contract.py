@@ -5,11 +5,13 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from flask import Flask
 
 from app.api.errors import register_error_handlers
 from app.api.inventory import bp as inventory_bp
 from app.extensions import db
+from app.models.audit import AuditLog
 from app.models import (
     Branch,
     InventoryBatch,
@@ -58,6 +60,7 @@ def app_context():
         Tenant.__table__.create(db.engine)
         Branch.__table__.create(db.engine)
         User.__table__.create(db.engine)
+        AuditLog.__table__.create(db.engine)
         Product.__table__.create(db.engine)
         Warehouse.__table__.create(db.engine)
         InventoryBatch.__table__.create(db.engine)
@@ -83,6 +86,7 @@ def app_context():
         InventoryBatch.__table__.drop(db.engine)
         Warehouse.__table__.drop(db.engine)
         Product.__table__.drop(db.engine)
+        AuditLog.__table__.drop(db.engine)
         User.__table__.drop(db.engine)
         Branch.__table__.drop(db.engine)
         Tenant.__table__.drop(db.engine)
@@ -360,6 +364,24 @@ def test_stock_count_create_snapshots_physical_on_hand_and_batches(client):
     assert StockBalance.query.filter_by(id="stock-batch").one().quantity_on_hand == Decimal("12.0000")
     assert InventoryMovement.query.count() == 0
 
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_STARTED",
+        entity_type="stock_count",
+        entity_id=item["id"],
+    ).one()
+
+    assert audit.module_code == "INVENTORY"
+    assert audit.tenant_id == TENANT_ID
+    assert audit.branch_id == BRANCH_ID
+    assert audit.user_id == USER_ID
+    assert audit.new_values == {
+        "status": "open",
+    }
+    assert audit.details["count_number"] == item["count_number"]
+    assert audit.details["warehouse_id"] == WAREHOUSE_ID
+    assert audit.details["scope_type"] == "full"
+    assert audit.details["count_mode"] == "visible"
+
 
 def test_stock_count_rejects_cross_scope_inputs(client):
     response = client.post(
@@ -548,6 +570,24 @@ def test_stock_count_complete_requires_all_items_and_does_not_mutate_stock(clien
     assert StockBalance.query.filter_by(id="stock-batch").one().quantity_on_hand == before_stock
     assert InventoryBatch.query.filter_by(id=BATCH_ID).one().quantity_on_hand == before_batch
     assert InventoryMovement.query.count() == before_movements
+
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_COMPLETED",
+        entity_type="stock_count",
+        entity_id=count_id,
+    ).one()
+
+    assert audit.module_code == "INVENTORY"
+    assert audit.tenant_id == TENANT_ID
+    assert audit.branch_id == BRANCH_ID
+    assert audit.user_id == USER_ID
+    assert audit.old_values == {
+        "status": "open",
+    }
+    assert audit.new_values == {
+        "status": "completed",
+    }
+    assert audit.details["warehouse_id"] == WAREHOUSE_ID
 
     response = client.post(f"/api/inventory/stock-counts/{count_id}/complete")
     assert response.status_code == 409
@@ -2313,3 +2353,102 @@ def test_full_stock_count_serializes_empty_scope_products(
         created.get_json()["item"]["scope_products"]
         == []
     )
+
+
+
+def test_stock_count_db_rejects_second_open_count_same_warehouse(
+    app_context,
+):
+    first = StockCount(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-OPEN-001",
+        idempotency_key="stock-count-open-001",
+        request_fingerprint="a" * 64,
+        scope_type="full",
+        count_mode="blind",
+        status="open",
+        snapshot_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+        started_by=USER_ID,
+    )
+
+    second = StockCount(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-OPEN-002",
+        idempotency_key="stock-count-open-002",
+        request_fingerprint="b" * 64,
+        scope_type="full",
+        count_mode="blind",
+        status="open",
+        snapshot_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+        started_by=USER_ID,
+    )
+
+    db.session.add(first)
+    db.session.commit()
+
+    db.session.add(second)
+
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+
+    db.session.rollback()
+
+
+def test_stock_count_db_allows_completed_history_with_open_count(
+    app_context,
+):
+    completed = StockCount(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-HISTORY-001",
+        idempotency_key="stock-count-history-001",
+        request_fingerprint="c" * 64,
+        scope_type="full",
+        count_mode="blind",
+        status="completed",
+        snapshot_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+        started_by=USER_ID,
+        completed_at=datetime.now(timezone.utc),
+        completed_by=USER_ID,
+    )
+
+    open_count = StockCount(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-OPEN-003",
+        idempotency_key="stock-count-open-003",
+        request_fingerprint="d" * 64,
+        scope_type="full",
+        count_mode="blind",
+        status="open",
+        snapshot_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+        started_by=USER_ID,
+    )
+
+    db.session.add_all([completed, open_count])
+    db.session.commit()
+
+    rows = (
+        db.session.query(StockCount)
+        .filter(
+            StockCount.tenant_id == TENANT_ID,
+            StockCount.warehouse_id == WAREHOUSE_ID,
+        )
+        .all()
+    )
+
+    assert len(rows) == 2
+    assert {row.status for row in rows} == {
+        "completed",
+        "open",
+    }

@@ -11,6 +11,7 @@ from sqlalchemy import func
 from app.api.errors import register_error_handlers
 from app.api.inventory import bp as inventory_bp
 from app.extensions import db
+from app.models.audit import AuditLog
 from app.models import (
     Branch,
     InventoryBatch,
@@ -64,6 +65,7 @@ def app_context():
         Tenant.__table__.create(db.engine)
         Branch.__table__.create(db.engine)
         User.__table__.create(db.engine)
+        AuditLog.__table__.create(db.engine)
         Role.__table__.create(db.engine)
         Permission.__table__.create(db.engine)
         RolePermission.__table__.create(db.engine)
@@ -304,6 +306,7 @@ def app_context():
         RolePermission.__table__.drop(db.engine)
         Permission.__table__.drop(db.engine)
         Role.__table__.drop(db.engine)
+        AuditLog.__table__.drop(db.engine)
         User.__table__.drop(db.engine)
         Branch.__table__.drop(db.engine)
         Tenant.__table__.drop(db.engine)
@@ -410,6 +413,98 @@ def test_manual_positive_non_batch_adjustment_posts_stock_and_movement(client):
     assert movement.reference_type == "stock_adjustment"
     assert StockAdjustment.query.count() == 1
     assert StockAdjustmentItem.query.count() == 1
+
+    adjustment_id = response.json["item"]["id"]
+
+    audit = AuditLog.query.filter_by(
+        action="STOCK_ADJUSTED",
+        entity_type="stock_adjustment",
+        entity_id=adjustment_id,
+    ).one()
+
+    assert audit.module_code == "INVENTORY"
+    assert audit.tenant_id == TENANT_ID
+    assert audit.branch_id == BRANCH_ID
+    assert audit.user_id == USER_ID
+    assert audit.new_values == {
+        "status": "posted",
+    }
+    assert audit.details["warehouse_id"] == WAREHOUSE_ID
+    assert audit.details["source_type"] == "manual"
+    assert audit.details["source_id"] is None
+    assert audit.details["reason_code"] == "correction"
+    assert audit.details["line_count"] == 1
+    assert audit.reason == "Shelf correction"
+
+
+def test_stock_adjustment_and_audit_rollback_together_when_commit_fails(
+    client,
+    monkeypatch,
+):
+    before_stock = (
+        StockBalance.query
+        .filter_by(product_id=NON_BATCH_PRODUCT_ID)
+        .one()
+        .quantity_on_hand
+    )
+
+    def fail_commit():
+        raise RuntimeError("forced stock-adjustment commit failure")
+
+    monkeypatch.setattr(
+        db.session,
+        "commit",
+        fail_commit,
+    )
+
+    response = client.post(
+        "/api/inventory/stock-adjustments",
+        json=manual_payload(
+            idempotency_key="forced-commit-failure",
+        ),
+    )
+
+    assert response.status_code == 500
+
+    # The service exception path must leave the scoped session usable.
+    db.session.rollback()
+
+    stock = (
+        StockBalance.query
+        .filter_by(product_id=NON_BATCH_PRODUCT_ID)
+        .one()
+    )
+
+    assert stock.quantity_on_hand == before_stock
+
+    assert (
+        InventoryMovement.query
+        .filter_by(
+            movement_type="stock_adjustment",
+            product_id=NON_BATCH_PRODUCT_ID,
+        )
+        .count()
+        == 0
+    )
+
+    assert (
+        StockAdjustment.query
+        .filter_by(
+            idempotency_key="forced-commit-failure",
+        )
+        .count()
+        == 0
+    )
+
+    assert (
+        AuditLog.query
+        .filter_by(
+            action="STOCK_ADJUSTED",
+            entity_type="stock_adjustment",
+        )
+        .count()
+        == 0
+    )
 
 
 def test_manual_negative_adjustment_preserves_reserved_stock_safety(client):

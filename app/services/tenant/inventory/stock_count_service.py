@@ -9,6 +9,9 @@ import json
 from sqlalchemy import func, inspect
 
 from app.errors import ConflictError, NotFoundError, ValidationError
+from app.services.common.audit_actions import AuditAction
+from app.services.common.audit_modules import AuditModule
+from app.services.common.audit_service import AuditService
 from app.models import (
     InventoryBatch,
     InventoryMovement,
@@ -253,6 +256,26 @@ class StockCountService:
                         updated_at=now,
                     )
                 )
+
+            AuditService().log(
+                module=AuditModule.INVENTORY,
+                action=AuditAction.INVENTORY_COUNT_STARTED,
+                entity_type="stock_count",
+                tenant_id=tenant_id,
+                entity_id=str(count.id),
+                user_id=started_by,
+                branch_id=branch_id,
+                new_values={
+                    "status": OPEN_STATUS,
+                },
+                details={
+                    "count_number": count.count_number,
+                    "warehouse_id": str(count.warehouse_id),
+                    "scope_type": count.scope_type,
+                    "count_mode": count.count_mode,
+                },
+                commit=False,
+            )
 
             self.session.commit()
             return count
@@ -791,6 +814,30 @@ class StockCountService:
             count.completed_at = now
             count.completed_by = completed_by
             count.updated_at = now
+
+            AuditService().log(
+                module=AuditModule.INVENTORY,
+                action=AuditAction.INVENTORY_COUNT_COMPLETED,
+                entity_type="stock_count",
+                tenant_id=tenant_id,
+                entity_id=str(count.id),
+                user_id=completed_by,
+                branch_id=branch_id,
+                old_values={
+                    "status": OPEN_STATUS,
+                },
+                new_values={
+                    "status": COMPLETED_STATUS,
+                },
+                details={
+                    "count_number": count.count_number,
+                    "warehouse_id": str(count.warehouse_id),
+                    "scope_type": count.scope_type,
+                    "count_mode": count.count_mode,
+                },
+                commit=False,
+            )
+
             self.session.commit()
             return count
         except Exception:

@@ -43,6 +43,11 @@ from app.models import (
 )
 from app.models.pos import SaleRefund, SaleRefundItem
 from app.models.security import TokenRevocationReason
+from app.services.tenant.inventory.sale_void_stock_service import (
+    SaleVoidStockRestorationError,
+    restore_sale_void_stock,
+)
+from app.services.tenant.pos.sale_approval_service import SaleApprovalService
 from app.services.tenant.pos.till_shift_service import TillShiftService
 
 
@@ -3509,3 +3514,680 @@ def test_refund_product_unit_uses_historical_base_quantity(
     assert refund_movement.sale_item_id == sale_item.id
     assert refund_movement.batch_id == BATCH_ID
     assert refund_movement.warehouse_id == WAREHOUSE_ID
+
+
+
+def _restore_void_inventory_for_sale(
+    sale_id: str,
+    *,
+    created_by: str = USER_ID,
+):
+    sale = db.session.get(Sale, sale_id)
+
+    sale_item = (
+        db.session.query(SaleItem)
+        .filter(SaleItem.sale_id == sale_id)
+        .one()
+    )
+
+    lines = restore_sale_void_stock(
+        db.session,
+        tenant_id=TENANT_ID,
+        branch_id=str(sale.branch_id),
+        warehouse_id=str(sale.warehouse_id),
+        sale_id=str(sale.id),
+        sale_item_id=str(sale_item.id),
+        product_id=str(sale_item.product_id),
+        created_by=created_by,
+        note="Approved sale void",
+    )
+
+    db.session.flush()
+
+    return sale_item, lines
+
+
+def test_sale_void_restores_original_batch_allocation(client):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(
+            quantity="2",
+            payment_amount="20.00",
+        ),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    sale_item, restored = _restore_void_inventory_for_sale(
+        sale_id,
+    )
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("10.0000")
+    assert stock_balance.quantity_available == Decimal("10.0000")
+    assert batch.quantity_on_hand == Decimal("10.0000")
+
+    assert len(restored) == 1
+    assert restored[0].batch_id == BATCH_ID
+    assert restored[0].quantity == Decimal("2.0000")
+
+    movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .one()
+    )
+
+    assert movement.quantity == Decimal("2.0000")
+    assert movement.batch_id == BATCH_ID
+    assert movement.sale_item_id == sale_item.id
+    assert movement.reference_id == sale_id
+    assert movement.created_by == USER_ID
+
+
+def test_sale_void_restores_only_quantity_not_already_refunded(
+    client,
+):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(
+            quantity="3",
+            payment_amount="30.00",
+        ),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+    sale_item_id = checkout_response.json["item"]["items"][0]["id"]
+
+    refund_response = client.post(
+        f"/api/sales/{sale_id}/refund",
+        json={
+            "items": [
+                {
+                    "sale_item_id": sale_item_id,
+                    "quantity": "1",
+                }
+            ],
+            "reason": "Partial physical return",
+        },
+    )
+
+    assert refund_response.status_code == 201
+    assert refund_response.json["refund"]["stock_returned"] is True
+
+    _, restored = _restore_void_inventory_for_sale(sale_id)
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("10.0000")
+    assert stock_balance.quantity_available == Decimal("10.0000")
+    assert batch.quantity_on_hand == Decimal("10.0000")
+
+    assert len(restored) == 1
+    assert restored[0].batch_id == BATCH_ID
+    assert restored[0].quantity == Decimal("2.0000")
+
+    void_movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .one()
+    )
+
+    assert void_movement.quantity == Decimal("2.0000")
+
+
+def test_sale_void_restores_original_multi_batch_allocations(
+    client,
+):
+    add_open_shift()
+
+    set_stock_balance(on_hand="5.0000")
+
+    replace_batches(
+        make_batch(
+            BATCH_ID,
+            quantity="2.0000",
+            expiry_date=date.today() + timedelta(days=5),
+            unit_cost="1.10",
+        ),
+        make_batch(
+            SECOND_BATCH_ID,
+            quantity="3.0000",
+            expiry_date=date.today() + timedelta(days=30),
+            unit_cost="1.20",
+        ),
+    )
+
+    db.session.commit()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(
+            quantity="4",
+            payment_amount="40.00",
+        ),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    _, restored = _restore_void_inventory_for_sale(sale_id)
+
+    assert (
+        db.session.get(InventoryBatch, BATCH_ID).quantity_on_hand
+        == Decimal("2.0000")
+    )
+    assert (
+        db.session.get(
+            InventoryBatch,
+            SECOND_BATCH_ID,
+        ).quantity_on_hand
+        == Decimal("3.0000")
+    )
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+
+    assert stock_balance.quantity_on_hand == Decimal("5.0000")
+    assert stock_balance.quantity_available == Decimal("5.0000")
+
+    restored_by_batch = {
+        line.batch_id: line
+        for line in restored
+    }
+
+    assert restored_by_batch[BATCH_ID].quantity == Decimal(
+        "2.0000"
+    )
+    assert restored_by_batch[BATCH_ID].unit_cost == Decimal(
+        "1.10"
+    )
+    assert restored_by_batch[
+        SECOND_BATCH_ID
+    ].quantity == Decimal("2.0000")
+    assert restored_by_batch[
+        SECOND_BATCH_ID
+    ].unit_cost == Decimal("1.20")
+
+    movements = {
+        movement.batch_id: movement
+        for movement in db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .all()
+    }
+
+    assert movements[BATCH_ID].quantity == Decimal("2.0000")
+    assert movements[BATCH_ID].unit_cost == Decimal("1.10")
+    assert movements[SECOND_BATCH_ID].quantity == Decimal(
+        "2.0000"
+    )
+    assert movements[SECOND_BATCH_ID].unit_cost == Decimal(
+        "1.20"
+    )
+
+
+def test_sale_void_uses_historical_base_inventory_quantity(
+    client,
+):
+    add_open_shift()
+
+    box = UnitOfMeasure(
+        id="75757575-7575-4575-8575-757575757575",
+        tenant_id=TENANT_ID,
+        code="BOX-VOID",
+        name="Box",
+        base_factor=Decimal("1"),
+    )
+
+    db.session.add(box)
+    db.session.flush()
+
+    box_product_unit = ProductUnit(
+        id="76767676-7676-4676-8676-767676767676",
+        tenant_id=TENANT_ID,
+        product_id=PRODUCT_ID,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("10.00"),
+        minimum_sale_price=Decimal("8.00"),
+        is_active=True,
+    )
+
+    db.session.add(box_product_unit)
+
+    set_stock_balance(
+        on_hand="30.0000",
+        available="30.0000",
+    )
+
+    replace_batches(
+        make_batch(
+            BATCH_ID,
+            quantity="30.0000",
+            expiry_date=date.today() + timedelta(days=30),
+        )
+    )
+
+    db.session.commit()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json={
+            "warehouse_id": WAREHOUSE_ID,
+            "till_id": TILL_ID,
+            "items": [
+                {
+                    "product_id": PRODUCT_ID,
+                    "product_unit_id": box_product_unit.id,
+                    "quantity": "2",
+                    "unit_price": "10.00",
+                }
+            ],
+            "payments": [
+                {
+                    "payment_method_id": PAYMENT_METHOD_ID,
+                    "amount": "20.00",
+                }
+            ],
+        },
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    sale_item = (
+        db.session.query(SaleItem)
+        .filter(SaleItem.sale_id == sale_id)
+        .one()
+    )
+
+    assert sale_item.quantity == Decimal("2.0000")
+    assert sale_item.base_quantity == Decimal("20.0000")
+
+    # Historical movement evidence, not current ProductUnit state,
+    # must remain authoritative for a void.
+    box_product_unit.is_active = False
+    db.session.commit()
+
+    _, restored = _restore_void_inventory_for_sale(sale_id)
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("30.0000")
+    assert stock_balance.quantity_available == Decimal(
+        "30.0000"
+    )
+    assert batch.quantity_on_hand == Decimal("30.0000")
+
+    assert len(restored) == 1
+    assert restored[0].quantity == Decimal("20.0000")
+
+    void_movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .one()
+    )
+
+    assert void_movement.quantity == Decimal("20.0000")
+    assert void_movement.sale_item_id == sale_item.id
+    assert void_movement.batch_id == BATCH_ID
+
+
+def test_sale_void_non_inventory_product_requires_no_restoration(
+    client,
+):
+    product = db.session.get(Product, PRODUCT_ID)
+
+    product.track_inventory = False
+    product.track_batches = False
+    product.track_expiry = False
+
+    db.session.query(InventoryBatch).delete()
+    db.session.query(StockBalance).delete()
+    db.session.commit()
+
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    _, restored = _restore_void_inventory_for_sale(sale_id)
+
+    assert restored == ()
+    assert db.session.query(InventoryMovement).count() == 0
+
+
+
+def test_sale_void_second_restoration_is_noop(client):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(
+            quantity="2",
+            payment_amount="20.00",
+        ),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    _, first_restore = _restore_void_inventory_for_sale(sale_id)
+    _, second_restore = _restore_void_inventory_for_sale(sale_id)
+
+    assert len(first_restore) == 1
+    assert first_restore[0].quantity == Decimal("2.0000")
+    assert second_restore == ()
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("10.0000")
+    assert stock_balance.quantity_available == Decimal("10.0000")
+    assert batch.quantity_on_hand == Decimal("10.0000")
+
+    void_movements = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .all()
+    )
+
+    assert len(void_movements) == 1
+    assert void_movements[0].quantity == Decimal("2.0000")
+
+
+def test_sale_void_rejects_over_restored_history(client):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(
+            quantity="2",
+            payment_amount="20.00",
+        ),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    sale_item = (
+        db.session.query(SaleItem)
+        .filter(SaleItem.sale_id == sale_id)
+        .one()
+    )
+
+    db.session.add(
+        InventoryMovement(
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            warehouse_id=WAREHOUSE_ID,
+            product_id=PRODUCT_ID,
+            batch_id=BATCH_ID,
+            sale_item_id=sale_item.id,
+            movement_type="sale_refund_return",
+            quantity=Decimal("3.0000"),
+            unit_cost=Decimal("1.00"),
+            reference_type="sale_refund",
+            reference_id="99999999-9999-4999-8999-999999999999",
+            created_by=USER_ID,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    db.session.commit()
+
+    with pytest.raises(
+        SaleVoidStockRestorationError,
+        match="Previously restored stock exceeds the original sale allocation",
+    ):
+        _restore_void_inventory_for_sale(sale_id)
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    # Checkout deducted 2 and the corrupt historical movement was evidence
+    # only; this test does not mutate the physical quantities for that row.
+    assert stock_balance.quantity_on_hand == Decimal("8.0000")
+    assert batch.quantity_on_hand == Decimal("8.0000")
+
+    assert (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .count()
+        == 0
+    )
+
+
+def test_sale_void_rejects_untraceable_tracked_product(client):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+    sale_item_id = checkout_response.json["item"]["items"][0]["id"]
+
+    db.session.query(InventoryMovement).filter(
+        InventoryMovement.reference_type == "sale",
+        InventoryMovement.reference_id == sale_id,
+    ).update(
+        {"sale_item_id": None},
+        synchronize_session=False,
+    )
+
+    db.session.commit()
+
+    with pytest.raises(
+        SaleVoidStockRestorationError,
+        match=(
+            "Original stock allocation is not traceable for "
+            f"sale_item_id={sale_item_id}"
+        ),
+    ):
+        _restore_void_inventory_for_sale(sale_id)
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("9.0000")
+    assert batch.quantity_on_hand == Decimal("9.0000")
+
+    assert (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .count()
+        == 0
+    )
+
+
+
+def test_sale_void_approval_records_executing_approver(client):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    service = SaleApprovalService(db.session)
+
+    sale = service._execute_void_sale(
+        tenant_id=TENANT_ID,
+        sale_id=sale_id,
+        payload={"reason": "Approved inventory reversal"},
+        executed_by=OTHER_USER_ID,
+    )
+
+    db.session.flush()
+
+    assert sale.status == "voided"
+
+    movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .one()
+    )
+
+    assert movement.created_by == OTHER_USER_ID
+    assert movement.reference_id == sale_id
+    assert movement.quantity == Decimal("1.0000")
+    assert movement.batch_id == BATCH_ID
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert stock_balance.quantity_on_hand == Decimal("10.0000")
+    assert stock_balance.quantity_available == Decimal("10.0000")
+    assert batch.quantity_on_hand == Decimal("10.0000")
+
+
+def test_sale_void_approval_does_not_commit_caller_transaction(
+    client,
+):
+    add_open_shift()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json=checkout_payload(),
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    sale_before = db.session.get(Sale, sale_id)
+
+    assert sale_before.status != "voided"
+
+    service = SaleApprovalService(db.session)
+
+    service._execute_void_sale(
+        tenant_id=TENANT_ID,
+        sale_id=sale_id,
+        payload={"reason": "Rollback verification"},
+        executed_by=OTHER_USER_ID,
+    )
+
+    db.session.flush()
+
+    assert db.session.get(Sale, sale_id).status == "voided"
+    assert (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .count()
+        == 1
+    )
+
+    assert (
+        db.session.get(
+            StockBalance,
+            "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        ).quantity_on_hand
+        == Decimal("10.0000")
+    )
+    assert (
+        db.session.get(
+            InventoryBatch,
+            BATCH_ID,
+        ).quantity_on_hand
+        == Decimal("10.0000")
+    )
+
+    # The approval service must not commit inventory mutations itself.
+    db.session.rollback()
+
+    db.session.expire_all()
+
+    sale_after = db.session.get(Sale, sale_id)
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(InventoryBatch, BATCH_ID)
+
+    assert sale_after.status != "voided"
+    assert stock_balance.quantity_on_hand == Decimal("9.0000")
+    assert stock_balance.quantity_available == Decimal("9.0000")
+    assert batch.quantity_on_hand == Decimal("9.0000")
+
+    assert (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_void",
+        )
+        .count()
+        == 0
+    )

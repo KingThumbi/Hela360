@@ -255,6 +255,14 @@ class StockCount(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
             "idempotency_key",
             name="uq_stock_counts_tenant_idempotency_key",
         ),
+        db.Index(
+            "uq_stock_counts_one_open_per_warehouse",
+            "tenant_id",
+            "warehouse_id",
+            unique=True,
+            postgresql_where=db.text("status = 'open'"),
+            sqlite_where=db.text("status = 'open'"),
+        ),
     )
 
     tenant_id = db.Column(db.String(36), db.ForeignKey("tenants.id"), nullable=False, index=True)

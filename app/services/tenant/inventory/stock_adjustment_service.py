@@ -9,6 +9,9 @@ import json
 from sqlalchemy import func
 
 from app.errors import ConflictError, NotFoundError, ValidationError
+from app.services.common.audit_actions import AuditAction
+from app.services.common.audit_modules import AuditModule
+from app.services.common.audit_service import AuditService
 from app.models import (
     InventoryBatch,
     InventoryMovement,
@@ -802,6 +805,35 @@ class StockAdjustmentService:
                         updated_at=now,
                     )
                 )
+
+            AuditService().log(
+                module=AuditModule.INVENTORY,
+                action=AuditAction.STOCK_ADJUSTED,
+                entity_type="stock_adjustment",
+                tenant_id=tenant_id,
+                entity_id=str(adjustment.id),
+                user_id=posted_by,
+                branch_id=branch_id,
+                new_values={
+                    "status": POSTED_STATUS,
+                },
+                details={
+                    "adjustment_number":
+                        adjustment.adjustment_number,
+                    "warehouse_id":
+                        str(adjustment.warehouse_id),
+                    "source_type":
+                        adjustment.source_type,
+                    "source_id":
+                        adjustment.source_id,
+                    "reason_code":
+                        adjustment.reason_code,
+                    "line_count":
+                        len(lines),
+                },
+                reason=reason,
+                commit=False,
+            )
 
             self.session.commit()
             return adjustment

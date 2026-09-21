@@ -6,7 +6,11 @@ from uuid import uuid4
 
 from app.extensions import db
 from app.models import Sale, User
-from app.models.pos import SaleActionRequest
+from app.models.pos import SaleActionRequest, SaleItem
+from app.services.tenant.inventory.sale_void_stock_service import (
+    SaleVoidStockRestorationError,
+    restore_sale_void_stock,
+)
 from app.services.tenant.pos.refund_service import RefundService, RefundError
 
 
@@ -121,6 +125,7 @@ class SaleApprovalService:
                 tenant_id=tenant_id,
                 sale_id=request_row.sale_id,
                 payload=request_row.request_payload or {},
+                executed_by=approved_by,
             )
             request_row.status = "executed"
             request_row.executed_at = utcnow()
@@ -206,59 +211,106 @@ class SaleApprovalService:
             return
 
             raise ApprovalError("Only admin can approve or reject action requests.", 403)
-    def _execute_void_sale(self, tenant_id: str, sale_id: str, payload: dict):
+    def _execute_void_sale(
+        self,
+        tenant_id: str,
+        sale_id: str,
+        payload: dict,
+        executed_by: str,
+    ):
         """
-        Reuse your existing void logic helper if you refactor it later.
-        For now this imports lazily to avoid circular imports.
-        """
-        from app.api.sales import get_sale_items_for_sale, restore_stock_for_void, now_utc
+        Void a completed sale and restore its remaining traceable inventory.
 
+        Inventory restoration is delegated to the inventory domain so that
+        historical base quantities, original batch allocations, prior refund
+        returns, row locks, and InventoryMovement evidence remain authoritative.
+        """
         sale = self._get_sale_or_404(tenant_id, sale_id)
 
-        current_status = (getattr(sale, "status", "") or "").strip().lower()
+        current_status = (
+            getattr(sale, "status", "") or ""
+        ).strip().lower()
+
         if current_status == "voided":
-            raise ApprovalError("Sale is already voided.", 409)
+            raise ApprovalError(
+                "Sale is already voided.",
+                409,
+            )
 
         branch_id = getattr(sale, "branch_id", None)
         warehouse_id = getattr(sale, "warehouse_id", None)
-        cashier_id = getattr(sale, "cashier_id", None)
 
-        if not branch_id or not warehouse_id or not cashier_id:
-            raise ApprovalError("Sale is missing branch_id, warehouse_id, or cashier_id.", 400)
-
-        reason = (payload.get("reason") or "").strip()
-        sale_items = get_sale_items_for_sale(str(sale.id))
-        if not sale_items:
-            raise ApprovalError("Sale has no items to void.", 400)
-
-        from decimal import Decimal
-
-        for item in sale_items:
-            quantity = Decimal(str(getattr(item, "quantity", 0)))
-            product_id = getattr(item, "product_id", None)
-            if not product_id:
-                raise ApprovalError(f"Sale item {item.id} has no product_id.", 400)
-
-            restore_stock_for_void(
-                tenant_id=tenant_id,
-                branch_id=str(branch_id),
-                warehouse_id=str(warehouse_id),
-                sale_id=str(sale.id),
-                product_id=product_id,
-                quantity=quantity,
-                created_by=str(cashier_id),
+        if not branch_id or not warehouse_id:
+            raise ApprovalError(
+                "Sale is missing branch_id or warehouse_id.",
+                400,
             )
 
+        reason = (payload.get("reason") or "").strip()
+
+        sale_items = (
+            self.session.query(SaleItem)
+            .filter(SaleItem.sale_id == sale.id)
+            .with_for_update()
+            .all()
+        )
+
+        if not sale_items:
+            raise ApprovalError(
+                "Sale has no items to void.",
+                400,
+            )
+
+        now = utcnow()
+
+        for item in sale_items:
+            product_id = getattr(item, "product_id", None)
+
+            if not product_id:
+                raise ApprovalError(
+                    f"Sale item {item.id} has no product_id.",
+                    400,
+                )
+
+            try:
+                restore_sale_void_stock(
+                    self.session,
+                    tenant_id=str(tenant_id),
+                    branch_id=str(branch_id),
+                    warehouse_id=str(warehouse_id),
+                    sale_id=str(sale.id),
+                    sale_item_id=str(item.id),
+                    product_id=str(product_id),
+                    created_by=str(executed_by),
+                    note=reason or None,
+                    now=now,
+                )
+            except SaleVoidStockRestorationError as exc:
+                raise ApprovalError(
+                    str(exc),
+                    409,
+                ) from exc
+
         sale.status = "voided"
+
         if hasattr(sale, "updated_at"):
-            sale.updated_at = now_utc()
+            sale.updated_at = now
 
         if hasattr(sale, "notes"):
-            existing_notes = (getattr(sale, "notes", None) or "").strip()
+            existing_notes = (
+                getattr(sale, "notes", None) or ""
+            ).strip()
+
             void_note = "Sale voided via approval"
+
             if reason:
                 void_note = f"{void_note}: {reason}"
-            sale.notes = f"{existing_notes}\n{void_note}".strip() if existing_notes else void_note
+
+            sale.notes = (
+                f"{existing_notes}\n{void_note}".strip()
+                if existing_notes
+                else void_note
+            )
 
         self.session.flush()
         return sale
