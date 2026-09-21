@@ -64,6 +64,8 @@ CROSS_TENANT_WAREHOUSE_TILL_ID = "23232323-2323-4232-8232-232323232323"
 INACTIVE_WAREHOUSE_TILL_ID = "34343434-3434-4343-8343-343434343434"
 WAREHOUSE_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 PRODUCT_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+BASE_UNIT_ID = "47474747-4747-4474-8474-474747474747"
+BASE_PRODUCT_UNIT_ID = "48484848-4848-4484-8484-484848484848"
 PAYMENT_METHOD_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 CARD_PAYMENT_METHOD_ID = "dededede-dede-4ded-dede-dededededede"
 BATCH_ID = "11111111-1111-4111-8111-111111111111"
@@ -167,16 +169,37 @@ def app_context():
                     username="other",
                     password_hash="hash",
                 ),
+                UnitOfMeasure(
+                    id=BASE_UNIT_ID,
+                    tenant_id=TENANT_ID,
+                    code="EA",
+                    name="Each",
+                    base_factor=Decimal("1.000000"),
+                ),
                 Product(
                     id=PRODUCT_ID,
                     tenant_id=TENANT_ID,
                     internal_sku="SKU-001",
                     name="Paracetamol",
+                    unit_id=BASE_UNIT_ID,
                     min_sale_price=Decimal("8.00"),
                     default_sale_price=Decimal("10.00"),
                     track_inventory=True,
                     track_batches=True,
                     track_expiry=True,
+                ),
+                ProductUnit(
+                    id=BASE_PRODUCT_UNIT_ID,
+                    tenant_id=TENANT_ID,
+                    product_id=PRODUCT_ID,
+                    unit_id=BASE_UNIT_ID,
+                    conversion_factor_to_base=Decimal("1.000000"),
+                    is_base=True,
+                    can_sell=True,
+                    can_receive=True,
+                    sale_price=Decimal("10.00"),
+                    minimum_sale_price=Decimal("8.00"),
+                    is_active=True,
                 ),
                 Warehouse(
                     id=WAREHOUSE_ID,
@@ -2335,8 +2358,18 @@ def test_checkout_rejects_unit_price_below_minimum(
 
 def test_checkout_rejects_product_without_default_sale_price(client):
     add_open_shift()
+
     product = db.session.get(Product, PRODUCT_ID)
+    base_product_unit = db.session.get(
+        ProductUnit,
+        BASE_PRODUCT_UNIT_ID,
+    )
+
+    # Exercise Product-level pricing fallback explicitly.
+    base_product_unit.sale_price = None
+    base_product_unit.minimum_sale_price = None
     product.default_sale_price = None
+
     db.session.commit()
 
     response = client.post(
@@ -2368,8 +2401,18 @@ def test_checkout_rejects_product_without_default_sale_price(client):
 
 def test_checkout_rejects_product_price_below_min_sale_price(client):
     add_open_shift()
+
     product = db.session.get(Product, PRODUCT_ID)
+    base_product_unit = db.session.get(
+        ProductUnit,
+        BASE_PRODUCT_UNIT_ID,
+    )
+
+    # Exercise Product-level pricing fallback explicitly.
+    base_product_unit.sale_price = None
+    base_product_unit.minimum_sale_price = None
     product.default_sale_price = Decimal("7.99")
+
     db.session.commit()
 
     response = client.post(
@@ -3179,3 +3222,290 @@ def test_checkout_uses_tenant_local_date_across_utc_midnight_boundary(
         ).quantity_on_hand
         == Decimal("5.0000")
     )
+
+
+def test_checkout_product_unit_converts_to_base_inventory_quantity(
+    client,
+):
+    add_open_shift()
+
+    box = UnitOfMeasure(
+        id="51515151-5151-4515-8515-515151515151",
+        tenant_id=TENANT_ID,
+        code="BOX-PU",
+        name="Box",
+        base_factor=Decimal("1"),
+    )
+
+    db.session.add(box)
+    db.session.flush()
+
+    box_product_unit = ProductUnit(
+        id="54545454-5454-4545-8545-545454545454",
+        tenant_id=TENANT_ID,
+        product_id=PRODUCT_ID,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("10.00"),
+        minimum_sale_price=Decimal("8.00"),
+        is_active=True,
+    )
+
+    db.session.add(box_product_unit)
+
+    set_stock_balance(
+        on_hand="30.0000",
+        available="30.0000",
+    )
+
+    replace_batches(
+        make_batch(
+            BATCH_ID,
+            quantity="30.0000",
+            expiry_date=date.today()
+            + timedelta(days=30),
+        )
+    )
+
+    db.session.commit()
+
+    response = client.post(
+        "/api/sales/checkout",
+        json={
+            "warehouse_id": WAREHOUSE_ID,
+            "till_id": TILL_ID,
+            "items": [
+                {
+                    "product_id": PRODUCT_ID,
+                    "product_unit_id": (
+                        box_product_unit.id
+                    ),
+                    "quantity": "2",
+                    "unit_price": "10.00",
+                }
+            ],
+            "payments": [
+                {
+                    "payment_method_id": (
+                        PAYMENT_METHOD_ID
+                    ),
+                    "amount": "20.00",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json["ok"] is True
+
+    sale_id = response.json["item"]["id"]
+
+    sale_item = (
+        db.session.query(SaleItem)
+        .filter(SaleItem.sale_id == sale_id)
+        .one()
+    )
+
+    assert sale_item.product_unit_id == (
+        box_product_unit.id
+    )
+    assert sale_item.quantity == Decimal("2.0000")
+    assert sale_item.base_quantity == Decimal("20.0000")
+    assert sale_item.unit_code_snapshot == "BOX-PU"
+    assert sale_item.unit_name_snapshot == "Box"
+    assert (
+        sale_item.conversion_factor_to_base
+        == Decimal("10.000000")
+    )
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+
+    batch = db.session.get(
+        InventoryBatch,
+        BATCH_ID,
+    )
+
+    movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale"
+        )
+        .one()
+    )
+
+    assert stock_balance.quantity_on_hand == Decimal(
+        "10.0000"
+    )
+    assert stock_balance.quantity_available == Decimal(
+        "10.0000"
+    )
+    assert batch.quantity_on_hand == Decimal("10.0000")
+
+    assert movement.quantity == Decimal("-20.0000")
+    assert movement.product_id == PRODUCT_ID
+    assert movement.sale_item_id == sale_item.id
+    assert movement.batch_id == BATCH_ID
+    assert movement.warehouse_id == WAREHOUSE_ID
+
+
+def test_refund_product_unit_uses_historical_base_quantity(
+    client,
+):
+    add_open_shift()
+
+    box = UnitOfMeasure(
+        id="62626262-6262-4626-8626-626262626262",
+        tenant_id=TENANT_ID,
+        code="BOX-PU",
+        name="Box",
+        base_factor=Decimal("1"),
+    )
+
+    db.session.add(box)
+    db.session.flush()
+
+    box_product_unit = ProductUnit(
+        id="64646464-6464-4646-8646-646464646464",
+        tenant_id=TENANT_ID,
+        product_id=PRODUCT_ID,
+        unit_id=box.id,
+        conversion_factor_to_base=Decimal("10"),
+        is_base=False,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("10.00"),
+        minimum_sale_price=Decimal("8.00"),
+        is_active=True,
+    )
+
+    db.session.add(box_product_unit)
+
+    set_stock_balance(
+        on_hand="30.0000",
+        available="30.0000",
+    )
+
+    replace_batches(
+        make_batch(
+            BATCH_ID,
+            quantity="30.0000",
+            expiry_date=date.today()
+            + timedelta(days=30),
+        )
+    )
+
+    db.session.commit()
+
+    checkout_response = client.post(
+        "/api/sales/checkout",
+        json={
+            "warehouse_id": WAREHOUSE_ID,
+            "till_id": TILL_ID,
+            "items": [
+                {
+                    "product_id": PRODUCT_ID,
+                    "product_unit_id": box_product_unit.id,
+                    "quantity": "2",
+                    "unit_price": "10.00",
+                }
+            ],
+            "payments": [
+                {
+                    "payment_method_id": PAYMENT_METHOD_ID,
+                    "amount": "20.00",
+                }
+            ],
+        },
+    )
+
+    assert checkout_response.status_code == 201
+
+    sale_id = checkout_response.json["item"]["id"]
+
+    sale_item = (
+        db.session.query(SaleItem)
+        .filter(SaleItem.sale_id == sale_id)
+        .one()
+    )
+
+    assert sale_item.quantity == Decimal("2.0000")
+    assert sale_item.base_quantity == Decimal("20.0000")
+    assert (
+        sale_item.conversion_factor_to_base
+        == Decimal("10.000000")
+    )
+
+    # Historical sale evidence must remain authoritative.
+    # A refund must not require the ProductUnit to remain active.
+    box_product_unit.is_active = False
+    db.session.commit()
+
+    refund_response = client.post(
+        f"/api/sales/{sale_id}/refund",
+        json={
+            "items": [
+                {
+                    "sale_item_id": sale_item.id,
+                    "quantity": "1",
+                }
+            ],
+            "reason": "Partial box return",
+        },
+    )
+
+    assert refund_response.status_code == 201
+    assert refund_response.json["refund"]["stock_returned"] is True
+
+    refund_item = (
+        db.session.query(SaleRefundItem)
+        .filter(
+            SaleRefundItem.sale_item_id == sale_item.id
+        )
+        .one()
+    )
+
+    assert refund_item.quantity == Decimal("1.0000")
+    assert refund_item.base_quantity == Decimal("10.0000")
+
+    stock_balance = db.session.get(
+        StockBalance,
+        "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    )
+    batch = db.session.get(
+        InventoryBatch,
+        BATCH_ID,
+    )
+
+    sale_movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale"
+        )
+        .one()
+    )
+
+    refund_movement = (
+        db.session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.reference_type == "sale_refund"
+        )
+        .one()
+    )
+
+    assert sale_movement.quantity == Decimal("-20.0000")
+    assert refund_movement.quantity == Decimal("10.0000")
+
+    # 30 - 20 from checkout + 10 from one-box refund.
+    assert stock_balance.quantity_on_hand == Decimal("20.0000")
+    assert stock_balance.quantity_available == Decimal("20.0000")
+    assert batch.quantity_on_hand == Decimal("20.0000")
+
+    assert refund_movement.sale_item_id == sale_item.id
+    assert refund_movement.batch_id == BATCH_ID
+    assert refund_movement.warehouse_id == WAREHOUSE_ID

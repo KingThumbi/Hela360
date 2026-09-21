@@ -113,6 +113,7 @@ class ProductUnit(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
             "product_id",
             unique=True,
             postgresql_where=db.text("is_base = true"),
+            sqlite_where=db.text("is_base = 1"),
         ),
     )
 

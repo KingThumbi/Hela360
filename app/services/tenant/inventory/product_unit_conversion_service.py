@@ -150,25 +150,8 @@ class ProductUnitConversionService:
         if product_unit:
             return self._from_product_unit(product_unit)
 
-        unit = (
-            self.session.query(UnitOfMeasure)
-            .filter(
-                UnitOfMeasure.id == product.unit_id,
-                UnitOfMeasure.tenant_id == tenant_id,
-            )
-            .first()
-            if product.unit_id
-            else None
-        )
-        return ProductUnitResolution(
-            product_unit_id=None,
-            unit_id=str(unit.id) if unit else None,
-            unit_code=unit.code if unit else None,
-            unit_name=unit.name if unit else None,
-            conversion_factor_to_base=Decimal("1.000000"),
-            is_base=True,
-            sale_price=_q2(product.default_sale_price) if product.default_sale_price is not None else None,
-            minimum_sale_price=_q2(product.min_sale_price) if product.min_sale_price is not None else None,
+        raise ValidationError(
+            "Active base ProductUnit not found for this product."
         )
 
     def _from_product_unit(self, product_unit: ProductUnit) -> ProductUnitResolution:

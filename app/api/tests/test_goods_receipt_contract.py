@@ -42,6 +42,9 @@ NON_INVENTORY_PRODUCT_ID = "product-service"
 BASE_UNIT_ID = "unit-tablet"
 PACK_UNIT_ID = "unit-box"
 PACK_PRODUCT_UNIT_ID = "product-a-box"
+BASE_PRODUCT_UNIT_ID = "product-a-base"
+SECOND_BASE_PRODUCT_UNIT_ID = "product-b-base"
+NON_INVENTORY_BASE_PRODUCT_UNIT_ID = "product-service-base"
 
 
 @pytest.fixture()
@@ -147,6 +150,7 @@ def seed_data():
                 tenant_id=TENANT_ID,
                 internal_sku="AMOX-500",
                 name="Amoxicillin 500mg",
+                unit_id=BASE_UNIT_ID,
                 track_inventory=True,
                 track_batches=True,
                 track_expiry=True,
@@ -167,6 +171,17 @@ def seed_data():
                 base_factor=Decimal("1.000000"),
             ),
             ProductUnit(
+                id=BASE_PRODUCT_UNIT_ID,
+                tenant_id=TENANT_ID,
+                product_id=PRODUCT_ID,
+                unit_id=BASE_UNIT_ID,
+                conversion_factor_to_base=Decimal("1.000000"),
+                is_base=True,
+                can_sell=True,
+                can_receive=True,
+                is_active=True,
+            ),
+            ProductUnit(
                 id=PACK_PRODUCT_UNIT_ID,
                 tenant_id=TENANT_ID,
                 product_id=PRODUCT_ID,
@@ -182,9 +197,21 @@ def seed_data():
                 tenant_id=TENANT_ID,
                 internal_sku="ORS-001",
                 name="ORS Sachet",
+                unit_id=BASE_UNIT_ID,
                 track_inventory=True,
                 track_batches=False,
                 track_expiry=False,
+                is_active=True,
+            ),
+            ProductUnit(
+                id=SECOND_BASE_PRODUCT_UNIT_ID,
+                tenant_id=TENANT_ID,
+                product_id=SECOND_PRODUCT_ID,
+                unit_id=BASE_UNIT_ID,
+                conversion_factor_to_base=Decimal("1.000000"),
+                is_base=True,
+                can_sell=True,
+                can_receive=True,
                 is_active=True,
             ),
             Product(
@@ -192,7 +219,19 @@ def seed_data():
                 tenant_id=TENANT_ID,
                 internal_sku="SVC-001",
                 name="Service Fee",
+                unit_id=BASE_UNIT_ID,
                 track_inventory=False,
+                is_active=True,
+            ),
+            ProductUnit(
+                id=NON_INVENTORY_BASE_PRODUCT_UNIT_ID,
+                tenant_id=TENANT_ID,
+                product_id=NON_INVENTORY_PRODUCT_ID,
+                unit_id=BASE_UNIT_ID,
+                conversion_factor_to_base=Decimal("1.000000"),
+                is_base=True,
+                can_sell=True,
+                can_receive=True,
                 is_active=True,
             ),
             Product(
