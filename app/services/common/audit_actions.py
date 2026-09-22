@@ -115,6 +115,7 @@ class AuditAction(StrEnum):
 
     INVENTORY_COUNT_STARTED = "INVENTORY_COUNT_STARTED"
     INVENTORY_COUNT_COMPLETED = "INVENTORY_COUNT_COMPLETED"
+    INVENTORY_COUNT_CANCELLED = "INVENTORY_COUNT_CANCELLED"
 
     # ==========================================================
     # Procurement

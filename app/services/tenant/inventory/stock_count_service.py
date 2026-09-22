@@ -867,6 +867,30 @@ class StockCountService:
             count.cancelled_at = now
             count.cancelled_by = cancelled_by
             count.updated_at = now
+
+            AuditService().log(
+                module=AuditModule.INVENTORY,
+                action=AuditAction.INVENTORY_COUNT_CANCELLED,
+                entity_type="stock_count",
+                tenant_id=tenant_id,
+                entity_id=str(count.id),
+                user_id=cancelled_by,
+                branch_id=branch_id,
+                old_values={
+                    "status": OPEN_STATUS,
+                },
+                new_values={
+                    "status": CANCELLED_STATUS,
+                },
+                details={
+                    "count_number": count.count_number,
+                    "warehouse_id": str(count.warehouse_id),
+                    "scope_type": count.scope_type,
+                    "count_mode": count.count_mode,
+                },
+                commit=False,
+            )
+
             self.session.commit()
             return count
         except Exception:

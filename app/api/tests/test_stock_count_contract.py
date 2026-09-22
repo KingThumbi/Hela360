@@ -598,13 +598,89 @@ def test_stock_count_complete_requires_all_items_and_does_not_mutate_stock(clien
     assert response.status_code == 409
 
 
+def test_stock_count_cancel_and_audit_rollback_together_when_commit_fails(
+    client,
+    monkeypatch,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    real_commit = db.session.commit
+
+    def failing_commit():
+        raise RuntimeError("forced commit failure")
+
+    monkeypatch.setattr(
+        db.session,
+        "commit",
+        failing_commit,
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/cancel",
+    )
+
+    assert response.status_code == 500
+
+    monkeypatch.setattr(
+        db.session,
+        "commit",
+        real_commit,
+    )
+
+    db.session.rollback()
+
+    count = StockCount.query.filter_by(
+        id=count_id,
+    ).one()
+
+    assert count.status == "open"
+    assert count.cancelled_at is None
+    assert count.cancelled_by is None
+
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_CANCELLED",
+        entity_type="stock_count",
+        entity_id=count_id,
+    ).one_or_none()
+
+    assert audit is None
+
+
 def test_stock_count_cancel_unblocks_new_warehouse_count(client):
     created = client.post("/api/inventory/stock-counts", json=stock_count_payload())
     count_id = created.get_json()["item"]["id"]
 
     response = client.post(f"/api/inventory/stock-counts/{count_id}/cancel")
     assert response.status_code == 200
-    assert response.get_json()["item"]["status"] == "cancelled"
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "cancelled"
+    assert item["cancelled_by"]["id"] == USER_ID
+
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_CANCELLED",
+        entity_type="stock_count",
+        entity_id=count_id,
+    ).one()
+
+    assert audit.module_code == "INVENTORY"
+    assert audit.tenant_id == TENANT_ID
+    assert audit.branch_id == BRANCH_ID
+    assert audit.user_id == USER_ID
+    assert audit.old_values == {
+        "status": "open",
+    }
+    assert audit.new_values == {
+        "status": "cancelled",
+    }
+    assert audit.details["warehouse_id"] == WAREHOUSE_ID
 
     response = client.post(
         "/api/inventory/stock-counts",
