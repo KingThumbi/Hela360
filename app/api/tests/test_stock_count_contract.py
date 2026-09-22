@@ -2356,6 +2356,50 @@ def test_full_stock_count_serializes_empty_scope_products(
 
 
 
+def test_stock_count_db_rejects_second_unbatched_item_same_product(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    existing = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+            product_id=NON_BATCH_PRODUCT_ID,
+            batch_id=None,
+        )
+        .one()
+    )
+
+    duplicate = StockCountItem(
+        stock_count_id=count_id,
+        product_id=NON_BATCH_PRODUCT_ID,
+        batch_id=None,
+        source_type="discovered",
+        line_number=existing.line_number + 1000,
+        snapshot_quantity=Decimal("0.0000"),
+        expected_quantity=Decimal("0.0000"),
+        counted_quantity=Decimal("1.0000"),
+        variance_quantity=Decimal("1.0000"),
+        counted_at=datetime.now(timezone.utc),
+        counted_by=USER_ID,
+    )
+
+    db.session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+
+    db.session.rollback()
+
+
 def test_stock_count_db_rejects_second_open_count_same_warehouse(
     app_context,
 ):

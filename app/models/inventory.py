@@ -350,6 +350,22 @@ class StockCountItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
             "line_number",
             name="uq_stock_count_items_count_line",
         ),
+        db.Index(
+            "uq_stock_count_items_unbatched_count_product",
+            "stock_count_id",
+            "product_id",
+            unique=True,
+            postgresql_where=db.text(
+                "batch_id IS NULL "
+                "AND observed_batch_number IS NULL "
+                "AND observed_expiry_date IS NULL"
+            ),
+            sqlite_where=db.text(
+                "batch_id IS NULL "
+                "AND observed_batch_number IS NULL "
+                "AND observed_expiry_date IS NULL"
+            ),
+        ),
     )
 
     stock_count_id = db.Column(db.String(36), db.ForeignKey("stock_counts.id"), nullable=False, index=True)
