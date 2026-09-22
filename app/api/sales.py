@@ -14,7 +14,6 @@ from app.models import (
     Branch,
     Customer,
     InventoryBatch,
-    InventoryMovement,
     PaymentMethod,
     Product,
     ProductCode,
@@ -698,99 +697,6 @@ def get_line_tax_amount(product: Product, item_payload: dict) -> Decimal:
         )
     return tax_amount
 
-
-def get_stock_balance(
-    tenant_id: str,
-    branch_id: str,
-    warehouse_id: str,
-    product_id: str,
-) -> StockBalance | None:
-    return (
-        db.session.query(StockBalance)
-        .filter(
-            StockBalance.tenant_id == tenant_id,
-            StockBalance.branch_id == branch_id,
-            StockBalance.warehouse_id == warehouse_id,
-            StockBalance.product_id == product_id,
-        )
-        .first()
-    )
-
-
-def require_sufficient_stock(
-    tenant_id: str,
-    branch_id: str,
-    warehouse_id: str,
-    product_id: str,
-    quantity_needed: Decimal,
-):
-    stock_balance = get_stock_balance(tenant_id, branch_id, warehouse_id, product_id)
-
-    if not stock_balance:
-        raise ValueError(f"No stock balance found for product_id={product_id}.")
-
-    current_qty = Decimal(str(getattr(stock_balance, "quantity_on_hand", 0)))
-    if current_qty < quantity_needed:
-        raise ValueError(
-            f"Insufficient stock for product_id={product_id}. "
-            f"Available={current_qty}, requested={quantity_needed}."
-        )
-
-    return stock_balance, current_qty
-
-
-def update_stock_for_sale(
-    tenant_id: str,
-    branch_id: str,
-    warehouse_id: str,
-    sale_id: str,
-    product: Product,
-    quantity: Decimal,
-    created_by: str,
-):
-    stock_balance, current_qty = require_sufficient_stock(
-        tenant_id=tenant_id,
-        branch_id=branch_id,
-        warehouse_id=warehouse_id,
-        product_id=str(product.id),
-        quantity_needed=quantity,
-    )
-
-    new_qty_on_hand = q4(current_qty - quantity)
-    current_reserved = Decimal(str(getattr(stock_balance, "quantity_reserved", 0)))
-    new_qty_available = q4(new_qty_on_hand - current_reserved)
-
-    stock_balance.quantity_on_hand = new_qty_on_hand
-
-    if hasattr(stock_balance, "quantity_available"):
-        stock_balance.quantity_available = new_qty_available
-
-    if hasattr(stock_balance, "updated_at"):
-        stock_balance.updated_at = now_utc()
-
-    movement_time = now_utc()
-
-    movement = InventoryMovement(
-        id=str(uuid4()),
-        tenant_id=tenant_id,
-        branch_id=branch_id,
-        warehouse_id=warehouse_id,
-        product_id=product.id,
-        movement_type="sale",
-        quantity=q4(-quantity),
-        reference_type="sale",
-        reference_id=sale_id,
-        created_by=created_by,
-        created_at=movement_time,
-        updated_at=movement_time,
-    )
-
-    if hasattr(movement, "unit_cost"):
-        movement.unit_cost = getattr(product, "cost_price", None)
-    if hasattr(movement, "notes"):
-        movement.notes = "Stock deducted during sales checkout."
-
-    db.session.add(movement)
 
 
 def validate_payments(tenant_id: str, payments_payload: list[dict]) -> Decimal:
@@ -1722,56 +1628,6 @@ def get_sale_items_for_sale(sale_id: str) -> list[SaleItem]:
     )
 
 
-def restore_stock_for_void(
-    tenant_id: str,
-    branch_id: str,
-    warehouse_id: str,
-    sale_id: str,
-    product_id,
-    quantity: Decimal,
-    created_by: str,
-):
-    stock_balance = get_stock_balance(
-        tenant_id=tenant_id,
-        branch_id=str(branch_id),
-        warehouse_id=str(warehouse_id),
-        product_id=str(product_id),
-    )
-    if not stock_balance:
-        raise ValueError(f"No stock balance found for product_id={product_id}.")
-
-    current_qty = Decimal(str(getattr(stock_balance, "quantity_on_hand", 0)))
-    new_qty_on_hand = q4(current_qty + quantity)
-    current_reserved = Decimal(str(getattr(stock_balance, "quantity_reserved", 0)))
-    new_qty_available = q4(new_qty_on_hand - current_reserved)
-
-    stock_balance.quantity_on_hand = new_qty_on_hand
-
-    if hasattr(stock_balance, "quantity_available"):
-        stock_balance.quantity_available = new_qty_available
-    if hasattr(stock_balance, "updated_at"):
-        stock_balance.updated_at = now_utc()
-
-    movement_time = now_utc()
-    movement = InventoryMovement(
-        id=str(uuid4()),
-        tenant_id=tenant_id,
-        branch_id=branch_id,
-        warehouse_id=warehouse_id,
-        product_id=product_id,
-        movement_type="sale_void",
-        quantity=q4(quantity),
-        reference_type="sale_void",
-        reference_id=sale_id,
-        created_by=created_by,
-        created_at=movement_time,
-        updated_at=movement_time,
-    )
-
-    if hasattr(movement, "notes"):
-        movement.notes = "Stock restored during sale void."
-
-    db.session.add(movement)
 
 @bp.post("/sales/<sale_id>/refund")
 @require_permission("sales.refund")
