@@ -822,7 +822,7 @@ def get_product(product_id: str):
 
 
 @bp.get("/products/<product_id>/units")
-@require_permission("products.view")
+@require_permission("products.units.read")
 def list_product_units(product_id: str):
     identity = _current_identity()
     tenant_id = identity.tenant_id
@@ -853,7 +853,7 @@ def list_product_units(product_id: str):
 
 
 @bp.post("/products/<product_id>/units")
-@require_permission("products.edit")
+@require_permission("products.units.create")
 def create_product_unit(product_id: str):
     identity = _current_identity()
     tenant_id = identity.tenant_id
@@ -958,7 +958,7 @@ def create_product_unit(product_id: str):
 @bp.patch(
     "/products/<product_id>/units/<product_unit_id>"
 )
-@require_permission("products.edit")
+@require_permission("products.units.edit")
 def update_product_unit(
     product_id: str,
     product_unit_id: str,
@@ -1019,7 +1019,7 @@ def update_product_unit(
     "/products/<product_id>/units/"
     "<product_unit_id>/archive"
 )
-@require_permission("products.edit")
+@require_permission("products.units.archive")
 def archive_product_unit(
     product_id: str,
     product_unit_id: str,
@@ -1080,7 +1080,7 @@ def archive_product_unit(
     "/products/<product_id>/units/"
     "<product_unit_id>/restore"
 )
-@require_permission("products.edit")
+@require_permission("products.units.archive")
 def restore_product_unit(
     product_id: str,
     product_unit_id: str,

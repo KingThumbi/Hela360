@@ -82,6 +82,9 @@ def register_blueprints(app: Flask) -> None:
     from app.api.sales import bp as sales_bp
     from app.api.suppliers import bp as suppliers_bp
     from app.api.dashboard import bp as dashboard_bp
+    from app.api.tenant_administration import (
+        bp as tenant_administration_bp,
+    )
 
     # Enterprise tenant IAM
     init_auth(app)
@@ -103,6 +106,10 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(sales_bp, url_prefix="/api")
     app.register_blueprint(suppliers_bp, url_prefix="/api")
     app.register_blueprint(dashboard_bp, url_prefix="/api")
+    app.register_blueprint(
+        tenant_administration_bp,
+        url_prefix="/api/administration",
+    )
 
 
 # =============================================================================

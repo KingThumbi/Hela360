@@ -52,6 +52,9 @@ class FakeUser:
 
     roles: list[FakeRole] = field(default_factory=list)
     branches: list[FakeBranch] = field(default_factory=list)
+    permission_overrides: list[object] = field(
+        default_factory=list
+    )
 
     is_active: bool = True
     is_disabled: bool = False
@@ -95,6 +98,7 @@ def user(
     tenant_id: str = "tenant-1",
     roles: list[FakeRole] | None = None,
     branches: list[FakeBranch] | None = None,
+    permission_overrides: list[object] | None = None,
     is_active: bool = True,
     is_disabled: bool = False,
     is_locked: bool = False,
@@ -109,6 +113,7 @@ def user(
         tenant_id=tenant_id,
         roles=roles or [],
         branches=branches or [],
+        permission_overrides=permission_overrides or [],
         is_active=is_active,
         is_disabled=is_disabled,
         is_locked=is_locked,

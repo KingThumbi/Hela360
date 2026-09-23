@@ -144,6 +144,47 @@ class AuthorizationContext:
 # Authorization service
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Temporary granular-permission compatibility
+# ---------------------------------------------------------------------------
+
+# Broad legacy Product permissions temporarily imply the newer Unit / Pack
+# Size capabilities. This preserves existing tenant access while routes,
+# roles, and direct user overrides migrate to the granular permission model.
+#
+# Remove these implications only after persisted role/user assignments have
+# been migrated and the broad permissions are no longer relied upon.
+LEGACY_PERMISSION_IMPLICATIONS: dict[str, frozenset[str]] = {
+    "products.view": frozenset({
+        "products.units.read",
+    }),
+    "products.edit": frozenset({
+        "products.units.read",
+        "products.units.create",
+        "products.units.edit",
+        "products.units.archive",
+    }),
+}
+
+
+def _expand_legacy_permission_implications(
+    permissions: set[str],
+) -> set[str]:
+    """Expand temporary broad-permission compatibility implications."""
+
+    expanded = set(permissions)
+
+    for permission in tuple(permissions):
+        expanded.update(
+            LEGACY_PERMISSION_IMPLICATIONS.get(
+                permission,
+                (),
+            )
+        )
+
+    return expanded
+
+
 class AuthorizationService:
     """
     Enterprise authorization engine.
@@ -706,10 +747,33 @@ class AuthorizationService:
             )
         }
 
-        effective_permissions = (
+        granted_permissions = (
             role_permissions
             | explicit_allows
-        ) - explicit_denies
+        )
+
+        # Compatibility expansion happens before deny resolution so that:
+        #
+        # - legacy products.view/products.edit continue to satisfy the new
+        #   granular Product Unit / Pack Size capabilities;
+        # - a granular explicit deny still overrides an implied capability;
+        # - denying a broad legacy permission also suppresses its temporary
+        #   granular implications.
+        expanded_grants = (
+            _expand_legacy_permission_implications(
+                granted_permissions
+            )
+        )
+        expanded_denies = (
+            _expand_legacy_permission_implications(
+                explicit_denies
+            )
+        )
+
+        effective_permissions = (
+            expanded_grants
+            - expanded_denies
+        )
 
         return frozenset(
             sorted(effective_permissions)

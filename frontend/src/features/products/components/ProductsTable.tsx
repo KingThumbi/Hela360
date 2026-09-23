@@ -26,6 +26,7 @@ import type {
 interface ProductsTableProps {
   products: Product[];
   canEdit: boolean;
+  canViewUnits: boolean;
   canDelete: boolean;
   onView: (product: Product) => void;
   onEdit: (product: Product) => void;
@@ -38,6 +39,7 @@ interface ProductsTableProps {
 interface ProductActionsProps {
   product: Product;
   canEdit: boolean;
+  canViewUnits: boolean;
   canDelete: boolean;
   mobile?: boolean;
   onView: (product: Product) => void;
@@ -51,6 +53,7 @@ interface ProductActionsProps {
 function ProductActions({
   product,
   canEdit,
+  canViewUnits,
   canDelete,
   mobile = false,
   onView,
@@ -76,36 +79,35 @@ function ProductActions({
           </Button>
 
           {canEdit ? (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  onEdit(product)
-                }
-              >
-                <Pencil />
-                Edit
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  onUnits(product)
-                }
-              >
-                <Boxes />
-                Units
-              </Button>
-            </>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                onEdit(product)
+              }
+            >
+              <Pencil />
+              Edit
+            </Button>
           ) : (
-            <>
-              <div />
-              <div />
-            </>
+            <div />
+          )}
+
+          {canViewUnits ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                onUnits(product)
+              }
+            >
+              <Boxes />
+              Units
+            </Button>
+          ) : (
+            <div />
           )}
         </div>
 
@@ -190,21 +192,6 @@ function ProductActions({
             </span>
           </Button>
 
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            title="Units & pack sizes"
-            onClick={() =>
-              onUnits(product)
-            }
-          >
-            <Boxes />
-
-            <span className="sr-only">
-              Units & pack sizes
-            </span>
-          </Button>
 
           <Button
             type="button"
@@ -234,6 +221,24 @@ function ProductActions({
         </>
       ) : null}
 
+      {canViewUnits ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          title="Units & pack sizes"
+          onClick={() =>
+            onUnits(product)
+          }
+        >
+          <Boxes />
+
+          <span className="sr-only">
+            Units & pack sizes
+          </span>
+        </Button>
+      ) : null}
+
       {canDelete &&
       !product.is_active ? (
         <Button
@@ -260,6 +265,7 @@ function ProductActions({
 function ProductMobileCard({
   product,
   canEdit,
+  canViewUnits,
   canDelete,
   onView,
   onEdit,
@@ -383,6 +389,7 @@ function ProductMobileCard({
       <ProductActions
         product={product}
         canEdit={canEdit}
+        canViewUnits={canViewUnits}
         canDelete={canDelete}
         mobile
         onView={onView}
@@ -399,6 +406,7 @@ function ProductMobileCard({
 export function ProductsTable({
   products,
   canEdit,
+  canViewUnits,
   canDelete,
   onView,
   onEdit,
@@ -415,6 +423,7 @@ export function ProductsTable({
               key={product.id}
               product={product}
               canEdit={canEdit}
+              canViewUnits={canViewUnits}
               canDelete={canDelete}
               onView={onView}
               onEdit={onEdit}
@@ -610,6 +619,7 @@ export function ProductsTable({
                     <ProductActions
                       product={product}
                       canEdit={canEdit}
+                      canViewUnits={canViewUnits}
                       canDelete={canDelete}
                       onView={onView}
                       onEdit={onEdit}

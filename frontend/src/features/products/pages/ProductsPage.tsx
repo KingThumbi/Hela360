@@ -94,6 +94,10 @@ export function ProductsPage() {
     "products.edit",
   );
 
+  const canViewUnits = authorization.can(
+    "products.units.read",
+  );
+
   const canDelete = authorization.can(
     "products.delete",
   );
@@ -561,6 +565,7 @@ export function ProductsPage() {
                 <ProductsTable
                   products={products}
                   canEdit={canEdit}
+                  canViewUnits={canViewUnits}
                   canDelete={canDelete}
                   onView={setDetailProduct}
                   onEdit={setEditProduct}

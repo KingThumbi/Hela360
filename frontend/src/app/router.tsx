@@ -52,6 +52,7 @@ import {
   SalesHistoryPage,
 } from "@/features/sales";
 import { SuppliersPage } from "@/features/suppliers";
+import AdministrationUsersPage from "@/features/administration/pages/AdministrationUsersPage";
 
 /**
  * Hela360 Application Router
@@ -437,7 +438,26 @@ export const router = createBrowserRouter([
 
       {
         path: PATHS.ADMINISTRATION.ROOT,
-        element: <div>Administration Module (Coming Soon)</div>,
+        element: (
+          <Navigate
+            to={PATHS.ADMINISTRATION.USERS}
+            replace
+          />
+        ),
+      },
+      {
+        path: PATHS.ADMINISTRATION.USERS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.ADMINISTRATION.USERS
+              ].permission
+            }
+          >
+            <AdministrationUsersPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*

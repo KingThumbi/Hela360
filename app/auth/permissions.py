@@ -68,6 +68,16 @@ class Permissions:
     PRODUCTS_EDIT = "products.edit"
     PRODUCTS_DELETE = "products.delete"
 
+    # Granular Product Unit / Pack Size capabilities.
+    #
+    # PRODUCTS_EDIT remains canonical during the compatibility period,
+    # but unit-specific routes will progressively move to these narrower
+    # business capabilities.
+    PRODUCTS_UNITS_READ = "products.units.read"
+    PRODUCTS_UNITS_CREATE = "products.units.create"
+    PRODUCTS_UNITS_EDIT = "products.units.edit"
+    PRODUCTS_UNITS_ARCHIVE = "products.units.archive"
+
     # ------------------------------------------------------------------
     # Inventory
     # ------------------------------------------------------------------

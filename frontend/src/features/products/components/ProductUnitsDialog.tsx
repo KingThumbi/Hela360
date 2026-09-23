@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuthorization } from "@/hooks/useAuthorization";
 
 import {
   useArchiveProductUnit,
@@ -115,6 +116,20 @@ export function ProductUnitsDialog({
   product,
   onOpenChange,
 }: ProductUnitsDialogProps) {
+  const authorization = useAuthorization();
+
+  const canCreateUnits = authorization.can(
+    "products.units.create",
+  );
+
+  const canEditUnits = authorization.can(
+    "products.units.edit",
+  );
+
+  const canArchiveUnits = authorization.can(
+    "products.units.archive",
+  );
+
   const productId = product?.id;
 
   const unitsQuery = useProductUnits(
@@ -530,6 +545,7 @@ export function ProductUnitsDialog({
                         </div>
 
                         <div className="flex shrink-0 flex-wrap gap-2">
+                          {canEditUnits ? (
                           <Button
                             type="button"
                             variant="outline"
@@ -547,8 +563,10 @@ export function ProductUnitsDialog({
                             <Pencil />
                             Edit
                           </Button>
+                          ) : null}
 
-                          {!productUnit.is_base ? (
+                          {!productUnit.is_base &&
+                          canArchiveUnits ? (
                             <Button
                               type="button"
                               variant={
@@ -582,7 +600,8 @@ export function ProductUnitsDialog({
                         </div>
                       </div>
 
-                      {editingUnitId ===
+                      {canEditUnits &&
+                      editingUnitId ===
                       productUnit.id ? (
                         <form
                           className="mt-4 space-y-4 border-t pt-4"
@@ -782,7 +801,7 @@ export function ProductUnitsDialog({
               </div>
             )}
 
-            {adding ? (
+            {canCreateUnits && adding ? (
               <form
                 className="space-y-4 rounded-lg border bg-muted/20 p-4"
                 onSubmit={handleCreate}
@@ -1004,7 +1023,7 @@ export function ProductUnitsDialog({
                   </Button>
                 </div>
               </form>
-            ) : (
+            ) : canCreateUnits ? (
               <Button
                 type="button"
                 variant="outline"
@@ -1016,7 +1035,7 @@ export function ProductUnitsDialog({
                 <Plus />
                 Add Unit / Pack Size
               </Button>
-            )}
+            ) : null}
           </div>
         ) : null}
       </DialogContent>

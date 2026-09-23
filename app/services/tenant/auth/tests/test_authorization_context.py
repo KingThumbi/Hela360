@@ -297,4 +297,137 @@ def test_refresh_context_rebuilds_cache(
     result = service.refresh_context("user-1")
 
     assert result is context
-    assert stored == [context]    
+    assert stored == [context]
+
+# ---------------------------------------------------------------------------
+# Legacy -> granular permission compatibility
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_permissions_legacy_products_view_implies_units_read() -> None:
+    service = AuthorizationService()
+
+    viewer = role(
+        permissions=[
+            permission("products.view"),
+        ],
+    )
+
+    u = user(
+        roles=[viewer],
+    )
+
+    assert service._aggregate_permissions(u) == {
+        "products.view",
+        "products.units.read",
+    }
+
+
+def test_aggregate_permissions_legacy_products_edit_implies_unit_capabilities() -> None:
+    service = AuthorizationService()
+
+    editor = role(
+        permissions=[
+            permission("products.edit"),
+        ],
+    )
+
+    u = user(
+        roles=[editor],
+    )
+
+    assert service._aggregate_permissions(u) == {
+        "products.edit",
+        "products.units.read",
+        "products.units.create",
+        "products.units.edit",
+        "products.units.archive",
+    }
+
+
+def test_granular_user_deny_overrides_legacy_products_edit_implication() -> None:
+    from types import SimpleNamespace
+
+    service = AuthorizationService()
+
+    editor = role(
+        permissions=[
+            permission("products.edit"),
+        ],
+    )
+
+    deny_archive = SimpleNamespace(
+        effect="deny",
+        permission=permission(
+            "products.units.archive"
+        ),
+    )
+
+    u = user(
+        roles=[editor],
+    )
+    u.permission_overrides = [
+        deny_archive,
+    ]
+
+    assert service._aggregate_permissions(u) == {
+        "products.edit",
+        "products.units.read",
+        "products.units.create",
+        "products.units.edit",
+    }
+
+
+def test_legacy_products_edit_deny_suppresses_its_unit_implications() -> None:
+    from types import SimpleNamespace
+
+    service = AuthorizationService()
+
+    editor = role(
+        permissions=[
+            permission("products.edit"),
+        ],
+    )
+
+    deny_legacy_edit = SimpleNamespace(
+        effect="deny",
+        permission=permission(
+            "products.edit"
+        ),
+    )
+
+    u = user(
+        roles=[editor],
+    )
+    u.permission_overrides = [
+        deny_legacy_edit,
+    ]
+
+    assert service._aggregate_permissions(u) == frozenset()
+
+
+def test_direct_legacy_products_edit_allow_implies_unit_capabilities() -> None:
+    from types import SimpleNamespace
+
+    service = AuthorizationService()
+
+    allow_legacy_edit = SimpleNamespace(
+        effect="allow",
+        permission=permission(
+            "products.edit"
+        ),
+    )
+
+    u = user()
+    u.permission_overrides = [
+        allow_legacy_edit,
+    ]
+
+    assert service._aggregate_permissions(u) == {
+        "products.edit",
+        "products.units.read",
+        "products.units.create",
+        "products.units.edit",
+        "products.units.archive",
+    }
+
