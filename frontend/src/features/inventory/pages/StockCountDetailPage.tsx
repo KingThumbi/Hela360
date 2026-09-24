@@ -93,6 +93,9 @@ type ItemFilter =
   | "counted"
   | "uncounted"
   | "variance"
+  | "shortage"
+  | "overage"
+  | "matched"
   | "expired";
 
 const ITEM_FILTERS: Array<{
@@ -210,6 +213,112 @@ function decimalParts(value: string): {
     normalized: trimDecimalZeros(normalized),
   };
 }
+
+const REVIEW_FILTERS: Array<{
+  value: ItemFilter;
+  label: string;
+}> = [
+  {
+    value: "all",
+    label: "All",
+  },
+  {
+    value: "shortage",
+    label: "Shortages",
+  },
+  {
+    value: "overage",
+    label: "Overages",
+  },
+  {
+    value: "matched",
+    label: "Matched",
+  },
+  {
+    value: "expired",
+    label: "Expired",
+  },
+];
+
+type ItemSort =
+  | "line"
+  | "absolute_variance"
+  | "shortage"
+  | "overage";
+
+const ITEM_SORT_OPTIONS: Array<{
+  value: ItemSort;
+  label: string;
+}> = [
+  {
+    value: "absolute_variance",
+    label: "Largest discrepancy",
+  },
+  {
+    value: "shortage",
+    label: "Largest shortage",
+  },
+  {
+    value: "overage",
+    label: "Largest overage",
+  },
+  {
+    value: "line",
+    label: "Count line",
+  },
+];
+
+function numericQuantity(
+  value: string | null | undefined,
+): number {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : 0;
+}
+
+function stockCountReviewCounts(
+  count: StockCount,
+) {
+  let matchedItems = 0;
+  let expiredVarianceItems = 0;
+
+  for (const item of count.items) {
+    if (item.counted_quantity === null) {
+      continue;
+    }
+
+    const variance = numericQuantity(
+      item.variance_quantity,
+    );
+
+    if (variance === 0) {
+      matchedItems += 1;
+    }
+
+    if (
+      stockCountItemIsExpired(item) &&
+      variance !== 0
+    ) {
+      expiredVarianceItems += 1;
+    }
+  }
+
+  return {
+    matchedItems,
+    expiredVarianceItems,
+  };
+}
+
 
 function varianceState(
   value: string | null | undefined,
@@ -671,13 +780,68 @@ export function StockCountDetailPage() {
               This will create a separate Stock Adjustment using the final recorded Stock Count variances and will change inventory quantities. The Stock Count itself will remain unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {count ? (
-            <div className="space-y-2 text-sm">
-              <div>Count: {count.count_number}</div>
-              <div>Warehouse: {count.warehouse.code} - {count.warehouse.name}</div>
-              <div>Variance lines: {count.summary.variance_items}</div>
-            </div>
-          ) : null}
+          {count ? (() => {
+            const reviewCounts =
+              stockCountReviewCounts(count);
+
+            return (
+              <div className="space-y-3">
+                <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                  <div className="font-medium">
+                    {count.count_number}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {count.warehouse.code} -{" "}
+                    {count.warehouse.name}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Variance Lines
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {count.summary.variance_items ?? 0}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Shortage Lines
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {count.summary.negative_variance_items ?? 0}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Overage Lines
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {count.summary.positive_variance_items ?? 0}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3">
+                    <div className="text-xs uppercase text-muted-foreground">
+                      Matched Lines
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {reviewCounts.matchedItems}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                  Posting will apply these final variances to inventory.
+                  The completed Stock Count remains preserved as the
+                  source evidence and cannot be edited by this action.
+                </div>
+              </div>
+            );
+          })() : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={createAdjustmentFromCount.isPending}>
               Review Count
@@ -1244,13 +1408,22 @@ function StockCountItemsTable({
     count.count_mode === "visible";
 
   const availableFilters = useMemo(
-    () =>
-      exposesSystemQuantities
+    () => {
+      if (count.status === "completed") {
+        return REVIEW_FILTERS;
+      }
+
+      return exposesSystemQuantities
         ? ITEM_FILTERS
         : ITEM_FILTERS.filter(
-            (option) => option.value !== "variance",
-          ),
-    [exposesSystemQuantities],
+            (option) =>
+              option.value !== "variance",
+          );
+    },
+    [
+      count.status,
+      exposesSystemQuantities,
+    ],
   );
 
   const [
@@ -1261,6 +1434,15 @@ function StockCountItemsTable({
     filter,
     setFilter,
   ] = useState<ItemFilter>("all");
+
+  const [
+    sort,
+    setSort,
+  ] = useState<ItemSort>(
+    count.status === "completed"
+      ? "absolute_variance"
+      : "line",
+  );
 
   const [
     drafts,
@@ -1300,48 +1482,119 @@ function StockCountItemsTable({
   >({});
 
   const visibleItems = useMemo(
-    () =>
-      count.items.filter((item) => {
-        const query = search.trim().toLowerCase();
-        const matchesSearch =
-          query.length === 0 ||
-          item.product.name.toLowerCase().includes(query) ||
-          item.product.internal_sku.toLowerCase().includes(query) ||
-          (
-            item.batch?.batch_number ??
-            item.observed_batch_number ??
-            ""
-          )
-            .toLowerCase()
-            .includes(query);
-        const matchesFilter =
-          filter === "all" ||
-          (
-            filter === "counted" &&
-            item.counted_quantity !== null
-          ) ||
-          (
-            filter === "uncounted" &&
-            item.counted_quantity === null
-          ) ||
-          (
-            filter === "variance" &&
-            exposesSystemQuantities &&
-            varianceState(item.variance_quantity) !== "matched" &&
-            item.counted_quantity !== null
-          ) ||
-          (
-            filter === "expired" &&
-            stockCountItemIsExpired(item)
+    () => {
+      const filtered = count.items.filter(
+        (item) => {
+          const query =
+            search.trim().toLowerCase();
+
+          const matchesSearch =
+            query.length === 0 ||
+            item.product.name
+              .toLowerCase()
+              .includes(query) ||
+            item.product.internal_sku
+              .toLowerCase()
+              .includes(query) ||
+            (
+              item.batch?.batch_number ??
+              item.observed_batch_number ??
+              ""
+            )
+              .toLowerCase()
+              .includes(query);
+
+          const variance = numericQuantity(
+            item.variance_quantity,
           );
 
-        return matchesSearch && matchesFilter;
-      }),
+          const matchesFilter =
+            filter === "all" ||
+            (
+              filter === "counted" &&
+              item.counted_quantity !== null
+            ) ||
+            (
+              filter === "uncounted" &&
+              item.counted_quantity === null
+            ) ||
+            (
+              filter === "variance" &&
+              exposesSystemQuantities &&
+              variance !== 0 &&
+              item.counted_quantity !== null
+            ) ||
+            (
+              filter === "shortage" &&
+              exposesSystemQuantities &&
+              variance < 0
+            ) ||
+            (
+              filter === "overage" &&
+              exposesSystemQuantities &&
+              variance > 0
+            ) ||
+            (
+              filter === "matched" &&
+              exposesSystemQuantities &&
+              variance === 0 &&
+              item.counted_quantity !== null
+            ) ||
+            (
+              filter === "expired" &&
+              stockCountItemIsExpired(item)
+            );
+
+          return matchesSearch && matchesFilter;
+        },
+      );
+
+      return [...filtered].sort(
+        (left, right) => {
+          if (sort === "line") {
+            return (
+              left.line_number -
+              right.line_number
+            );
+          }
+
+          const leftVariance =
+            numericQuantity(
+              left.variance_quantity,
+            );
+
+          const rightVariance =
+            numericQuantity(
+              right.variance_quantity,
+            );
+
+          if (sort === "shortage") {
+            return (
+              leftVariance -
+              rightVariance
+            );
+          }
+
+          if (sort === "overage") {
+            return (
+              rightVariance -
+              leftVariance
+            );
+          }
+
+          return (
+            Math.abs(rightVariance) -
+            Math.abs(leftVariance)
+          );
+        },
+      );
+    },
     [
       count.items,
       exposesSystemQuantities,
       filter,
       search,
+      sort,
     ],
   );
 
@@ -1442,25 +1695,108 @@ function StockCountItemsTable({
     );
   };
 
+  const reviewCounts =
+    stockCountReviewCounts(count);
+
   return (
     <div className="space-y-3">
-      <PageToolbar>
-        <div className="grid w-full gap-3 md:grid-cols-[minmax(240px,1fr)_180px]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Filter Product, SKU, or batch"
-              className="pl-8"
-            />
-          </div>
-          <NativeSelect
-            value={filter}
-            onChange={(value) => setFilter(value as ItemFilter)}
-            placeholder="All"
-            options={availableFilters}
+      {count.status === "completed" ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <SummaryBlock
+            label="Variance Lines"
+            value={`${count.summary.variance_items ?? 0}`}
+            detail="Lines that would change inventory"
           />
+
+          <SummaryBlock
+            label="Shortage Lines"
+            value={`${count.summary.negative_variance_items ?? 0}`}
+            detail="Counted below expected quantity"
+          />
+
+          <SummaryBlock
+            label="Overage Lines"
+            value={`${count.summary.positive_variance_items ?? 0}`}
+            detail="Counted above expected quantity"
+          />
+
+          <SummaryBlock
+            label="Matched Lines"
+            value={`${reviewCounts.matchedItems}`}
+            detail="No quantity difference"
+          />
+
+          <SummaryBlock
+            label="Expired Variances"
+            value={`${reviewCounts.expiredVarianceItems}`}
+            detail="Variance lines involving expired stock"
+          />
+        </div>
+      ) : null}
+
+      <PageToolbar>
+        <div className="w-full space-y-3">
+          <div
+            className={
+              count.status === "completed"
+                ? "grid gap-3 lg:grid-cols-[minmax(240px,1fr)_200px]"
+                : "grid gap-3 md:grid-cols-[minmax(240px,1fr)_180px]"
+            }
+          >
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
+                placeholder="Filter Product, SKU, or batch"
+                className="pl-8"
+              />
+            </div>
+
+            {count.status === "completed" ? (
+              <NativeSelect
+                value={sort}
+                onChange={(value) =>
+                  setSort(value as ItemSort)
+                }
+                placeholder="Sort"
+                options={ITEM_SORT_OPTIONS}
+              />
+            ) : (
+              <NativeSelect
+                value={filter}
+                onChange={(value) =>
+                  setFilter(value as ItemFilter)
+                }
+                placeholder="All"
+                options={availableFilters}
+              />
+            )}
+          </div>
+
+          {count.status === "completed" ? (
+            <div className="flex flex-wrap gap-2">
+              {availableFilters.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={
+                    filter === option.value
+                      ? "default"
+                      : "outline"
+                  }
+                  onClick={() =>
+                    setFilter(option.value)
+                  }
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </PageToolbar>
 
