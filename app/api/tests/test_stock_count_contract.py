@@ -17,11 +17,13 @@ from app.models import (
     InventoryBatch,
     InventoryMovement,
     Product,
+    ProductUnit,
     StockBalance,
     StockCount,
     StockCountItem,
     StockCountScopeProduct,
     Tenant,
+    UnitOfMeasure,
     User,
     Warehouse,
 )
@@ -43,6 +45,10 @@ BATCH_ID = "batch-current"
 EXPIRED_BATCH_ID = "batch-expired"
 ZERO_BATCH_ID = "batch-zero"
 
+UNIT_BOX_ID = "unit-box"
+NON_BATCH_BOX_UNIT_ID = "product-unit-loose-box"
+EMPTY_BATCH_BOX_UNIT_ID = "product-unit-empty-box"
+
 
 @pytest.fixture()
 def app_context():
@@ -61,7 +67,9 @@ def app_context():
         Branch.__table__.create(db.engine)
         User.__table__.create(db.engine)
         AuditLog.__table__.create(db.engine)
+        UnitOfMeasure.__table__.create(db.engine)
         Product.__table__.create(db.engine)
+        ProductUnit.__table__.create(db.engine)
         Warehouse.__table__.create(db.engine)
         InventoryBatch.__table__.create(db.engine)
         StockBalance.__table__.create(db.engine)
@@ -85,7 +93,9 @@ def app_context():
         StockBalance.__table__.drop(db.engine)
         InventoryBatch.__table__.drop(db.engine)
         Warehouse.__table__.drop(db.engine)
+        ProductUnit.__table__.drop(db.engine)
         Product.__table__.drop(db.engine)
+        UnitOfMeasure.__table__.drop(db.engine)
         AuditLog.__table__.drop(db.engine)
         User.__table__.drop(db.engine)
         Branch.__table__.drop(db.engine)
@@ -134,6 +144,13 @@ def seed_data():
             Tenant(id=OTHER_TENANT_ID, legal_name="Tenant B", display_name="Tenant B"),
             Branch(id=BRANCH_ID, tenant_id=TENANT_ID, code="BR-A", name="Branch A"),
             Branch(id=OTHER_BRANCH_ID, tenant_id=TENANT_ID, code="BR-B", name="Branch B"),
+            UnitOfMeasure(
+                id=UNIT_BOX_ID,
+                tenant_id=TENANT_ID,
+                code="BOX",
+                name="Box",
+                base_factor=Decimal("1.000000"),
+            ),
             User(
                 id=USER_ID,
                 tenant_id=TENANT_ID,
@@ -197,6 +214,32 @@ def seed_data():
                 tenant_id=OTHER_TENANT_ID,
                 internal_sku="OTHER",
                 name="Other Product",
+            ),
+            ProductUnit(
+                id=NON_BATCH_BOX_UNIT_ID,
+                tenant_id=TENANT_ID,
+                product_id=NON_BATCH_PRODUCT_ID,
+                unit_id=UNIT_BOX_ID,
+                conversion_factor_to_base=Decimal(
+                    "10.000000"
+                ),
+                is_base=False,
+                can_sell=True,
+                can_receive=True,
+                is_active=True,
+            ),
+            ProductUnit(
+                id=EMPTY_BATCH_BOX_UNIT_ID,
+                tenant_id=TENANT_ID,
+                product_id=EMPTY_BATCH_PRODUCT_ID,
+                unit_id=UNIT_BOX_ID,
+                conversion_factor_to_base=Decimal(
+                    "5.000000"
+                ),
+                is_base=False,
+                can_sell=True,
+                can_receive=True,
+                is_active=True,
             ),
             Warehouse(
                 id=WAREHOUSE_ID,
@@ -2572,3 +2615,313 @@ def test_stock_count_db_allows_completed_history_with_open_count(
         "completed",
         "open",
     }
+def test_stock_count_item_converts_product_unit_quantity_to_base(client):
+    create_response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+            idempotency_key=(
+                "stock-count-product-unit-update"
+            ),
+        ),
+    )
+
+    assert create_response.status_code == 201
+
+    count = create_response.get_json()["item"]
+
+    line = next(
+        item
+        for item in count["items"]
+        if item["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    response = client.put(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count['id']}/items/{line['id']}"
+        ),
+        json={
+            "counted_quantity": "2",
+            "product_unit_id":
+                NON_BATCH_BOX_UNIT_ID,
+        },
+    )
+
+    assert response.status_code == 200
+
+    updated = response.get_json()["item"]
+
+    line = next(
+        item
+        for item in updated["items"]
+        if item["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    assert line["expected_quantity"] == "5.0000"
+    assert line["counted_quantity"] == "20.0000"
+    assert line["counted_unit_quantity"] == "2.0000"
+    assert (
+        line["counted_product_unit_id"]
+        == NON_BATCH_BOX_UNIT_ID
+    )
+    assert line["counted_unit_code"] == "BOX"
+    assert line["counted_unit_name"] == "Box"
+    assert (
+        line["counted_conversion_factor_to_base"]
+        == "10.000000"
+    )
+    assert line["variance_quantity"] == "15.0000"
+
+    persisted = db.session.get(
+        StockCountItem,
+        line["id"],
+    )
+
+    assert persisted is not None
+    assert persisted.counted_quantity == Decimal(
+        "20.0000"
+    )
+    assert persisted.counted_unit_quantity == Decimal(
+        "2.0000"
+    )
+    assert (
+        persisted.counted_product_unit_id
+        == NON_BATCH_BOX_UNIT_ID
+    )
+    assert (
+        persisted.counted_unit_code_snapshot
+        == "BOX"
+    )
+    assert (
+        persisted.counted_unit_name_snapshot
+        == "Box"
+    )
+    assert (
+        persisted.counted_conversion_factor_to_base
+        == Decimal("10.000000")
+    )
+    assert persisted.variance_quantity == Decimal(
+        "15.0000"
+    )
+
+
+def test_discovered_stock_count_item_converts_product_unit_quantity_to_base(
+    client,
+):
+    create_response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+            idempotency_key=(
+                "stock-count-product-unit-discovered"
+            ),
+        ),
+    )
+
+    assert create_response.status_code == 201
+
+    count = create_response.get_json()["item"]
+
+    response = client.post(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count['id']}/items/discovered"
+        ),
+        json={
+            "product_id":
+                EMPTY_BATCH_PRODUCT_ID,
+            "product_unit_id":
+                EMPTY_BATCH_BOX_UNIT_ID,
+            "counted_quantity": "2",
+            "batch_number": "NEW-BOX-BATCH",
+            "expiry_date": "2028-12-31",
+        },
+    )
+
+    assert response.status_code == 201
+
+    updated = response.get_json()["item"]
+
+    line = next(
+        item
+        for item in updated["items"]
+        if (
+            item["product"]["id"]
+            == EMPTY_BATCH_PRODUCT_ID
+            and item["source_type"]
+            == "discovered"
+        )
+    )
+
+    assert line["expected_quantity"] == "0.0000"
+    assert line["counted_quantity"] == "10.0000"
+    assert line["counted_unit_quantity"] == "2.0000"
+    assert (
+        line["counted_product_unit_id"]
+        == EMPTY_BATCH_BOX_UNIT_ID
+    )
+    assert line["counted_unit_code"] == "BOX"
+    assert line["counted_unit_name"] == "Box"
+    assert (
+        line["counted_conversion_factor_to_base"]
+        == "5.000000"
+    )
+    assert line["variance_quantity"] == "10.0000"
+
+    persisted = StockCountItem.query.filter_by(
+        stock_count_id=count["id"],
+        product_id=EMPTY_BATCH_PRODUCT_ID,
+        source_type="discovered",
+    ).one()
+
+    assert persisted.counted_quantity == Decimal(
+        "10.0000"
+    )
+    assert persisted.counted_unit_quantity == Decimal(
+        "2.0000"
+    )
+    assert (
+        persisted.counted_product_unit_id
+        == EMPTY_BATCH_BOX_UNIT_ID
+    )
+    assert (
+        persisted.counted_unit_code_snapshot
+        == "BOX"
+    )
+    assert (
+        persisted.counted_unit_name_snapshot
+        == "Box"
+    )
+    assert (
+        persisted.counted_conversion_factor_to_base
+        == Decimal("5.000000")
+    )
+
+
+def test_stock_count_item_rejects_product_unit_from_different_product(
+    client,
+):
+    create_response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+            idempotency_key=(
+                "stock-count-product-unit-mismatch"
+            ),
+        ),
+    )
+
+    assert create_response.status_code == 201
+
+    count = create_response.get_json()["item"]
+
+    line = next(
+        item
+        for item in count["items"]
+        if item["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    response = client.put(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count['id']}/items/{line['id']}"
+        ),
+        json={
+            "counted_quantity": "2",
+            "product_unit_id":
+                EMPTY_BATCH_BOX_UNIT_ID,
+        },
+    )
+
+    assert response.status_code == 400
+    assert (
+        "product_unit_id not found for this product"
+        in error_message(response)
+    )
+
+def test_stock_count_base_quantity_entry_preserves_base_provenance(client):
+    create_response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+            idempotency_key=(
+                "stock-count-base-entry-provenance"
+            ),
+        ),
+    )
+
+    assert create_response.status_code == 201
+
+    count = create_response.get_json()["item"]
+
+    line = next(
+        item
+        for item in count["items"]
+        if item["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    response = client.put(
+        (
+            f"/api/inventory/stock-counts/"
+            f"{count['id']}/items/{line['id']}"
+        ),
+        json={
+            "counted_quantity": "7",
+        },
+    )
+
+    assert response.status_code == 200
+
+    updated = response.get_json()["item"]
+
+    serialized_line = next(
+        item
+        for item in updated["items"]
+        if item["id"] == line["id"]
+    )
+
+    assert (
+        serialized_line["counted_quantity"]
+        == "7.0000"
+    )
+    assert (
+        serialized_line["counted_unit_quantity"]
+        == "7.0000"
+    )
+    assert (
+        serialized_line["counted_product_unit_id"]
+        is None
+    )
+    assert serialized_line["counted_unit_code"] is None
+    assert serialized_line["counted_unit_name"] is None
+    assert (
+        serialized_line[
+            "counted_conversion_factor_to_base"
+        ]
+        == "1.000000"
+    )
+
+    persisted = db.session.get(
+        StockCountItem,
+        line["id"],
+    )
+
+    assert persisted is not None
+    assert persisted.counted_quantity == Decimal(
+        "7.0000"
+    )
+    assert persisted.counted_unit_quantity == Decimal(
+        "7.0000"
+    )
+    assert persisted.counted_product_unit_id is None
+    assert persisted.counted_unit_code_snapshot is None
+    assert persisted.counted_unit_name_snapshot is None
+    assert (
+        persisted.counted_conversion_factor_to_base
+        == Decimal("1.000000")
+    )

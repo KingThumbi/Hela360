@@ -152,6 +152,7 @@ class CreateStockCountRequest:
 class AddDiscoveredStockCountItemRequest:
     product_id: str
     counted_quantity: Decimal
+    product_unit_id: str | None = None
     batch_number: str | None = None
     expiry_date: date | None = None
     notes: str | None = None
@@ -183,6 +184,11 @@ class AddDiscoveredStockCountItemRequest:
                 max_length=36,
             ),
             counted_quantity=counted_quantity,
+            product_unit_id=_optional_text(
+                payload,
+                "product_unit_id",
+                max_length=36,
+            ),
             batch_number=_optional_text(
                 payload,
                 "batch_number",
@@ -203,6 +209,7 @@ class AddDiscoveredStockCountItemRequest:
 @dataclass(frozen=True, slots=True)
 class UpdateStockCountItemRequest:
     counted_quantity: Decimal
+    product_unit_id: str | None = None
     notes: str | None = None
 
     @classmethod
@@ -216,5 +223,10 @@ class UpdateStockCountItemRequest:
 
         return cls(
             counted_quantity=counted_quantity,
+            product_unit_id=_optional_text(
+                payload,
+                "product_unit_id",
+                max_length=36,
+            ),
             notes=_optional_text(payload, "notes", max_length=10000),
         )

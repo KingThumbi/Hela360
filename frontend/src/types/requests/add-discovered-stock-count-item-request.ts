@@ -7,5 +7,7 @@ export interface AddDiscoveredStockCountItemRequest {
 
   counted_quantity: string;
 
+  product_unit_id?: string;
+
   notes?: string;
 }

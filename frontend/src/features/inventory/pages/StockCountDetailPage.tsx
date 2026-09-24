@@ -38,6 +38,9 @@ import {
   RecordSelectedStockProductDialog,
 } from "@/features/inventory/components/RecordSelectedStockProductDialog";
 import {
+  StockCountUnitSelector,
+} from "@/features/inventory/components/StockCountUnitSelector";
+import {
   EmptyState,
   ErrorState,
   LoadingState,
@@ -248,17 +251,78 @@ function varianceBadgeVariant(
   return "default";
 }
 
-function statusLabel(value: string): string {
-  if (value === "open") {
-    return "Open";
+function stockCountLifecycleLabel(
+  count: StockCount,
+): string {
+  if (count.status === "open") {
+    return "Counting";
   }
-  if (value === "completed") {
-    return "Completed";
-  }
-  if (value === "cancelled") {
+
+  if (count.status === "cancelled") {
     return "Cancelled";
   }
-  return value.replaceAll("_", " ");
+
+  if (count.status === "completed" && count.adjustment) {
+    return "Posted";
+  }
+
+  if (
+    count.status === "completed" &&
+    (count.summary.variance_items ?? 0) > 0
+  ) {
+    return "Awaiting Posting";
+  }
+
+  if (count.status === "completed") {
+    return "Completed";
+  }
+
+  return count.status;
+}
+
+function stockCountLifecycleBadgeClass(
+  count: StockCount,
+): string {
+  if (count.status === "open") {
+    return (
+      "border-blue-200 bg-blue-50 text-blue-700 " +
+      "dark:border-blue-900/60 dark:bg-blue-950/40 " +
+      "dark:text-blue-300"
+    );
+  }
+
+  if (count.status === "cancelled") {
+    return (
+      "border-slate-200 bg-slate-50 text-slate-600 " +
+      "dark:border-slate-800 dark:bg-slate-900/50 " +
+      "dark:text-slate-300"
+    );
+  }
+
+  if (count.status === "completed" && count.adjustment) {
+    return (
+      "border-emerald-200 bg-emerald-50 text-emerald-700 " +
+      "dark:border-emerald-900/60 dark:bg-emerald-950/40 " +
+      "dark:text-emerald-300"
+    );
+  }
+
+  if (
+    count.status === "completed" &&
+    (count.summary.variance_items ?? 0) > 0
+  ) {
+    return (
+      "border-amber-200 bg-amber-50 text-amber-800 " +
+      "dark:border-amber-900/60 dark:bg-amber-950/40 " +
+      "dark:text-amber-300"
+    );
+  }
+
+  return (
+    "border-emerald-200 bg-emerald-50 text-emerald-700 " +
+    "dark:border-emerald-900/60 dark:bg-emerald-950/40 " +
+    "dark:text-emerald-300"
+  );
 }
 
 function decimalInputIsValid(value: string): boolean {
@@ -687,7 +751,12 @@ function StockCountDetail({
           />
           <DetailBlock
             label="Status"
-            value={<Badge variant={isOpen ? "default" : "outline"}>{statusLabel(count.status)}</Badge>}
+            value={<Badge
+              variant="outline"
+              className={stockCountLifecycleBadgeClass(count)}
+            >
+              {stockCountLifecycleLabel(count)}
+            </Badge>}
           />
           <DetailBlock
             label="Scope"
@@ -1201,7 +1270,22 @@ function StockCountItemsTable({
       Object.fromEntries(
         count.items.map((item) => [
           item.id,
-          item.counted_quantity ?? "",
+          item.counted_unit_quantity ??
+            item.counted_quantity ??
+            "",
+        ]),
+      ),
+  );
+
+  const [
+    unitSelections,
+    setUnitSelections,
+  ] = useState<Record<string, string>>(
+    () =>
+      Object.fromEntries(
+        count.items.map((item) => [
+          item.id,
+          item.counted_product_unit_id ?? "",
         ]),
       ),
   );
@@ -1327,6 +1411,12 @@ function StockCountItemsTable({
         itemId: item.id,
         payload: {
           counted_quantity: draft,
+          ...(unitSelections[item.id]
+            ? {
+                product_unit_id:
+                  unitSelections[item.id],
+              }
+            : {}),
         },
       },
       {
@@ -1382,7 +1472,7 @@ function StockCountItemsTable({
         />
       ) : (
         <div className="overflow-x-auto rounded-md border">
-          <Table className="min-w-[1180px]">
+          <Table className="min-w-[1380px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Product</TableHead>
@@ -1399,6 +1489,7 @@ function StockCountItemsTable({
                   </>
                 ) : null}
                 <TableHead>Physical Count</TableHead>
+                <TableHead>Unit</TableHead>
                 {exposesSystemQuantities ? (
                   <TableHead>Variance</TableHead>
                 ) : null}
@@ -1501,6 +1592,58 @@ function StockCountItemsTable({
                         </div>
                       </div>
                     </TableCell>
+
+                    <TableCell>
+                      {isOpen ? (
+                        <StockCountUnitSelector
+                          productId={item.product.id}
+                          value={
+                            unitSelections[item.id] ?? ""
+                          }
+                          quantityValue={
+                            drafts[item.id] ?? ""
+                          }
+                          onChange={(productUnitId) =>
+                            setUnitSelections(
+                              (current) => ({
+                                ...current,
+                                [item.id]:
+                                  productUnitId,
+                              }),
+                            )
+                          }
+                          disabled={isPending}
+                        />
+                      ) : (
+                        <div className="space-y-0.5 text-sm">
+                          <div>
+                            {item.counted_unit_name ??
+                              item.counted_unit_code ??
+                              "Base quantity"}
+                          </div>
+
+                          {item.counted_unit_quantity !== null &&
+                          item.counted_quantity !== null &&
+                          item.counted_conversion_factor_to_base !== null &&
+                          item.counted_product_unit_id ? (
+                            <div className="text-xs text-muted-foreground">
+                              {quantity(
+                                item.counted_unit_quantity,
+                              )}{" "}
+                              {item.counted_unit_name ??
+                                item.counted_unit_code ??
+                                "unit"}
+                              {" = "}
+                              {quantity(
+                                item.counted_quantity,
+                              )}{" "}
+                              base units
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </TableCell>
+
                     {exposesSystemQuantities ? (
                       <TableCell>
                         <Badge

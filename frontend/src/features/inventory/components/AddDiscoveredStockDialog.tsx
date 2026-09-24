@@ -23,6 +23,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  StockCountUnitSelector,
+} from "@/features/inventory/components/StockCountUnitSelector";
+import {
   useAddDiscoveredStockCountItem,
 } from "@/hooks/queries/inventory";
 import {
@@ -114,6 +117,11 @@ export function AddDiscoveredStockDialog({
   ] = useState("");
 
   const [
+    productUnitId,
+    setProductUnitId,
+  ] = useState("");
+
+  const [
     notes,
     setNotes,
   ] = useState("");
@@ -185,6 +193,7 @@ export function AddDiscoveredStockDialog({
     setBatchNumber("");
     setExpiryDate("");
     setCountedQuantity("");
+    setProductUnitId("");
     setNotes("");
   };
 
@@ -257,6 +266,12 @@ export function AddDiscoveredStockDialog({
         payload: {
           product_id: selectedProduct.id,
           counted_quantity: quantity,
+          ...(productUnitId
+            ? {
+                product_unit_id:
+                  productUnitId,
+              }
+            : {}),
           ...(batch
             ? {
                 batch_number: batch,
@@ -362,6 +377,7 @@ export function AddDiscoveredStockDialog({
                 value={selectedProductId}
                 onChange={(value) => {
                   setSelectedProductId(value);
+                  setProductUnitId("");
                   setBatchNumber("");
                   setExpiryDate("");
                 }}
@@ -475,6 +491,20 @@ export function AddDiscoveredStockDialog({
                 observation is genuinely zero.
               </div>
             </Field>
+
+            {selectedProduct ? (
+              <Field label="Counting Unit">
+                <StockCountUnitSelector
+                  productId={selectedProduct.id}
+                  value={productUnitId}
+                  quantityValue={countedQuantity}
+                  onChange={setProductUnitId}
+                  disabled={
+                    addDiscoveredItem.isPending
+                  }
+                />
+              </Field>
+            ) : null}
 
             <Field label="Notes">
               <Textarea

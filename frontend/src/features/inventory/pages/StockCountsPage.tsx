@@ -80,19 +80,100 @@ function dateTimeLabel(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function statusLabel(value: string): string {
-  return STATUS_OPTIONS.find((option) => option.value === value)?.label ??
-    value.replaceAll("_", " ");
+function stockCountLifecycleLabel(
+  count: StockCountListItem,
+): string {
+  if (count.status === "open") {
+    return "Counting";
+  }
+
+  if (count.status === "cancelled") {
+    return "Cancelled";
+  }
+
+  if (count.status === "completed" && count.adjustment) {
+    return "Posted";
+  }
+
+  if (
+    count.status === "completed" &&
+    (count.summary.variance_items ?? 0) > 0
+  ) {
+    return "Awaiting Posting";
+  }
+
+  if (count.status === "completed") {
+    return "Completed";
+  }
+
+  return count.status;
 }
 
-function statusVariant(value: string): "default" | "outline" | "secondary" {
-  if (value === "open") {
-    return "default";
+function stockCountLifecycleBadgeClass(
+  count: StockCountListItem,
+): string {
+  if (count.status === "open") {
+    return (
+      "border-blue-200 bg-blue-50 text-blue-700 " +
+      "dark:border-blue-900/60 dark:bg-blue-950/40 " +
+      "dark:text-blue-300"
+    );
   }
-  if (value === "completed") {
-    return "secondary";
+
+  if (count.status === "cancelled") {
+    return (
+      "border-slate-200 bg-slate-50 text-slate-600 " +
+      "dark:border-slate-800 dark:bg-slate-900/50 " +
+      "dark:text-slate-300"
+    );
   }
-  return "outline";
+
+  if (count.status === "completed" && count.adjustment) {
+    return (
+      "border-emerald-200 bg-emerald-50 text-emerald-700 " +
+      "dark:border-emerald-900/60 dark:bg-emerald-950/40 " +
+      "dark:text-emerald-300"
+    );
+  }
+
+  if (
+    count.status === "completed" &&
+    (count.summary.variance_items ?? 0) > 0
+  ) {
+    return (
+      "border-amber-200 bg-amber-50 text-amber-800 " +
+      "dark:border-amber-900/60 dark:bg-amber-950/40 " +
+      "dark:text-amber-300"
+    );
+  }
+
+  return (
+    "border-emerald-200 bg-emerald-50 text-emerald-700 " +
+    "dark:border-emerald-900/60 dark:bg-emerald-950/40 " +
+    "dark:text-emerald-300"
+  );
+}
+
+function stockCountLifecycleDetail(
+  count: StockCountListItem,
+): string | null {
+  if (count.status !== "completed") {
+    return null;
+  }
+
+  if (count.adjustment) {
+    return count.adjustment.adjustment_number;
+  }
+
+  const varianceItems = count.summary.variance_items ?? 0;
+
+  if (varianceItems > 0) {
+    return `${varianceItems} variance ${
+      varianceItems === 1 ? "line" : "lines"
+    }`;
+  }
+
+  return "No adjustment required";
 }
 
 function errorMessage(error: unknown): string {
@@ -389,9 +470,20 @@ function StockCountsTable({
                 {count.warehouse.code} · {count.warehouse.name}
               </td>
               <td className="px-3 py-3">
-                <Badge variant={statusVariant(count.status)}>
-                  {statusLabel(count.status)}
-                </Badge>
+                <div className="flex flex-col items-start gap-1">
+                  <Badge
+                    variant="outline"
+                    className={stockCountLifecycleBadgeClass(count)}
+                  >
+                    {stockCountLifecycleLabel(count)}
+                  </Badge>
+
+                  {stockCountLifecycleDetail(count) ? (
+                    <span className="text-xs text-muted-foreground">
+                      {stockCountLifecycleDetail(count)}
+                    </span>
+                  ) : null}
+                </div>
               </td>
               <td className="px-3 py-3">
                 {dateTimeLabel(count.started_at)}
@@ -422,7 +514,7 @@ function StockCountsTable({
                   })}
                 >
                   <Eye />
-                  {count.status === "open" ? "Open" : "View"}
+                  {count.status === "open" ? "Continue" : "View"}
                 </Link>
               </td>
             </tr>

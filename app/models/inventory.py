@@ -388,7 +388,22 @@ class StockCountItem(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     line_number = db.Column(db.Integer, nullable=False)
     snapshot_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
     expected_quantity = db.Column(db.Numeric(18, 4), nullable=False, default=0)
+    # Canonical/base quantity used for variance and inventory posting.
     counted_quantity = db.Column(db.Numeric(18, 4))
+
+    # Preserve the counter's original physical entry representation.
+    counted_unit_quantity = db.Column(db.Numeric(18, 4))
+    counted_product_unit_id = db.Column(
+        db.String(36),
+        db.ForeignKey("product_units.id"),
+        index=True,
+    )
+    counted_unit_code_snapshot = db.Column(db.String(20))
+    counted_unit_name_snapshot = db.Column(db.String(50))
+    counted_conversion_factor_to_base = db.Column(
+        db.Numeric(18, 6),
+    )
+
     variance_quantity = db.Column(db.Numeric(18, 4))
     counted_at = db.Column(db.DateTime(timezone=True))
     counted_by = db.Column(db.String(36), db.ForeignKey("users.id"), index=True)

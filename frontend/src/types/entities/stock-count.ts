@@ -129,7 +129,25 @@ export interface StockCountItem {
 
   expected_quantity?: string;
 
+  /*
+   * Canonical/base quantity used by inventory variance and posting.
+   */
   counted_quantity: string | null;
+
+  /*
+   * Original physical quantity entered by the counter.
+   *
+   * For legacy/base-only entries this is equal to counted_quantity.
+   */
+  counted_unit_quantity: string | null;
+
+  counted_product_unit_id: string | null;
+
+  counted_unit_code: string | null;
+
+  counted_unit_name: string | null;
+
+  counted_conversion_factor_to_base: string | null;
 
   variance_quantity?: string | null;
 

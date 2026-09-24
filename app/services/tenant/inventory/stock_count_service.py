@@ -12,6 +12,9 @@ from app.errors import ConflictError, NotFoundError, ValidationError
 from app.services.common.audit_actions import AuditAction
 from app.services.common.audit_modules import AuditModule
 from app.services.common.audit_service import AuditService
+from app.services.tenant.inventory.product_unit_conversion_service import (
+    ProductUnitConversionService,
+)
 from app.models import (
     InventoryBatch,
     InventoryMovement,
@@ -477,9 +480,47 @@ class StockCountService:
                 or 0
             )
 
-            counted_quantity = _q4(
+            counted_unit_quantity = _q4(
                 request.counted_quantity
             )
+            counted_quantity = counted_unit_quantity
+            counted_product_unit_id = None
+            counted_unit_code_snapshot = None
+            counted_unit_name_snapshot = None
+            counted_conversion_factor_to_base = Decimal(
+                "1.000000"
+            )
+
+            if request.product_unit_id:
+                unit_resolution = (
+                    ProductUnitConversionService(
+                        self.session
+                    ).resolve(
+                        tenant_id=tenant_id,
+                        product=product,
+                        product_unit_id=(
+                            request.product_unit_id
+                        ),
+                    )
+                )
+
+                counted_quantity = (
+                    unit_resolution.to_base_quantity(
+                        request.counted_quantity
+                    )
+                )
+                counted_product_unit_id = (
+                    unit_resolution.product_unit_id
+                )
+                counted_unit_code_snapshot = (
+                    unit_resolution.unit_code
+                )
+                counted_unit_name_snapshot = (
+                    unit_resolution.unit_name
+                )
+                counted_conversion_factor_to_base = (
+                    unit_resolution.conversion_factor_to_base
+                )
 
             item = StockCountItem(
                 stock_count_id=str(count.id),
@@ -492,6 +533,21 @@ class StockCountService:
                 snapshot_quantity=Decimal("0.0000"),
                 expected_quantity=Decimal("0.0000"),
                 counted_quantity=counted_quantity,
+                counted_unit_quantity=(
+                    counted_unit_quantity
+                ),
+                counted_product_unit_id=(
+                    counted_product_unit_id
+                ),
+                counted_unit_code_snapshot=(
+                    counted_unit_code_snapshot
+                ),
+                counted_unit_name_snapshot=(
+                    counted_unit_name_snapshot
+                ),
+                counted_conversion_factor_to_base=(
+                    counted_conversion_factor_to_base
+                ),
                 variance_quantity=counted_quantity,
                 counted_at=now,
                 counted_by=counted_by,
@@ -644,9 +700,79 @@ class StockCountService:
                 item=item,
                 counted_at=now,
             )
+
+            counted_unit_quantity = _q4(
+                request.counted_quantity
+            )
+            counted_quantity = counted_unit_quantity
+            counted_product_unit_id = None
+            counted_unit_code_snapshot = None
+            counted_unit_name_snapshot = None
+            counted_conversion_factor_to_base = Decimal(
+                "1.000000"
+            )
+
+            if request.product_unit_id:
+                products = self._load_products(
+                    tenant_id=tenant_id,
+                    product_ids=[
+                        str(item.product_id)
+                    ],
+                )
+                product = products[
+                    str(item.product_id)
+                ]
+
+                unit_resolution = (
+                    ProductUnitConversionService(
+                        self.session
+                    ).resolve(
+                        tenant_id=tenant_id,
+                        product=product,
+                        product_unit_id=(
+                            request.product_unit_id
+                        ),
+                    )
+                )
+
+                counted_quantity = (
+                    unit_resolution.to_base_quantity(
+                        request.counted_quantity
+                    )
+                )
+                counted_product_unit_id = (
+                    unit_resolution.product_unit_id
+                )
+                counted_unit_code_snapshot = (
+                    unit_resolution.unit_code
+                )
+                counted_unit_name_snapshot = (
+                    unit_resolution.unit_name
+                )
+                counted_conversion_factor_to_base = (
+                    unit_resolution.conversion_factor_to_base
+                )
+
             item.expected_quantity = expected
-            item.counted_quantity = _q4(request.counted_quantity)
-            item.variance_quantity = _q4(item.counted_quantity - expected)
+            item.counted_quantity = counted_quantity
+            item.counted_unit_quantity = (
+                counted_unit_quantity
+            )
+            item.counted_product_unit_id = (
+                counted_product_unit_id
+            )
+            item.counted_unit_code_snapshot = (
+                counted_unit_code_snapshot
+            )
+            item.counted_unit_name_snapshot = (
+                counted_unit_name_snapshot
+            )
+            item.counted_conversion_factor_to_base = (
+                counted_conversion_factor_to_base
+            )
+            item.variance_quantity = _q4(
+                counted_quantity - expected
+            )
             item.counted_at = now
             item.counted_by = counted_by
             item.notes = request.notes

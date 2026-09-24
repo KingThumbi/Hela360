@@ -188,6 +188,23 @@ def serialize_stock_count_item(
             _decimal(
                 item.counted_quantity
             ),
+        "counted_unit_quantity":
+            _decimal(
+                item.counted_unit_quantity
+            ),
+        "counted_product_unit_id": (
+            str(item.counted_product_unit_id)
+            if item.counted_product_unit_id
+            else None
+        ),
+        "counted_unit_code":
+            item.counted_unit_code_snapshot,
+        "counted_unit_name":
+            item.counted_unit_name_snapshot,
+        "counted_conversion_factor_to_base":
+            _decimal(
+                item.counted_conversion_factor_to_base
+            ),
         "counted_at":
             _timestamp(item.counted_at),
         "counted_by":

@@ -19,6 +19,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  StockCountUnitSelector,
+} from "@/features/inventory/components/StockCountUnitSelector";
+import {
   useAddDiscoveredStockCountItem,
 } from "@/hooks/queries/inventory";
 import type {
@@ -59,6 +62,7 @@ export function RecordSelectedStockProductDialog({
   const [batchNumber, setBatchNumber] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [countedQuantity, setCountedQuantity] = useState("");
+  const [productUnitId, setProductUnitId] = useState("");
   const [notes, setNotes] = useState("");
 
   const addDiscoveredItem =
@@ -68,6 +72,7 @@ export function RecordSelectedStockProductDialog({
     setBatchNumber("");
     setExpiryDate("");
     setCountedQuantity("");
+    setProductUnitId("");
     setNotes("");
   };
 
@@ -120,6 +125,12 @@ export function RecordSelectedStockProductDialog({
         payload: {
           product_id: product.id,
           counted_quantity: quantity,
+          ...(productUnitId
+            ? {
+                product_unit_id:
+                  productUnitId,
+              }
+            : {}),
           ...(batch
             ? {
                 batch_number: batch,
@@ -250,6 +261,18 @@ export function RecordSelectedStockProductDialog({
               Use “Confirm no stock found” instead of recording
               zero when the selected Product is absent.
             </div>
+          </Field>
+
+          <Field label="Counting Unit">
+            <StockCountUnitSelector
+              productId={product.id}
+              value={productUnitId}
+              quantityValue={countedQuantity}
+              onChange={setProductUnitId}
+              disabled={
+                addDiscoveredItem.isPending
+              }
+            />
           </Field>
 
           <Field label="Notes">
