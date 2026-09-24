@@ -1006,22 +1006,38 @@ function StockCountDetail({
           <SummaryBlock
             label="Readiness"
             value={
-              isReadyToComplete
-                ? "Ready to complete"
-                : count.summary.uncounted_items > 0
-                  ? `${count.summary.uncounted_items} uncounted`
-                  : `${unresolvedScopeProducts.length} Product${
-                      unresolvedScopeProducts.length === 1
-                        ? ""
-                        : "s"
-                    } still needs review`
+              count.status === "open"
+                ? isReadyToComplete
+                  ? "Ready to complete"
+                  : "Needs attention"
+                : count.status === "completed" &&
+                    count.adjustment
+                  ? "Posted"
+                  : count.status === "completed" &&
+                      (count.summary.variance_items ?? 0) > 0
+                    ? "Awaiting posting"
+                    : count.status === "completed"
+                      ? "Complete"
+                      : "Not active"
             }
             detail={
-              unresolvedScopeProducts.length > 0
-                ? "Each selected Product must have physical stock recorded or be explicitly confirmed as no stock found."
-                : exposesSystemQuantities
-                  ? "Count variance does not change inventory until an adjustment is posted."
-                  : "System quantities and differences remain hidden during this blind count."
+              count.status === "open"
+                ? count.count_mode === "blind"
+                  ? isReadyToComplete
+                    ? "All required physical observations are recorded. System quantities and differences remain hidden until this blind count is completed."
+                    : "Finish the required physical observations before completing this blind count."
+                  : isReadyToComplete
+                    ? "All required physical observations are recorded and the count can now be completed."
+                    : "Finish the required physical observations before completing this count."
+                : count.status === "completed" &&
+                    count.adjustment
+                  ? `Inventory changes were applied through Stock Adjustment ${count.adjustment.adjustment_number}.`
+                  : count.status === "completed" &&
+                      (count.summary.variance_items ?? 0) > 0
+                    ? "Review the final variances before posting the Stock Adjustment. Inventory has not changed yet."
+                    : count.status === "completed"
+                      ? "The Stock Count is complete and no Stock Adjustment is required."
+                      : "This Stock Count is no longer active."
             }
           />
         </div>
