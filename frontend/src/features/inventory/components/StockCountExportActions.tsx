@@ -7,6 +7,9 @@ import {
 } from "react";
 import { useReactToPrint } from "react-to-print";
 import { Button } from "@/components/ui/button";
+import {
+  StockCountRecountActions,
+} from "@/features/inventory/components/StockCountRecountActions";
 import type {
   StockCount,
   StockCountItem,
@@ -277,6 +280,10 @@ export function StockCountExportActions({
         <FileSpreadsheet />
         Export Excel
       </Button>
+
+      <StockCountRecountActions
+        count={count}
+      />
 
       <div
         className="fixed left-[-20000px] top-0 w-[190mm] bg-white text-black"
