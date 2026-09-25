@@ -626,6 +626,25 @@ export class InventoryService extends BaseService<InventoryStockSummary> {
     return response.data.item;
   }
 
+  async supersedeStockCount(
+    id: string,
+    payload: {
+      reason: string;
+    },
+    config?: AxiosRequestConfig,
+  ): Promise<StockCount> {
+    const response =
+      await this.postRequest<StockCountResponse>(
+        API_ENDPOINTS.INVENTORY.SUPERSEDE_STOCK_COUNT(
+          id,
+        ),
+        payload,
+        config,
+      );
+
+    return response.data.item;
+  }
+
   async createStockAdjustment(
     payload: CreateStockAdjustmentRequest,
     config?: AxiosRequestConfig,

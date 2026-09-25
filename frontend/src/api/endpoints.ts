@@ -351,6 +351,9 @@ export const API_ENDPOINTS = {
     CANCEL_STOCK_COUNT: (id: string) =>
       `${byId("/inventory/stock-counts", id)}/cancel`,
 
+    SUPERSEDE_STOCK_COUNT: (id: string) =>
+      `${byId("/inventory/stock-counts", id)}/supersede`,
+
     STOCK_ADJUSTMENTS: "/inventory/stock-adjustments",
 
     STOCK_ADJUSTMENT: (id: string) =>

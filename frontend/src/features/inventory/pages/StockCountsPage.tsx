@@ -80,6 +80,10 @@ const LIFECYCLE_OPTIONS: Array<{
     value: "cancelled",
     label: "Cancelled",
   },
+  {
+    value: "superseded",
+    label: "Superseded",
+  },
 ];
 
 function dateTimeLabel(value: string | null): string {
@@ -99,6 +103,10 @@ function stockCountLifecycleLabel(
 
   if (count.status === "cancelled") {
     return "Cancelled";
+  }
+
+  if (count.status === "superseded") {
+    return "Superseded";
   }
 
   if (count.status === "completed" && count.adjustment) {
@@ -138,6 +146,14 @@ function stockCountLifecycleBadgeClass(
     );
   }
 
+  if (count.status === "superseded") {
+    return (
+      "border-violet-200 bg-violet-50 text-violet-700 " +
+      "dark:border-violet-900/60 dark:bg-violet-950/30 " +
+      "dark:text-violet-300"
+    );
+  }
+
   if (count.status === "completed" && count.adjustment) {
     return (
       "border-emerald-200 bg-emerald-50 text-emerald-700 " +
@@ -167,6 +183,12 @@ function stockCountLifecycleBadgeClass(
 function stockCountLifecycleDetail(
   count: StockCountListItem,
 ): string | null {
+  if (count.status === "superseded") {
+    return count.superseded_reason
+      ? "Closed without posting"
+      : "Superseded";
+  }
+
   if (count.status !== "completed") {
     return null;
   }

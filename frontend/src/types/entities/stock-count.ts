@@ -167,7 +167,8 @@ export interface StockCount {
   status:
     | "open"
     | "completed"
-    | "cancelled";
+    | "cancelled"
+    | "superseded";
 
   scope_type:
     | "full"
@@ -190,6 +191,12 @@ export interface StockCount {
   cancelled_at: string | null;
 
   cancelled_by: StockCountUser | null;
+
+  superseded_at: string | null;
+
+  superseded_by: StockCountUser | null;
+
+  superseded_reason: string | null;
 
   notes: string | null;
 

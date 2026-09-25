@@ -3,14 +3,19 @@ export interface ListStockCountsRequest {
 
   per_page?: number;
 
-  status?: "open" | "completed" | "cancelled";
+  status?:
+    | "open"
+    | "completed"
+    | "cancelled"
+    | "superseded";
 
   lifecycle?:
     | "counting"
     | "awaiting_posting"
     | "posted"
     | "completed"
-    | "cancelled";
+    | "cancelled"
+    | "superseded";
 
   warehouse_id?: string;
 

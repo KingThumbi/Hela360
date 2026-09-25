@@ -6,6 +6,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldX,
   XCircle,
 } from "lucide-react";
 import {
@@ -77,6 +78,7 @@ import {
   useConfirmStockCountNoStock,
   useCreateStockAdjustmentFromCount,
   useStockCount,
+  useSupersedeStockCount,
   useUpdateStockCountItem,
 } from "@/hooks/queries/inventory";
 import {
@@ -374,6 +376,10 @@ function stockCountLifecycleLabel(
     return "Cancelled";
   }
 
+  if (count.status === "superseded") {
+    return "Superseded";
+  }
+
   if (count.status === "completed" && count.adjustment) {
     return "Posted";
   }
@@ -408,6 +414,14 @@ function stockCountLifecycleBadgeClass(
       "border-slate-200 bg-slate-50 text-slate-600 " +
       "dark:border-slate-800 dark:bg-slate-900/50 " +
       "dark:text-slate-300"
+    );
+  }
+
+  if (count.status === "superseded") {
+    return (
+      "border-violet-200 bg-violet-50 text-violet-700 " +
+      "dark:border-violet-900/60 dark:bg-violet-950/30 " +
+      "dark:text-violet-300"
     );
   }
 
@@ -459,6 +473,7 @@ export function StockCountDetailPage() {
   const stockCountQuery = useStockCount(countId);
   const completeStockCount = useCompleteStockCount();
   const cancelStockCount = useCancelStockCount();
+  const supersedeStockCount = useSupersedeStockCount();
   const createAdjustmentFromCount = useCreateStockAdjustmentFromCount();
   const authorization = useAuthorization();
   const [
@@ -473,6 +488,14 @@ export function StockCountDetailPage() {
     adjustmentOpen,
     setAdjustmentOpen,
   ] = useState(false);
+  const [
+    supersedeOpen,
+    setSupersedeOpen,
+  ] = useState(false);
+  const [
+    supersedeReason,
+    setSupersedeReason,
+  ] = useState("");
   const [
     discoveredOpen,
     setDiscoveredOpen,
@@ -509,6 +532,12 @@ export function StockCountDetailPage() {
     (count.summary.variance_items ?? 0) > 0 &&
     !count.adjustment;
 
+  const canSupersede =
+    Boolean(count) &&
+    count?.status === "completed" &&
+    canAdjustStock &&
+    !count.adjustment;
+
   const completeCount = () => {
     if (!count) {
       return;
@@ -541,6 +570,45 @@ export function StockCountDetailPage() {
         stockCountQuery.refetch();
       },
     });
+  };
+
+  const supersedeCount = () => {
+    if (!count) {
+      return;
+    }
+
+    const reason =
+      supersedeReason.trim();
+
+    if (!reason) {
+      toast.error(
+        "A reason is required to supersede this Stock Count.",
+      );
+      return;
+    }
+
+    supersedeStockCount.mutate(
+      {
+        countId: count.id,
+        reason,
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            "Stock Count marked as superseded.",
+          );
+          setSupersedeOpen(false);
+          setSupersedeReason("");
+          stockCountQuery.refetch();
+        },
+        onError: (error) => {
+          toast.error(
+            errorMessage(error),
+          );
+          stockCountQuery.refetch();
+        },
+      },
+    );
   };
 
   const postAdjustment = () => {
@@ -641,6 +709,22 @@ export function StockCountDetailPage() {
               </Button>
             </>
           ) : null}
+          {canSupersede ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                setSupersedeOpen(true)
+              }
+              disabled={
+                supersedeStockCount.isPending
+              }
+            >
+              <ShieldX />
+              Mark Superseded
+            </Button>
+          ) : null}
+
           {canPostAdjustment ? (
             <Button
               type="button"
@@ -773,6 +857,79 @@ export function StockCountDetailPage() {
               disabled={cancelStockCount.isPending}
             >
               Cancel Count
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={supersedeOpen}
+        onOpenChange={(open) => {
+          setSupersedeOpen(open);
+
+          if (!open) {
+            setSupersedeReason("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Mark Stock Count Superseded
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes the completed Stock Count
+              without posting its variances. The count
+              remains preserved as historical evidence
+              and cannot later be posted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-2">
+            <Label
+              htmlFor="supersede-stock-count-reason"
+            >
+              Reason
+            </Label>
+
+            <Input
+              id="supersede-stock-count-reason"
+              value={supersedeReason}
+              onChange={(event) =>
+                setSupersedeReason(
+                  event.target.value,
+                )
+              }
+              maxLength={1000}
+              placeholder={
+                "e.g. Superseded by subsequent recounts and inventory movements"
+              }
+            />
+
+            <p className="text-xs text-muted-foreground">
+              A reason is required and will
+              become part of the Stock Count
+              audit trail.
+            </p>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                supersedeStockCount.isPending
+              }
+            >
+              Keep Awaiting Posting
+            </AlertDialogCancel>
+
+            <AlertDialogAction
+              onClick={supersedeCount}
+              disabled={
+                supersedeStockCount.isPending ||
+                !supersedeReason.trim()
+              }
+            >
+              Mark Superseded
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -983,6 +1140,31 @@ function StockCountDetail({
               />
             </>
           ) : null}
+          {count.superseded_at ? (
+            <>
+              <DetailBlock
+                label="Superseded"
+                value={dateTimeLabel(
+                  count.superseded_at,
+                )}
+              />
+              <DetailBlock
+                label="Superseded By"
+                value={
+                  count.superseded_by?.name ??
+                  count.superseded_by?.username ??
+                  "Unknown"
+                }
+              />
+              <DetailBlock
+                label="Supersede Reason"
+                value={
+                  count.superseded_reason ??
+                  "No reason recorded"
+                }
+              />
+            </>
+          ) : null}
           <DetailBlock
             label="Notes"
             value={count.notes ?? "None"}
@@ -1019,7 +1201,9 @@ function StockCountDetail({
                 ? isReadyToComplete
                   ? "Ready to complete"
                   : "Needs attention"
-                : count.status === "completed" &&
+                : count.status === "superseded"
+                  ? "Superseded"
+                  : count.status === "completed" &&
                     count.adjustment
                   ? "Posted"
                   : count.status === "completed" &&
@@ -1038,7 +1222,13 @@ function StockCountDetail({
                   : isReadyToComplete
                     ? "All required physical observations are recorded and the count can now be completed."
                     : "Finish the required physical observations before completing this count."
-                : count.status === "completed" &&
+                : count.status === "superseded"
+                  ? (
+                      count.superseded_reason
+                        ? `Closed without posting: ${count.superseded_reason}`
+                        : "This Stock Count was closed without posting."
+                    )
+                  : count.status === "completed" &&
                     count.adjustment
                   ? `Inventory changes were applied through Stock Adjustment ${count.adjustment.adjustment_number}.`
                   : count.status === "completed" &&
@@ -1068,6 +1258,18 @@ function StockCountDetail({
             : "Expected Qty accounts for stock movements after the count snapshot. Snapshot Qty, Expected Qty, and Variance are read-only server values."}
         </div>
       </PageSection>
+
+      {count.status === "superseded" ? (
+        <PageSection>
+          <div className="rounded-md border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-200">
+            This Stock Count is preserved as historical evidence
+            and was closed without posting a Stock Adjustment.
+            {count.superseded_reason
+              ? ` Reason: ${count.superseded_reason}`
+              : ""}
+          </div>
+        </PageSection>
+      ) : null}
 
       {count.status === "completed" ? (
         <PageSection>

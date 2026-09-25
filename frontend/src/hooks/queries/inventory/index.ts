@@ -31,6 +31,10 @@ export {
 } from "./useCompleteStockCount";
 
 export {
+  useSupersedeStockCount,
+} from "./useSupersedeStockCount";
+
+export {
   useConfirmStockCountNoStock,
 } from "./useConfirmStockCountNoStock";
 

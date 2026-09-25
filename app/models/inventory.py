@@ -286,6 +286,15 @@ class StockCount(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     completed_by = db.Column(db.String(36), db.ForeignKey("users.id"))
     cancelled_at = db.Column(db.DateTime(timezone=True))
     cancelled_by = db.Column(db.String(36), db.ForeignKey("users.id"))
+
+    superseded_at = db.Column(db.DateTime(timezone=True))
+    superseded_by = db.Column(
+        db.String(36),
+        db.ForeignKey("users.id"),
+        index=True,
+    )
+    superseded_reason = db.Column(db.Text)
+
     notes = db.Column(db.Text)
 
 

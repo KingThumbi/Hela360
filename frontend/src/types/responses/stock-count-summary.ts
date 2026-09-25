@@ -10,7 +10,11 @@ export interface StockCountListItem {
 
   count_number: string;
 
-  status: "open" | "completed" | "cancelled";
+  status:
+    | "open"
+    | "completed"
+    | "cancelled"
+    | "superseded";
 
   scope_type: "full" | "selected";
 
@@ -25,6 +29,10 @@ export interface StockCountListItem {
   completed_at: string | null;
 
   cancelled_at: string | null;
+
+  superseded_at: string | null;
+
+  superseded_reason: string | null;
 
   notes: string | null;
 

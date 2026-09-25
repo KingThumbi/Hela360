@@ -288,6 +288,7 @@ def serialize_stock_count(
     started_by: dict | None,
     completed_by: dict | None,
     cancelled_by: dict | None,
+    superseded_by: dict | None,
     items: list[
         tuple[
             StockCountItem,
@@ -422,6 +423,14 @@ def serialize_stock_count(
             ),
         "cancelled_by":
             _user(cancelled_by),
+        "superseded_at":
+            _timestamp(
+                count.superseded_at
+            ),
+        "superseded_by":
+            _user(superseded_by),
+        "superseded_reason":
+            count.superseded_reason,
         "notes":
             count.notes,
         "adjustment": (
@@ -516,6 +525,12 @@ def serialize_stock_count_summary(
             _timestamp(
                 count.cancelled_at
             ),
+        "superseded_at":
+            _timestamp(
+                count.superseded_at
+            ),
+        "superseded_reason":
+            count.superseded_reason,
         "notes":
             count.notes,
         "adjustment": (

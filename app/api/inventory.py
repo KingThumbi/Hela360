@@ -740,6 +740,34 @@ def complete_stock_count(count_id: str):
     )
 
 
+@bp.post("/inventory/stock-counts/<count_id>/supersede")
+@require_permission("inventory.adjust")
+def supersede_stock_count(count_id: str):
+    identity = _current_identity()
+    payload = request.get_json(silent=True) or {}
+
+    service = StockCountService(db.session)
+
+    count = service.supersede_stock_count(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        count_id=count_id,
+        superseded_by=identity.user_id,
+        reason=payload.get("reason"),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Stock Count superseded successfully.",
+            "item": serialize_stock_count(
+                count,
+                **service.serialization_context(count),
+            ),
+        }
+    )
+
+
 @bp.post("/inventory/stock-counts/<count_id>/cancel")
 @require_permission("inventory.count")
 def cancel_stock_count(count_id: str):

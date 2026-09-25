@@ -39,12 +39,14 @@ FOURPLACES = Decimal("0.0001")
 OPEN_STATUS = "open"
 COMPLETED_STATUS = "completed"
 CANCELLED_STATUS = "cancelled"
+SUPERSEDED_STATUS = "superseded"
 
 LIFECYCLE_COUNTING = "counting"
 LIFECYCLE_AWAITING_POSTING = "awaiting_posting"
 LIFECYCLE_POSTED = "posted"
 LIFECYCLE_COMPLETED = "completed"
 LIFECYCLE_CANCELLED = "cancelled"
+LIFECYCLE_SUPERSEDED = "superseded"
 
 STOCK_COUNT_SOURCE = "stock_count"
 POSTED_ADJUSTMENT_STATUS = "posted"
@@ -55,6 +57,7 @@ SUPPORTED_LIFECYCLES = {
     LIFECYCLE_POSTED,
     LIFECYCLE_COMPLETED,
     LIFECYCLE_CANCELLED,
+    LIFECYCLE_SUPERSEDED,
 }
 
 
@@ -79,6 +82,7 @@ class StockCountListFilters:
             OPEN_STATUS,
             COMPLETED_STATUS,
             CANCELLED_STATUS,
+            SUPERSEDED_STATUS,
         }:
             raise StockCountQueryError(
                 "status is not supported."
@@ -698,6 +702,14 @@ class StockCountService:
                 )
             elif (
                 filters.lifecycle
+                == LIFECYCLE_SUPERSEDED
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == SUPERSEDED_STATUS
+                )
+            elif (
+                filters.lifecycle
                 == LIFECYCLE_POSTED
             ):
                 query = query.filter(
@@ -1146,6 +1158,93 @@ class StockCountService:
             self.session.rollback()
             raise
 
+    def supersede_stock_count(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        count_id: str,
+        superseded_by: str,
+        reason: str,
+    ) -> StockCount:
+        if not branch_id:
+            raise ValidationError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        normalized_reason = str(reason or "").strip()
+
+        if not normalized_reason:
+            raise ValidationError(
+                "Supersede reason is required."
+            )
+
+        if len(normalized_reason) > 1000:
+            raise ValidationError(
+                "Supersede reason must not exceed 1000 characters."
+            )
+
+        now = _now()
+
+        try:
+            count = self._locked_count(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                count_id=count_id,
+            )
+
+            if count.status != COMPLETED_STATUS:
+                raise ConflictError(
+                    "Only a completed Stock Count can be superseded."
+                )
+
+            adjustment = self._adjustment_for_count(
+                tenant_id=tenant_id,
+                count_id=str(count.id),
+            )
+
+            if adjustment is not None:
+                raise ConflictError(
+                    "A Stock Count with an adjustment cannot be superseded."
+                )
+
+            count.status = SUPERSEDED_STATUS
+            count.superseded_at = now
+            count.superseded_by = superseded_by
+            count.superseded_reason = normalized_reason
+            count.updated_at = now
+
+            AuditService().log(
+                module=AuditModule.INVENTORY,
+                action=AuditAction.INVENTORY_COUNT_SUPERSEDED,
+                entity_type="stock_count",
+                tenant_id=tenant_id,
+                entity_id=str(count.id),
+                user_id=superseded_by,
+                branch_id=branch_id,
+                old_values={
+                    "status": COMPLETED_STATUS,
+                },
+                new_values={
+                    "status": SUPERSEDED_STATUS,
+                },
+                details={
+                    "count_number": count.count_number,
+                    "warehouse_id": str(count.warehouse_id),
+                    "scope_type": count.scope_type,
+                    "count_mode": count.count_mode,
+                    "reason": normalized_reason,
+                },
+                commit=False,
+            )
+
+            self.session.commit()
+            return count
+
+        except Exception:
+            self.session.rollback()
+            raise
+
     def serialization_context(self, count: StockCount) -> dict:
         warehouse = (
             self.session.query(Warehouse)
@@ -1157,6 +1256,7 @@ class StockCountService:
             "started_by": self._user_context(count.started_by),
             "completed_by": self._user_context(count.completed_by),
             "cancelled_by": self._user_context(count.cancelled_by),
+            "superseded_by": self._user_context(count.superseded_by),
             "items": self._item_context(str(count.id)),
             "scope_products": self._scope_product_context(
                 str(count.id)

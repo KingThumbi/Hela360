@@ -3084,3 +3084,307 @@ def test_stock_count_base_quantity_entry_preserves_base_provenance(client):
         persisted.counted_conversion_factor_to_base
         == Decimal("1.000000")
     )
+
+
+# ============================================================================
+# Superseded Stock Count lifecycle
+# ============================================================================
+
+
+def _create_completed_count_for_supersede(client) -> str:
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            count_mode="visible",
+        ),
+    )
+
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    count = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    lines = (
+        StockCountItem.query
+        .filter_by(
+            stock_count_id=count_id,
+        )
+        .order_by(
+            StockCountItem.line_number.asc(),
+        )
+        .all()
+    )
+
+    for line in lines:
+        line.counted_quantity = (
+            line.expected_quantity
+        )
+        line.counted_unit_quantity = (
+            line.expected_quantity
+        )
+        line.counted_conversion_factor_to_base = (
+            Decimal("1.000000")
+        )
+        line.variance_quantity = Decimal("0.0000")
+        line.counted_at = datetime.now(
+            timezone.utc
+        )
+        line.counted_by = USER_ID
+
+    count.status = "completed"
+    count.completed_at = datetime.now(
+        timezone.utc
+    )
+    count.completed_by = USER_ID
+
+    db.session.commit()
+
+    return count_id
+
+
+def test_completed_unposted_stock_count_can_be_superseded(
+    client,
+):
+    count_id = _create_completed_count_for_supersede(
+        client
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/supersede",
+        json={
+            "reason": (
+                "Superseded by a newer physical recount."
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+
+    item = payload["item"]
+
+    assert item["status"] == "superseded"
+    assert item["superseded_at"] is not None
+    assert item["superseded_by"]["id"] == USER_ID
+    assert (
+        item["superseded_reason"]
+        == "Superseded by a newer physical recount."
+    )
+    assert item["adjustment"] is None
+
+    persisted = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    assert persisted.status == "superseded"
+    assert persisted.superseded_at is not None
+    assert persisted.superseded_by == USER_ID
+    assert (
+        persisted.superseded_reason
+        == "Superseded by a newer physical recount."
+    )
+
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_SUPERSEDED",
+        entity_type="stock_count",
+        entity_id=count_id,
+    ).one()
+
+    assert audit.module_code == "INVENTORY"
+    assert audit.tenant_id == TENANT_ID
+    assert audit.branch_id == BRANCH_ID
+    assert audit.user_id == USER_ID
+    assert audit.old_values == {
+        "status": "completed",
+    }
+    assert audit.new_values == {
+        "status": "superseded",
+    }
+    assert (
+        audit.details["reason"]
+        == "Superseded by a newer physical recount."
+    )
+
+
+def test_supersede_stock_count_requires_reason(
+    client,
+):
+    count_id = _create_completed_count_for_supersede(
+        client
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/supersede",
+        json={
+            "reason": "   ",
+        },
+    )
+
+    assert response.status_code == 400
+
+    payload = response.get_json()
+
+    assert payload["ok"] is False
+    assert (
+        "Supersede reason is required"
+        in payload["error"]["message"]
+    )
+
+    persisted = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    assert persisted.status == "completed"
+    assert persisted.superseded_at is None
+
+
+def test_open_stock_count_cannot_be_superseded(
+    client,
+):
+    created = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(),
+    )
+
+    assert created.status_code == 201
+
+    count_id = created.get_json()["item"]["id"]
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/supersede",
+        json={
+            "reason": "Premature supersede attempt.",
+        },
+    )
+
+    assert response.status_code == 409
+
+    payload = response.get_json()
+
+    assert payload["ok"] is False
+    assert (
+        "Only a completed Stock Count can be superseded"
+        in payload["error"]["message"]
+    )
+
+    persisted = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    assert persisted.status == "open"
+
+
+def test_adjusted_stock_count_cannot_be_superseded(
+    client,
+):
+    count_id = _create_completed_count_for_supersede(
+        client
+    )
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    adjustment = StockAdjustment(
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        adjustment_number="SA-SUPERSEDE-TEST",
+        reason_code="stock_count",
+        reason="Existing posted adjustment",
+        source_type="stock_count",
+        source_id=count_id,
+        status="posted",
+        idempotency_key=(
+            "supersede-existing-adjustment"
+        ),
+        request_fingerprint=(
+            "supersede-existing-adjustment-fingerprint"
+        ),
+        posted_at=now,
+        posted_by=USER_ID,
+        created_at=now,
+        updated_at=now,
+    )
+
+    db.session.add(adjustment)
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/supersede",
+        json={
+            "reason": "Should not be allowed.",
+        },
+    )
+
+    assert response.status_code == 409
+
+    payload = response.get_json()
+
+    assert payload["ok"] is False
+    assert (
+        "with an adjustment cannot be superseded"
+        in payload["error"]["message"]
+    )
+
+    persisted = db.session.get(
+        StockCount,
+        count_id,
+    )
+
+    assert persisted.status == "completed"
+    assert persisted.superseded_at is None
+
+
+def test_superseded_lifecycle_filter_returns_only_superseded_counts(
+    client,
+):
+    superseded_id = (
+        _create_completed_count_for_supersede(
+            client
+        )
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{superseded_id}/supersede",
+        json={
+            "reason": "Lifecycle filter test.",
+        },
+    )
+
+    assert response.status_code == 200
+
+    filtered = client.get(
+        "/api/inventory/stock-counts"
+        "?lifecycle=superseded"
+    )
+
+    assert filtered.status_code == 200
+
+    payload = filtered.get_json()
+
+    assert payload["ok"] is True
+    assert payload["pagination"]["total"] == 1
+    assert len(payload["items"]) == 1
+    assert (
+        payload["items"][0]["id"]
+        == superseded_id
+    )
+    assert (
+        payload["items"][0]["status"]
+        == "superseded"
+    )
+    assert (
+        payload["items"][0]["superseded_reason"]
+        == "Lifecycle filter test."
+    )
