@@ -507,6 +507,42 @@ def test_stock_adjustment_and_audit_rollback_together_when_commit_fails(
     )
 
 
+def test_manual_adjustment_rejects_inactive_product(
+    client,
+):
+    product = db.session.get(
+        Product,
+        NON_BATCH_PRODUCT_ID,
+    )
+    product.is_active = False
+    db.session.commit()
+
+    response = client.post(
+        "/api/inventory/stock-adjustments",
+        json=manual_payload(
+            idempotency_key="inactive-manual-product",
+        ),
+    )
+
+    assert response.status_code == 400
+
+    payload = response.get_json()
+
+    assert payload["ok"] is False
+    assert (
+        "must be active"
+        in payload["error"]["message"]
+    )
+    assert StockAdjustment.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+    product = db.session.get(
+        Product,
+        NON_BATCH_PRODUCT_ID,
+    )
+    assert product.is_active is False
+
+
 def test_manual_negative_adjustment_preserves_reserved_stock_safety(client):
     response = client.post(
         "/api/inventory/stock-adjustments",
@@ -645,6 +681,67 @@ def test_stock_count_adjustment_derives_nonzero_variances_and_preserves_count(cl
         for item in StockCountItem.query.order_by(StockCountItem.line_number).all()
     ]
     assert after_count_items == before_count_items
+
+
+def test_stock_count_adjustment_allows_inactive_inventory_product(
+    client,
+):
+    product = db.session.get(
+        Product,
+        NON_BATCH_PRODUCT_ID,
+    )
+    product.is_active = False
+    db.session.commit()
+
+    before_stock = (
+        StockBalance.query
+        .filter_by(
+            product_id=NON_BATCH_PRODUCT_ID
+        )
+        .one()
+        .quantity_on_hand
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{STOCK_COUNT_ID}/adjust",
+        json=count_payload(
+            idempotency_key="inactive-count-product",
+        ),
+    )
+
+    assert response.status_code == 201
+
+    product = db.session.get(
+        Product,
+        NON_BATCH_PRODUCT_ID,
+    )
+    assert product.is_active is False
+
+    stock = (
+        StockBalance.query
+        .filter_by(
+            product_id=NON_BATCH_PRODUCT_ID
+        )
+        .one()
+    )
+    assert (
+        stock.quantity_on_hand
+        == before_stock + Decimal("2.0000")
+    )
+
+    movement = (
+        InventoryMovement.query
+        .filter_by(
+            product_id=NON_BATCH_PRODUCT_ID,
+            movement_type="stock_adjustment",
+        )
+        .one()
+    )
+    assert movement.quantity == Decimal("2.0000")
+
+    adjustment = StockAdjustment.query.one()
+    assert adjustment.source_type == "stock_count"
+    assert adjustment.source_id == STOCK_COUNT_ID
 
 
 def test_stock_count_adjustment_rejects_duplicate_and_open_count(client):

@@ -304,6 +304,7 @@ class StockAdjustmentService:
                     str(item.product_id)
                     for item in rows
                 ],
+                allow_inactive=True,
             )
 
             lines: list[AdjustmentLine] = []
@@ -726,7 +727,14 @@ class StockAdjustmentService:
             self._validate_duplicate_lines(lines)
             products = self._load_products(
                 tenant_id=tenant_id,
-                product_ids=[line.product_id for line in lines],
+                product_ids=[
+                    line.product_id
+                    for line in lines
+                ],
+                allow_inactive=(
+                    source_type
+                    == STOCK_COUNT_SOURCE
+                ),
             )
 
             adjustment = StockAdjustment(
@@ -902,6 +910,7 @@ class StockAdjustmentService:
         *,
         tenant_id: str,
         product_ids: list[str],
+        allow_inactive: bool = False,
     ) -> dict[str, Product]:
         products = (
             self.session.query(Product)
@@ -916,10 +925,17 @@ class StockAdjustmentService:
         if missing:
             raise ValidationError("All products must belong to this tenant.")
         for product in by_id.values():
-            if not product.is_active:
-                raise ValidationError("Stock adjustment products must be active.")
+            if (
+                not allow_inactive
+                and not product.is_active
+            ):
+                raise ValidationError(
+                    "Stock adjustment products must be active."
+                )
             if not product.track_inventory:
-                raise ValidationError("Stock adjustment products must be inventory-tracked.")
+                raise ValidationError(
+                    "Stock adjustment products must be inventory-tracked."
+                )
         return by_id
 
     def _validate_duplicate_lines(self, lines: list[AdjustmentLine]) -> None:
