@@ -19,6 +19,7 @@ from app.models import (
     Product,
     ProductUnit,
     StockBalance,
+    StockAdjustment,
     StockCount,
     StockCountItem,
     StockCountScopeProduct,
@@ -75,6 +76,7 @@ def app_context():
         StockBalance.__table__.create(db.engine)
         InventoryMovement.__table__.create(db.engine)
         StockCount.__table__.create(db.engine)
+        StockAdjustment.__table__.create(db.engine)
         StockCountScopeProduct.__table__.create(
             db.engine
         )
@@ -88,6 +90,7 @@ def app_context():
         StockCountScopeProduct.__table__.drop(
             db.engine
         )
+        StockAdjustment.__table__.drop(db.engine)
         StockCount.__table__.drop(db.engine)
         InventoryMovement.__table__.drop(db.engine)
         StockBalance.__table__.drop(db.engine)
@@ -764,6 +767,147 @@ def test_stock_count_list_and_detail_are_branch_scoped(client):
     assert response.get_json()["item"]["id"] == count_id
 
 
+def test_stock_count_list_filters_operational_lifecycle(
+    client,
+):
+    now = datetime.now(timezone.utc)
+
+    def add_count(
+        *,
+        count_id: str,
+        status: str,
+        variance: Decimal | None = None,
+    ) -> StockCount:
+        count = StockCount(
+            id=count_id,
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            warehouse_id=WAREHOUSE_ID,
+            count_number=f"SC-{count_id.upper()}",
+            idempotency_key=f"key-{count_id}",
+            request_fingerprint=f"fingerprint-{count_id}",
+            scope_type="full",
+            count_mode="visible",
+            status=status,
+            snapshot_at=now,
+            started_at=now,
+            started_by=USER_ID,
+            completed_at=(
+                now
+                if status == "completed"
+                else None
+            ),
+            completed_by=(
+                USER_ID
+                if status == "completed"
+                else None
+            ),
+            cancelled_at=(
+                now
+                if status == "cancelled"
+                else None
+            ),
+            cancelled_by=(
+                USER_ID
+                if status == "cancelled"
+                else None
+            ),
+        )
+        db.session.add(count)
+        db.session.flush()
+
+        if variance is not None:
+            db.session.add(
+                StockCountItem(
+                    id=f"item-{count_id}",
+                    stock_count_id=count_id,
+                    product_id=NON_BATCH_PRODUCT_ID,
+                    batch_id=None,
+                    source_type="snapshot",
+                    line_number=1,
+                    snapshot_quantity=Decimal("10"),
+                    expected_quantity=Decimal("10"),
+                    counted_quantity=(
+                        Decimal("10") + variance
+                    ),
+                    variance_quantity=variance,
+                    counted_at=now,
+                    counted_by=USER_ID,
+                )
+            )
+
+        return count
+
+    add_count(
+        count_id="lifecycle-counting",
+        status="open",
+    )
+    add_count(
+        count_id="lifecycle-awaiting",
+        status="completed",
+        variance=Decimal("-2"),
+    )
+    add_count(
+        count_id="lifecycle-completed",
+        status="completed",
+        variance=Decimal("0"),
+    )
+    add_count(
+        count_id="lifecycle-posted",
+        status="completed",
+        variance=Decimal("3"),
+    )
+    add_count(
+        count_id="lifecycle-cancelled",
+        status="cancelled",
+    )
+
+    db.session.add(
+        StockAdjustment(
+            id="adjustment-lifecycle-posted",
+            tenant_id=TENANT_ID,
+            branch_id=BRANCH_ID,
+            warehouse_id=WAREHOUSE_ID,
+            adjustment_number="SA-LIFECYCLE-POSTED",
+            reason_code="stock_count",
+            reason="Lifecycle filter test",
+            source_type="stock_count",
+            source_id="lifecycle-posted",
+            status="posted",
+            idempotency_key="adjustment-lifecycle-key",
+            request_fingerprint="adjustment-lifecycle-fingerprint",
+            posted_at=now,
+            posted_by=USER_ID,
+        )
+    )
+
+    db.session.commit()
+
+    expected = {
+        "counting": "lifecycle-counting",
+        "awaiting_posting": "lifecycle-awaiting",
+        "posted": "lifecycle-posted",
+        "completed": "lifecycle-completed",
+        "cancelled": "lifecycle-cancelled",
+    }
+
+    for lifecycle, expected_id in expected.items():
+        response = client.get(
+            "/api/inventory/stock-counts"
+            f"?lifecycle={lifecycle}"
+        )
+
+        assert response.status_code == 200
+
+        payload = response.get_json()
+
+        assert payload["pagination"]["total"] == 1
+        assert [
+            item["id"]
+            for item in payload["items"]
+        ] == [expected_id]
+
+
 def test_stock_count_list_validates_filters(client):
     response = client.get("/api/inventory/stock-counts?page=0")
     assert response.status_code == 400
@@ -772,6 +916,21 @@ def test_stock_count_list_validates_filters(client):
     response = client.get("/api/inventory/stock-counts?status=posted")
     assert response.status_code == 400
     assert "status" in error_message(response)
+
+    response = client.get(
+        "/api/inventory/stock-counts?lifecycle=unknown"
+    )
+    assert response.status_code == 400
+    assert "lifecycle" in error_message(response)
+
+    response = client.get(
+        "/api/inventory/stock-counts"
+        "?status=open&lifecycle=counting"
+    )
+    assert response.status_code == 400
+    assert "status and lifecycle" in error_message(
+        response
+    )
 
     response = client.get(
         f"/api/inventory/stock-counts?warehouse_id={OTHER_BRANCH_WAREHOUSE_ID}"

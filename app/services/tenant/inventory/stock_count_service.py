@@ -40,6 +40,23 @@ OPEN_STATUS = "open"
 COMPLETED_STATUS = "completed"
 CANCELLED_STATUS = "cancelled"
 
+LIFECYCLE_COUNTING = "counting"
+LIFECYCLE_AWAITING_POSTING = "awaiting_posting"
+LIFECYCLE_POSTED = "posted"
+LIFECYCLE_COMPLETED = "completed"
+LIFECYCLE_CANCELLED = "cancelled"
+
+STOCK_COUNT_SOURCE = "stock_count"
+POSTED_ADJUSTMENT_STATUS = "posted"
+
+SUPPORTED_LIFECYCLES = {
+    LIFECYCLE_COUNTING,
+    LIFECYCLE_AWAITING_POSTING,
+    LIFECYCLE_POSTED,
+    LIFECYCLE_COMPLETED,
+    LIFECYCLE_CANCELLED,
+}
+
 
 class StockCountQueryError(ValueError):
     pass
@@ -50,6 +67,7 @@ class StockCountListFilters:
     page: int = 1
     per_page: int = 25
     status: str | None = None
+    lifecycle: str | None = None
     warehouse_id: str | None = None
     date_from: date | None = None
     date_to: date | None = None
@@ -57,13 +75,36 @@ class StockCountListFilters:
     @classmethod
     def from_query(cls, args) -> "StockCountListFilters":
         status = _optional_text(args.get("status"))
-        if status and status not in {OPEN_STATUS, COMPLETED_STATUS, CANCELLED_STATUS}:
-            raise StockCountQueryError("status is not supported.")
+        if status and status not in {
+            OPEN_STATUS,
+            COMPLETED_STATUS,
+            CANCELLED_STATUS,
+        }:
+            raise StockCountQueryError(
+                "status is not supported."
+            )
+
+        lifecycle = _optional_text(
+            args.get("lifecycle")
+        )
+        if (
+            lifecycle
+            and lifecycle not in SUPPORTED_LIFECYCLES
+        ):
+            raise StockCountQueryError(
+                "lifecycle is not supported."
+            )
+
+        if status and lifecycle:
+            raise StockCountQueryError(
+                "status and lifecycle cannot be used together."
+            )
 
         return cls(
             page=_positive_int(args.get("page"), "page", 1),
             per_page=_positive_int(args.get("per_page"), "per_page", 25),
             status=status,
+            lifecycle=lifecycle,
             warehouse_id=_optional_text(args.get("warehouse_id")),
             date_from=_parse_date(args.get("date_from"), "date_from"),
             date_to=_parse_date(args.get("date_to"), "date_to"),
@@ -602,7 +643,89 @@ class StockCountService:
             )
         )
         if filters.status:
-            query = query.filter(StockCount.status == filters.status)
+            query = query.filter(
+                StockCount.status == filters.status
+            )
+
+        if filters.lifecycle:
+            posted_adjustment_exists = (
+                self.session.query(
+                    StockAdjustment.id
+                )
+                .filter(
+                    StockAdjustment.tenant_id
+                    == tenant_id,
+                    StockAdjustment.branch_id
+                    == branch_id,
+                    StockAdjustment.source_type
+                    == STOCK_COUNT_SOURCE,
+                    StockAdjustment.source_id
+                    == StockCount.id,
+                    StockAdjustment.status
+                    == POSTED_ADJUSTMENT_STATUS,
+                )
+                .exists()
+            )
+
+            variance_exists = (
+                self.session.query(
+                    StockCountItem.id
+                )
+                .filter(
+                    StockCountItem.stock_count_id
+                    == StockCount.id,
+                    StockCountItem.variance_quantity
+                    != 0,
+                )
+                .exists()
+            )
+
+            if (
+                filters.lifecycle
+                == LIFECYCLE_COUNTING
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == OPEN_STATUS
+                )
+            elif (
+                filters.lifecycle
+                == LIFECYCLE_CANCELLED
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == CANCELLED_STATUS
+                )
+            elif (
+                filters.lifecycle
+                == LIFECYCLE_POSTED
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == COMPLETED_STATUS,
+                    posted_adjustment_exists,
+                )
+            elif (
+                filters.lifecycle
+                == LIFECYCLE_AWAITING_POSTING
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == COMPLETED_STATUS,
+                    ~posted_adjustment_exists,
+                    variance_exists,
+                )
+            elif (
+                filters.lifecycle
+                == LIFECYCLE_COMPLETED
+            ):
+                query = query.filter(
+                    StockCount.status
+                    == COMPLETED_STATUS,
+                    ~posted_adjustment_exists,
+                    ~variance_exists,
+                )
+
         if filters.warehouse_id:
             query = query.filter(StockCount.warehouse_id == filters.warehouse_id)
         if filters.date_from:

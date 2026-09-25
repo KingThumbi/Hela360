@@ -5,6 +5,13 @@ export interface ListStockCountsRequest {
 
   status?: "open" | "completed" | "cancelled";
 
+  lifecycle?:
+    | "counting"
+    | "awaiting_posting"
+    | "posted"
+    | "completed"
+    | "cancelled";
+
   warehouse_id?: string;
 
   date_from?: string;

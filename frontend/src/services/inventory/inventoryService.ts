@@ -246,6 +246,11 @@ function stockCountListParams(
     query.status = status;
   }
 
+  const lifecycle = params?.lifecycle?.trim();
+  if (lifecycle) {
+    query.lifecycle = lifecycle;
+  }
+
   const warehouseId = params?.warehouse_id?.trim();
   if (warehouseId) {
     query.warehouse_id = warehouseId;

@@ -52,15 +52,25 @@ import type {
 
 const PAGE_SIZE = 25;
 
-type StockCountStatus = NonNullable<ListStockCountsRequest["status"]>;
+type StockCountLifecycle = NonNullable<
+  ListStockCountsRequest["lifecycle"]
+>;
 
-const STATUS_OPTIONS: Array<{
-  value: StockCountStatus;
+const LIFECYCLE_OPTIONS: Array<{
+  value: StockCountLifecycle;
   label: string;
 }> = [
   {
-    value: "open",
-    label: "Open",
+    value: "counting",
+    label: "Counting",
+  },
+  {
+    value: "awaiting_posting",
+    label: "Awaiting Posting",
+  },
+  {
+    value: "posted",
+    label: "Posted",
   },
   {
     value: "completed",
@@ -191,9 +201,9 @@ export function StockCountsPage() {
     setPage,
   ] = useState(1);
   const [
-    status,
-    setStatus,
-  ] = useState<StockCountStatus | "">("");
+    lifecycle,
+    setLifecycle,
+  ] = useState<StockCountLifecycle | "">("");
   const [
     warehouseId,
     setWarehouseId,
@@ -211,7 +221,7 @@ export function StockCountsPage() {
     () => ({
       page,
       per_page: PAGE_SIZE,
-      status: status || undefined,
+      lifecycle: lifecycle || undefined,
       warehouse_id: warehouseId || undefined,
       date_from: dateFrom || undefined,
       date_to: dateTo || undefined,
@@ -219,8 +229,8 @@ export function StockCountsPage() {
     [
       dateFrom,
       dateTo,
+      lifecycle,
       page,
-      status,
       warehouseId,
     ],
   );
@@ -235,7 +245,7 @@ export function StockCountsPage() {
     [warehousesQuery.data],
   );
   const hasFilters =
-    status.length > 0 ||
+    lifecycle.length > 0 ||
     warehouseId.length > 0 ||
     dateFrom.length > 0 ||
     dateTo.length > 0;
@@ -243,7 +253,7 @@ export function StockCountsPage() {
 
   const resetFilters = () => {
     setPage(1);
-    setStatus("");
+    setLifecycle("");
     setWarehouseId("");
     setDateFrom("");
     setDateTo("");
@@ -320,13 +330,15 @@ export function StockCountsPage() {
           <PageToolbar>
             <div className="grid w-full gap-3 lg:grid-cols-[180px_minmax(220px,1fr)_160px_160px_auto]">
               <NativeSelect
-                value={status}
+                value={lifecycle}
                 onChange={(value) => {
                   setPage(1);
-                  setStatus(value as StockCountStatus | "");
+                  setLifecycle(
+                    value as StockCountLifecycle | "",
+                  );
                 }}
                 placeholder="All statuses"
-                options={STATUS_OPTIONS}
+                options={LIFECYCLE_OPTIONS}
               />
 
               <NativeSelect

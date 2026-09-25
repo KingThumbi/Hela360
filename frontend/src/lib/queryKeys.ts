@@ -141,6 +141,8 @@ interface NormalizedListStockCountsRequest {
 
   readonly status?: string;
 
+  readonly lifecycle?: string;
+
   readonly warehouse_id?: string;
 
   readonly date_from?: string;
@@ -465,6 +467,7 @@ function normalizeListStockCountsRequest(
   params?: ListStockCountsRequest,
 ): NormalizedListStockCountsRequest {
   const status = params?.status?.trim();
+  const lifecycle = params?.lifecycle?.trim();
   const warehouseId = params?.warehouse_id?.trim();
   const dateFrom = params?.date_from?.trim();
   const dateTo = params?.date_to?.trim();
@@ -475,6 +478,8 @@ function normalizeListStockCountsRequest(
     per_page: params?.per_page ?? 25,
 
     ...(status ? { status } : {}),
+
+    ...(lifecycle ? { lifecycle } : {}),
 
     ...(warehouseId ? { warehouse_id: warehouseId } : {}),
 
