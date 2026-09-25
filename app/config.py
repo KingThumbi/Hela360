@@ -73,9 +73,18 @@ class Config:
     # Database
     # ------------------------------------------------------------------
 
-    SQLALCHEMY_DATABASE_URI = os.getenv(
+    DATABASE_URL = os.getenv(
         "DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5432/hela360",
     )
+
+    if DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = DATABASE_URL.replace(
+            "postgresql://",
+            "postgresql+psycopg2://",
+            1,
+        )
+
+    SQLALCHEMY_DATABASE_URI = DATABASE_URL
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
