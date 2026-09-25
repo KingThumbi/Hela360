@@ -41,6 +41,9 @@ import {
   StockCountUnitSelector,
 } from "@/features/inventory/components/StockCountUnitSelector";
 import {
+  StockCountExportActions,
+} from "@/features/inventory/components/StockCountExportActions";
+import {
   EmptyState,
   ErrorState,
   LoadingState,
@@ -600,6 +603,12 @@ export function StockCountDetailPage() {
             />
             Refresh
           </Button>
+
+          {count ? (
+            <StockCountExportActions
+              count={count}
+            />
+          ) : null}
           {count?.status === "open" ? (
             <>
               <Button
