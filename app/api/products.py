@@ -33,6 +33,9 @@ from app.auth.exceptions import AuthenticationError
 from app.services.tenant.auth.decorators import (
     require_permission,
 )
+from app.services.tenant.products.product_history_query_service import (
+    ProductHistoryQueryService,
+)
 bp = Blueprint("products", __name__)
 
 
@@ -416,6 +419,67 @@ def list_products():
         "count": total,
         "items": [_serialize_product(item) for item in items],
     })
+
+
+@bp.get("/products/<product_id>/history")
+@require_permission("products.view")
+def get_product_history(product_id: str):
+    identity = _current_identity()
+
+    summary = ProductHistoryQueryService(
+        db.session
+    ).get_summary(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        product_id=product_id,
+    )
+
+    if summary is None:
+        return _json_error("Product not found.", 404)
+
+    return jsonify(
+        {
+            "ok": True,
+            "item": {
+                "product": _serialize_product(summary.product),
+                "units": [
+                    _serialize_product_unit(product_unit)
+                    for product_unit in summary.product_units
+                ],
+                "current_stock": {
+                    "quantity_on_hand": str(
+                        summary.quantity_on_hand
+                    ),
+                    "quantity_reserved": str(
+                        summary.quantity_reserved
+                    ),
+                    "quantity_available": str(
+                        summary.quantity_available
+                    ),
+                    "warehouse_count": (
+                        summary.warehouse_count
+                    ),
+                },
+                "activity": {
+                    "movement_count": (
+                        summary.movement_count
+                    ),
+                    "last_movement_at": (
+                        summary.last_movement_at.isoformat()
+                        if summary.last_movement_at
+                        else None
+                    ),
+                },
+                "capabilities": {
+                    "sales_history": False,
+                    "purchase_history": False,
+                    "movement_history": True,
+                    "stock_history": False,
+                    "profitability": False,
+                },
+            },
+        }
+    )
 
 
 @bp.post("/products/uom-remediation-reviews")

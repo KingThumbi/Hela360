@@ -2419,3 +2419,198 @@ def test_product_unit_lifecycle_cannot_cross_tenant_boundary(
         other_product_unit.is_active
         is original_active
     )
+
+
+def test_product_history_returns_branch_scoped_summary(client):
+    product = add_product(
+        "tenant-1",
+        "SKU-HISTORY-001",
+        "History Product",
+    )
+
+    db.session.add_all(
+        [
+            StockBalance(
+                id="history-stock-branch-1",
+                tenant_id="tenant-1",
+                branch_id="branch-1",
+                warehouse_id="warehouse-1",
+                product_id=product.id,
+                quantity_on_hand=Decimal("12.0000"),
+                quantity_reserved=Decimal("2.0000"),
+                quantity_available=Decimal("10.0000"),
+                avg_unit_cost=Decimal("5.00"),
+            ),
+            StockBalance(
+                id="history-stock-other-branch",
+                tenant_id="tenant-1",
+                branch_id="branch-2",
+                warehouse_id="warehouse-2",
+                product_id=product.id,
+                quantity_on_hand=Decimal("99.0000"),
+                quantity_reserved=Decimal("0.0000"),
+                quantity_available=Decimal("99.0000"),
+                avg_unit_cost=Decimal("5.00"),
+            ),
+            InventoryMovement(
+                id="history-movement-branch-1",
+                tenant_id="tenant-1",
+                branch_id="branch-1",
+                warehouse_id="warehouse-1",
+                product_id=product.id,
+                movement_type="goods_receipt",
+                quantity=Decimal("12.0000"),
+                unit_cost=Decimal("5.00"),
+                reference_type="goods_receipt",
+                reference_id="receipt-history-1",
+                created_by="user-1",
+            ),
+            InventoryMovement(
+                id="history-movement-other-branch",
+                tenant_id="tenant-1",
+                branch_id="branch-2",
+                warehouse_id="warehouse-2",
+                product_id=product.id,
+                movement_type="goods_receipt",
+                quantity=Decimal("99.0000"),
+                unit_cost=Decimal("5.00"),
+                reference_type="goods_receipt",
+                reference_id="receipt-history-2",
+                created_by="user-1",
+            ),
+        ]
+    )
+    db.session.commit()
+
+    response = client.get(
+        f"/api/products/{product.id}/history"
+    )
+
+    assert response.status_code == 200
+    assert response.json["ok"] is True
+
+    item = response.json["item"]
+
+    assert item["product"]["id"] == product.id
+    assert item["current_stock"] == {
+        "quantity_on_hand": "12.0000",
+        "quantity_reserved": "2.0000",
+        "quantity_available": "10.0000",
+        "warehouse_count": 1,
+    }
+
+    assert item["activity"]["movement_count"] == 1
+    assert item["activity"]["last_movement_at"] is not None
+
+    assert item["capabilities"] == {
+        "sales_history": False,
+        "purchase_history": False,
+        "movement_history": True,
+        "stock_history": False,
+        "profitability": False,
+    }
+
+
+def test_product_history_does_not_expose_another_tenants_product(
+    client,
+):
+    product = add_product(
+        "tenant-2",
+        "SKU-HISTORY-CROSS-TENANT",
+        "Other Tenant Product",
+    )
+    db.session.commit()
+
+    response = client.get(
+        f"/api/products/{product.id}/history"
+    )
+
+    assert response.status_code == 404
+    assert response.json == {
+        "ok": False,
+        "error": "Product not found.",
+    }
+
+
+def test_product_history_returns_zero_stock_and_activity_when_empty(
+    client,
+):
+    product = add_product(
+        "tenant-1",
+        "SKU-HISTORY-EMPTY",
+        "History Product Without Activity",
+    )
+    db.session.commit()
+
+    response = client.get(
+        f"/api/products/{product.id}/history"
+    )
+
+    assert response.status_code == 200
+
+    item = response.json["item"]
+
+    assert item["current_stock"] == {
+        "quantity_on_hand": "0.0000",
+        "quantity_reserved": "0.0000",
+        "quantity_available": "0.0000",
+        "warehouse_count": 0,
+    }
+
+    assert item["activity"] == {
+        "movement_count": 0,
+        "last_movement_at": None,
+    }
+
+
+def test_product_history_returns_current_product_units(client):
+    unit = UnitOfMeasure(
+        id="history-unit-box",
+        tenant_id="tenant-1",
+        code="BOX",
+        name="Box",
+    )
+    product = Product(
+        id="history-product-unit-product",
+        tenant_id="tenant-1",
+        internal_sku="SKU-HISTORY-UOM",
+        name="History UOM Product",
+        unit_id="history-unit-box",
+    )
+    product_unit = ProductUnit(
+        id="history-product-unit",
+        tenant_id="tenant-1",
+        product_id=product.id,
+        unit_id=unit.id,
+        conversion_factor_to_base=Decimal("10.000000"),
+        is_base=True,
+        can_sell=True,
+        can_receive=True,
+        sale_price=Decimal("120.00"),
+        minimum_sale_price=Decimal("100.00"),
+        is_active=True,
+    )
+
+    db.session.add_all(
+        [
+            unit,
+            product,
+            product_unit,
+        ]
+    )
+    db.session.commit()
+
+    response = client.get(
+        f"/api/products/{product.id}/history"
+    )
+
+    assert response.status_code == 200
+
+    units = response.json["item"]["units"]
+
+    assert len(units) == 1
+    assert units[0]["id"] == "history-product-unit"
+    assert units[0]["conversion_factor_to_base"] == (
+        "10.000000"
+    )
+    assert units[0]["sale_price"] == "120.00"
