@@ -36,6 +36,12 @@ from app.services.tenant.auth.decorators import (
 from app.services.tenant.products.product_history_query_service import (
     ProductHistoryQueryService,
 )
+from app.services.tenant.inventory.inventory_query_service import (
+    InventoryMovementListFilters,
+    InventoryQueryError,
+    InventoryQueryService,
+)
+
 bp = Blueprint("products", __name__)
 
 
@@ -478,6 +484,47 @@ def get_product_history(product_id: str):
                     "profitability": False,
                 },
             },
+        }
+    )
+
+@bp.get("/products/<product_id>/history/movements")
+@require_permission("inventory.read")
+def get_product_movement_history(product_id: str):
+    identity = _current_identity()
+
+    try:
+        filters = InventoryMovementListFilters.from_query(
+            request.args
+        )
+
+        filters = InventoryMovementListFilters(
+            page=filters.page,
+            per_page=filters.per_page,
+            date_from=filters.date_from,
+            date_to=filters.date_to,
+            product_id=product_id,
+            warehouse_id=filters.warehouse_id,
+            movement_type=filters.movement_type,
+            reference_type=filters.reference_type,
+            reference_id=filters.reference_id,
+        )
+
+        items, pagination = InventoryQueryService(
+            db.session
+        ).list_movements(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            filters=filters,
+        )
+
+    except InventoryQueryError as exc:
+        return _json_error(str(exc), 400)
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "pagination": pagination,
         }
     )
 
