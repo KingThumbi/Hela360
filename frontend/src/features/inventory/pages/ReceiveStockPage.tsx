@@ -70,6 +70,7 @@ import {
 } from "@/hooks/queries/warehouses";
 import { useQueryScope } from "@/hooks/useQueryScope";
 import { createClientId } from "@/lib/clientId";
+import { createReceiptLineDefaults } from "@/features/inventory/lib/receiptLineDefaults";
 import { PATHS } from "@/routes/routes";
 import { productService } from "@/services/products";
 import type {
@@ -404,7 +405,7 @@ function validateLines(lines: ReceiptLine[]): string | null {
     const unitCost = numericValue(line.unit_cost);
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      return `${line.product.name}: quantity must be greater than zero.`;
+      return `${line.product.name}: Stock Qty must be greater than zero.`;
     }
 
     if (!Number.isFinite(unitCost) || unitCost < 0) {
@@ -837,37 +838,9 @@ export function ReceiveStockPage() {
       {
         id: createDraftId(),
         product: selectedProduct,
-
-        product_unit_id: "",
-
-        quantity: "1",
-        invoiced_quantity: "",
-        received_quantity: "",
-        accepted_quantity: "",
-        rejected_quantity: "",
-        bonus_quantity: "",
-
-        unit_cost:
-          selectedProduct.cost_price ?? "0.00",
-
-        batch_number: "",
-        manufacture_date: "",
-        expiry_date: "",
-        supplier_batch_reference: "",
-
-        supplier_item_code: "",
-        supplier_description: "",
-
-        supplier_unit_price: "",
-        discount_percent: "",
-        discount_amount: "",
-        tax_rate: "",
-        tax_amount: "",
-        net_unit_cost: "",
-        line_total: "",
-
-        discrepancy_status: "",
-        discrepancy_reason: "",
+        ...createReceiptLineDefaults(
+          selectedProduct.cost_price,
+        ),
       },
     ]);
     setSelectedProductId("");
