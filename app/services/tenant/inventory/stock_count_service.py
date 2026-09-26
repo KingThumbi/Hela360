@@ -239,6 +239,23 @@ class StockCountService:
                 branch_id=branch_id,
                 warehouse_id=request.warehouse_id,
             )
+
+            recount_source = None
+
+            if request.recount_of_stock_count_id:
+                recount_source = self._validate_recount_source(
+                    tenant_id=tenant_id,
+                    branch_id=branch_id,
+                    warehouse_id=str(warehouse.id),
+                    source_count_id=(
+                        request.recount_of_stock_count_id
+                    ),
+                    product_ids=list(
+                        request.product_ids
+                    ),
+                    count_mode=request.count_mode,
+                )
+
             self._ensure_no_open_count(
                 tenant_id=tenant_id,
                 branch_id=branch_id,
@@ -272,6 +289,11 @@ class StockCountService:
                 snapshot_at=now,
                 started_at=now,
                 started_by=started_by,
+                recount_of_stock_count_id=(
+                    str(recount_source.id)
+                    if recount_source
+                    else None
+                ),
                 notes=request.notes,
                 created_at=now,
                 updated_at=now,
@@ -321,6 +343,16 @@ class StockCountService:
                     "warehouse_id": str(count.warehouse_id),
                     "scope_type": count.scope_type,
                     "count_mode": count.count_mode,
+                    "recount_of_stock_count_id": (
+                        str(recount_source.id)
+                        if recount_source
+                        else None
+                    ),
+                    "recount_of_count_number": (
+                        recount_source.count_number
+                        if recount_source
+                        else None
+                    ),
                 },
                 commit=False,
             )
@@ -1245,6 +1277,72 @@ class StockCountService:
             self.session.rollback()
             raise
 
+    def _recount_source_context(
+        self,
+        count: StockCount,
+    ) -> dict | None:
+        source_id = (
+            count.recount_of_stock_count_id
+        )
+
+        if not source_id:
+            return None
+
+        source = (
+            self.session.query(StockCount)
+            .filter(
+                StockCount.id == source_id,
+                StockCount.tenant_id
+                == count.tenant_id,
+                StockCount.branch_id
+                == count.branch_id,
+            )
+            .first()
+        )
+
+        if not source:
+            return None
+
+        return {
+            "id": str(source.id),
+            "count_number":
+                source.count_number,
+            "status":
+                source.status,
+        }
+
+    def _recount_children_context(
+        self,
+        count: StockCount,
+    ) -> list[dict]:
+        rows = (
+            self.session.query(StockCount)
+            .filter(
+                StockCount.tenant_id
+                == count.tenant_id,
+                StockCount.branch_id
+                == count.branch_id,
+                StockCount.recount_of_stock_count_id
+                == str(count.id),
+            )
+            .order_by(
+                StockCount.started_at.desc(),
+                StockCount.id.desc(),
+            )
+            .all()
+        )
+
+        return [
+            {
+                "id": str(row.id),
+                "count_number":
+                    row.count_number,
+                "status":
+                    row.status,
+            }
+            for row in rows
+        ]
+
     def serialization_context(self, count: StockCount) -> dict:
         warehouse = (
             self.session.query(Warehouse)
@@ -1257,6 +1355,12 @@ class StockCountService:
             "completed_by": self._user_context(count.completed_by),
             "cancelled_by": self._user_context(count.cancelled_by),
             "superseded_by": self._user_context(count.superseded_by),
+            "recount_of": self._recount_source_context(
+                count
+            ),
+            "recounts": self._recount_children_context(
+                count
+            ),
             "items": self._item_context(str(count.id)),
             "scope_products": self._scope_product_context(
                 str(count.id)
@@ -1329,6 +1433,77 @@ class StockCountService:
             )
             .first()
         )
+
+    def _validate_recount_source(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str,
+        warehouse_id: str,
+        source_count_id: str,
+        product_ids: list[str],
+        count_mode: str,
+    ) -> StockCount:
+        if count_mode != "blind":
+            raise ValidationError(
+                "Recounts must use blind count mode."
+            )
+
+        if not product_ids:
+            raise ValidationError(
+                "Recounts require at least one selected product."
+            )
+
+        source = (
+            self.session.query(StockCount)
+            .filter(
+                StockCount.id == source_count_id,
+                StockCount.tenant_id == tenant_id,
+                StockCount.branch_id == branch_id,
+            )
+            .first()
+        )
+
+        if not source:
+            raise ValidationError(
+                "recount_of_stock_count_id is not valid for this branch."
+            )
+
+        if source.status != SUPERSEDED_STATUS:
+            raise ConflictError(
+                "A recount can only be created from a superseded Stock Count."
+            )
+
+        if str(source.warehouse_id) != warehouse_id:
+            raise ValidationError(
+                "Recount Warehouse must match the source Stock Count."
+            )
+
+        source_product_ids = {
+            str(product_id)
+            for (product_id,) in (
+                self.session.query(
+                    StockCountItem.product_id
+                )
+                .filter(
+                    StockCountItem.stock_count_id
+                    == str(source.id)
+                )
+                .distinct()
+                .all()
+            )
+        }
+
+        invalid_product_ids = sorted(
+            set(product_ids) - source_product_ids
+        )
+
+        if invalid_product_ids:
+            raise ValidationError(
+                "Recount products must exist in the source Stock Count."
+            )
+
+        return source
 
     def _require_warehouse(
         self,

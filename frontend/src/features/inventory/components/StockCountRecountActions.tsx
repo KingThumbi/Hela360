@@ -1,5 +1,6 @@
 import {
   CheckSquare2,
+  ClipboardPlus,
   FileSpreadsheet,
   Printer,
   RotateCcw,
@@ -12,10 +13,23 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  useNavigate,
+} from "react-router-dom";
 import { useReactToPrint } from "react-to-print";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  useCreateStockCount,
+} from "@/hooks/queries/inventory";
+import {
+  createClientId,
+} from "@/lib/clientId";
+import {
+  PATHS,
+} from "@/routes/routes";
 import type {
   StockCount,
   StockCountItem,
@@ -96,6 +110,23 @@ function unitLabel(
     item.counted_unit_name ??
     item.counted_unit_code ??
     "Base quantity"
+  );
+}
+
+function errorMessage(
+  error: unknown,
+): string {
+  return error instanceof Error
+    ? error.message
+    : "Something went wrong.";
+}
+
+function createRecountIdempotencyKey(
+  sourceCountId: string,
+): string {
+  return (
+    `stock-count-recount-${sourceCountId}-` +
+    createClientId()
   );
 }
 
@@ -243,6 +274,11 @@ async function exportRecountExcel(
 export function StockCountRecountActions({
   count,
 }: StockCountRecountActionsProps) {
+  const navigate = useNavigate();
+
+  const createStockCount =
+    useCreateStockCount();
+
   const [
     open,
     setOpen,
@@ -259,6 +295,21 @@ export function StockCountRecountActions({
   ] = useState<Set<string>>(
     () => new Set(),
   );
+
+  const [
+    recountIdempotencyKey,
+    setRecountIdempotencyKey,
+  ] = useState(
+    () =>
+      createRecountIdempotencyKey(
+        count.id,
+      ),
+  );
+
+  const [
+    recountSelectionFingerprint,
+    setRecountSelectionFingerprint,
+  ] = useState<string | null>(null);
 
   const printRef =
     useRef<HTMLDivElement>(null);
@@ -321,6 +372,34 @@ export function StockCountRecountActions({
       ],
     );
 
+  const selectedProductIds =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            selectedItems.map(
+              (item) =>
+                item.product.id,
+            ),
+          ),
+        ).sort(),
+      [selectedItems],
+    );
+
+  const selectedProductCount =
+    selectedProductIds.length;
+
+  const canCreateRecount =
+    count.status === "superseded" &&
+    selectedProductCount > 0;
+
+  const allSelected =
+    count.items.length > 0 &&
+    count.items.every(
+      (item) =>
+        selectedIds.has(item.id),
+    );
+
   const allFilteredSelected =
     filteredItems.length > 0 &&
     filteredItems.every(
@@ -343,6 +422,22 @@ export function StockCountRecountActions({
         }
 
         return next;
+      },
+    );
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(
+      () => {
+        if (allSelected) {
+          return new Set();
+        }
+
+        return new Set(
+          count.items.map(
+            (item) => item.id,
+          ),
+        );
       },
     );
   };
@@ -376,6 +471,108 @@ export function StockCountRecountActions({
 
   const clearSelection = () => {
     setSelectedIds(new Set());
+  };
+
+  const createRecount = () => {
+    if (!canCreateRecount) {
+      return;
+    }
+
+    const selectionFingerprint =
+      JSON.stringify(
+        selectedProductIds,
+      );
+
+    const nextIdempotencyKey =
+      recountSelectionFingerprint &&
+      recountSelectionFingerprint !==
+        selectionFingerprint
+        ? createRecountIdempotencyKey(
+            count.id,
+          )
+        : recountIdempotencyKey;
+
+    if (
+      nextIdempotencyKey !==
+      recountIdempotencyKey
+    ) {
+      setRecountIdempotencyKey(
+        nextIdempotencyKey,
+      );
+    }
+
+    setRecountSelectionFingerprint(
+      selectionFingerprint,
+    );
+
+    createStockCount.mutate(
+      {
+        warehouse_id:
+          count.warehouse.id,
+        idempotency_key:
+          nextIdempotencyKey,
+        product_ids:
+          selectedProductIds,
+        count_mode: "blind",
+        recount_of_stock_count_id:
+          count.id,
+        notes:
+          `Targeted recount from ${count.count_number}.`,
+      },
+      {
+        onSuccess: (
+          recount,
+        ) => {
+          toast.success(
+            `Recount ${recount.count_number} created.`,
+          );
+
+          setOpen(false);
+
+          setRecountIdempotencyKey(
+            createRecountIdempotencyKey(
+              count.id,
+            ),
+          );
+
+          setRecountSelectionFingerprint(
+            null,
+          );
+
+          navigate(
+            PATHS.INVENTORY.stockCount(
+              recount.id,
+            ),
+          );
+        },
+        onError: (
+          error,
+        ) => {
+          const message =
+            errorMessage(error);
+
+          toast.error(message);
+
+          if (
+            message
+              .toLowerCase()
+              .includes(
+                "idempotency_key",
+              )
+          ) {
+            setRecountIdempotencyKey(
+              createRecountIdempotencyKey(
+                count.id,
+              ),
+            );
+
+            setRecountSelectionFingerprint(
+              null,
+            );
+          }
+        },
+      },
+    );
   };
 
   return (
@@ -433,8 +630,9 @@ export function StockCountRecountActions({
                 >
                   Select only the stock lines
                   requiring physical verification.
-                  No inventory quantities are
-                  changed.
+                  You can print a working sheet or
+                  create a fresh blind Stock Count
+                  from the selected products.
                 </p>
               </div>
 
@@ -489,6 +687,25 @@ export function StockCountRecountActions({
               <Button
                 type="button"
                 variant="outline"
+                onClick={toggleAll}
+                disabled={
+                  count.items.length === 0
+                }
+              >
+                {allSelected ? (
+                  <Square />
+                ) : (
+                  <CheckSquare2 />
+                )}
+
+                {allSelected
+                  ? "Unselect All"
+                  : "Select All"}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
                 onClick={toggleVisible}
                 disabled={
                   filteredItems.length === 0
@@ -527,7 +744,16 @@ export function StockCountRecountActions({
                 <span className="font-medium">
                   {selectedIds.size}
                 </span>{" "}
-                selected
+                lines selected
+                {selectedIds.size > 0 ? (
+                  <>
+                    {" · "}
+                    <span className="font-medium">
+                      {selectedProductCount}
+                    </span>{" "}
+                    unique products
+                  </>
+                ) : null}
               </div>
 
               <div
@@ -669,19 +895,44 @@ export function StockCountRecountActions({
                   "text-sm text-muted-foreground"
                 }
               >
-                {count.count_mode === "blind"
+                {count.status === "superseded"
                   ? (
-                      "Blind-count protection: " +
-                      "expected quantities and variances " +
-                      "will not appear."
+                      "Creating a recount starts a fresh blind " +
+                      "selected-products Stock Count using current " +
+                      "inventory snapshots. Old quantities and " +
+                      "variances are not copied."
                     )
-                  : (
-                      "Visible count: expected quantity " +
-                      "will appear on the recount sheet."
-                    )}
+                  : count.count_mode === "blind"
+                    ? (
+                        "Blind-count protection: " +
+                        "expected quantities and variances " +
+                        "will not appear."
+                      )
+                    : (
+                        "Visible count: expected quantity " +
+                        "will appear on the recount sheet."
+                      )}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                {count.status === "superseded" ? (
+                  <Button
+                    type="button"
+                    onClick={
+                      createRecount
+                    }
+                    disabled={
+                      !canCreateRecount ||
+                      createStockCount.isPending
+                    }
+                  >
+                    <ClipboardPlus />
+                    {createStockCount.isPending
+                      ? "Creating Recount..."
+                      : "Create Blind Recount"}
+                  </Button>
+                ) : null}
+
                 <Button
                   type="button"
                   variant="outline"

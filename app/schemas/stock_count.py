@@ -129,6 +129,7 @@ class CreateStockCountRequest:
     product_ids: tuple[str, ...] = ()
     count_mode: str = "blind"
     notes: str | None = None
+    recount_of_stock_count_id: str | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "CreateStockCountRequest":
@@ -145,6 +146,11 @@ class CreateStockCountRequest:
             product_ids=_product_ids(payload),
             count_mode=_count_mode(payload),
             notes=_optional_text(payload, "notes", max_length=10000),
+            recount_of_stock_count_id=_optional_text(
+                payload,
+                "recount_of_stock_count_id",
+                max_length=36,
+            ),
         )
 
 

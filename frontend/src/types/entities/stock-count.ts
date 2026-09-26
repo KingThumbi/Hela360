@@ -159,6 +159,15 @@ export interface StockCountItem {
 }
 
 
+export interface StockCountLink {
+  id: string;
+
+  count_number: string;
+
+  status: string;
+}
+
+
 export interface StockCount {
   id: string;
 
@@ -197,6 +206,10 @@ export interface StockCount {
   superseded_by: StockCountUser | null;
 
   superseded_reason: string | null;
+
+  recount_of: StockCountLink | null;
+
+  recounts: StockCountLink[];
 
   notes: string | null;
 

@@ -365,6 +365,28 @@ function varianceBadgeVariant(
   return "default";
 }
 
+function stockCountLinkStatusLabel(
+  status: string,
+): string {
+  if (status === "open") {
+    return "Counting";
+  }
+
+  if (status === "completed") {
+    return "Completed";
+  }
+
+  if (status === "cancelled") {
+    return "Cancelled";
+  }
+
+  if (status === "superseded") {
+    return "Superseded";
+  }
+
+  return status;
+}
+
 function stockCountLifecycleLabel(
   count: StockCount,
 ): string {
@@ -1140,6 +1162,34 @@ function StockCountDetail({
               />
             </>
           ) : null}
+          {count.recount_of ? (
+            <DetailBlock
+              label="Recount Of"
+              value={
+                <Link
+                  to={
+                    PATHS.INVENTORY.stockCount(
+                      count.recount_of.id,
+                    )
+                  }
+                  className={
+                    "inline-flex items-center gap-2 " +
+                    "font-medium text-primary underline-offset-4 " +
+                    "hover:underline"
+                  }
+                >
+                  {count.recount_of.count_number}
+
+                  <Badge variant="outline">
+                    {stockCountLinkStatusLabel(
+                      count.recount_of.status,
+                    )}
+                  </Badge>
+                </Link>
+              }
+            />
+          ) : null}
+
           {count.superseded_at ? (
             <>
               <DetailBlock
@@ -1165,6 +1215,50 @@ function StockCountDetail({
               />
             </>
           ) : null}
+          {count.recounts.length > 0 ? (
+            <DetailBlock
+              label="Recounts"
+              value={
+                <div
+                  className={
+                    "flex flex-wrap items-center gap-2"
+                  }
+                >
+                  {count.recounts.map(
+                    (recount) => (
+                      <Link
+                        key={recount.id}
+                        to={
+                          PATHS.INVENTORY.stockCount(
+                            recount.id,
+                          )
+                        }
+                        className={
+                          "inline-flex items-center gap-2 " +
+                          "rounded-md border px-2 py-1 " +
+                          "font-medium hover:bg-muted/50"
+                        }
+                      >
+                        <span>
+                          {recount.count_number}
+                        </span>
+
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                        >
+                          {stockCountLinkStatusLabel(
+                            recount.status,
+                          )}
+                        </Badge>
+                      </Link>
+                    ),
+                  )}
+                </div>
+              }
+            />
+          ) : null}
+
           <DetailBlock
             label="Notes"
             value={count.notes ?? "None"}

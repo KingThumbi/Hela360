@@ -295,6 +295,12 @@ class StockCount(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     )
     superseded_reason = db.Column(db.Text)
 
+    recount_of_stock_count_id = db.Column(
+        db.String(36),
+        db.ForeignKey("stock_counts.id"),
+        index=True,
+    )
+
     notes = db.Column(db.Text)
 
 

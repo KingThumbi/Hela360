@@ -13,4 +13,6 @@ export interface CreateStockCountRequest {
   count_mode?: StockCountMode;
 
   notes?: string;
+
+  recount_of_stock_count_id?: string;
 }

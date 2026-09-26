@@ -3388,3 +3388,314 @@ def test_superseded_lifecycle_filter_returns_only_superseded_counts(
         payload["items"][0]["superseded_reason"]
         == "Lifecycle filter test."
     )
+
+
+# ============================================================================
+# Stock Count recount lineage
+# ============================================================================
+
+
+def _superseded_count_for_recount(
+    client,
+) -> str:
+    count_id = (
+        _create_completed_count_for_supersede(
+            client
+        )
+    )
+
+    response = client.post(
+        f"/api/inventory/stock-counts/{count_id}/supersede",
+        json={
+            "reason": (
+                "Superseded before targeted recount."
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.get_json()["item"]["status"]
+        == "superseded"
+    )
+
+    return count_id
+
+
+def test_recount_can_be_created_from_superseded_stock_count(
+    client,
+):
+    source_id = _superseded_count_for_recount(
+        client
+    )
+
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            idempotency_key="recount-valid",
+            product_ids=[
+                NON_BATCH_PRODUCT_ID,
+            ],
+            count_mode="blind",
+            recount_of_stock_count_id=(
+                source_id
+            ),
+            notes=(
+                "Targeted verification after "
+                "superseded count."
+            ),
+        ),
+    )
+
+    assert response.status_code == 201
+
+    item = response.get_json()["item"]
+
+    assert item["status"] == "open"
+    assert item["scope_type"] == "selected"
+    assert item["count_mode"] == "blind"
+
+    assert item["recount_of"] == {
+        "id": source_id,
+        "count_number": (
+            db.session.get(
+                StockCount,
+                source_id,
+            ).count_number
+        ),
+        "status": "superseded",
+    }
+
+    assert item["recounts"] == []
+
+    assert len(item["scope_products"]) == 1
+    assert (
+        item["scope_products"][0]
+        ["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    assert len(item["items"]) == 1
+    assert (
+        item["items"][0]
+        ["product"]["id"]
+        == NON_BATCH_PRODUCT_ID
+    )
+
+    # Blind-count secrecy remains intact.
+    #
+    # Open blind counts omit system quantity
+    # fields entirely rather than exposing
+    # them as null values.
+    assert (
+        "snapshot_quantity"
+        not in item["items"][0]
+    )
+    assert (
+        "expected_quantity"
+        not in item["items"][0]
+    )
+    assert (
+        "variance_quantity"
+        not in item["items"][0]
+    )
+
+    persisted = db.session.get(
+        StockCount,
+        item["id"],
+    )
+
+    assert (
+        persisted.recount_of_stock_count_id
+        == source_id
+    )
+
+    audit = AuditLog.query.filter_by(
+        action="INVENTORY_COUNT_STARTED",
+        entity_type="stock_count",
+        entity_id=item["id"],
+    ).one()
+
+    assert (
+        audit.details[
+            "recount_of_stock_count_id"
+        ]
+        == source_id
+    )
+
+    assert (
+        audit.details[
+            "recount_of_count_number"
+        ]
+        == item["recount_of"][
+            "count_number"
+        ]
+    )
+
+    source_response = client.get(
+        f"/api/inventory/stock-counts/{source_id}"
+    )
+
+    assert source_response.status_code == 200
+
+    source_item = (
+        source_response
+        .get_json()["item"]
+    )
+
+    assert len(source_item["recounts"]) == 1
+    assert (
+        source_item["recounts"][0]["id"]
+        == item["id"]
+    )
+    assert (
+        source_item["recounts"][0]
+        ["count_number"]
+        == item["count_number"]
+    )
+    assert (
+        source_item["recounts"][0]["status"]
+        == "open"
+    )
+
+
+def test_recount_requires_superseded_source(
+    client,
+):
+    source_id = (
+        _create_completed_count_for_supersede(
+            client
+        )
+    )
+
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            idempotency_key=(
+                "recount-completed-source"
+            ),
+            product_ids=[
+                NON_BATCH_PRODUCT_ID,
+            ],
+            count_mode="blind",
+            recount_of_stock_count_id=(
+                source_id
+            ),
+        ),
+    )
+
+    assert response.status_code == 409
+
+    assert (
+        "only be created from a superseded"
+        in error_message(response).lower()
+    )
+
+    assert (
+        StockCount.query
+        .filter_by(
+            recount_of_stock_count_id=source_id,
+        )
+        .count()
+        == 0
+    )
+
+
+def test_recount_must_be_blind(
+    client,
+):
+    source_id = _superseded_count_for_recount(
+        client
+    )
+
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            idempotency_key=(
+                "recount-visible-mode"
+            ),
+            product_ids=[
+                NON_BATCH_PRODUCT_ID,
+            ],
+            count_mode="visible",
+            recount_of_stock_count_id=(
+                source_id
+            ),
+        ),
+    )
+
+    assert response.status_code == 400
+
+    assert (
+        "recounts must use blind count mode"
+        in error_message(response).lower()
+    )
+
+
+def test_recount_requires_selected_products(
+    client,
+):
+    source_id = _superseded_count_for_recount(
+        client
+    )
+
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            idempotency_key=(
+                "recount-full-warehouse"
+            ),
+            count_mode="blind",
+            recount_of_stock_count_id=(
+                source_id
+            ),
+        ),
+    )
+
+    assert response.status_code == 400
+
+    assert (
+        "require at least one selected product"
+        in error_message(response).lower()
+    )
+
+
+def test_recount_rejects_product_not_in_source_count(
+    client,
+):
+    source_id = _superseded_count_for_recount(
+        client
+    )
+
+    response = client.post(
+        "/api/inventory/stock-counts",
+        json=stock_count_payload(
+            idempotency_key=(
+                "recount-invalid-product"
+            ),
+            product_ids=[
+                ZERO_PRODUCT_ID,
+            ],
+            count_mode="blind",
+            recount_of_stock_count_id=(
+                source_id
+            ),
+        ),
+    )
+
+    assert response.status_code == 400
+
+    assert (
+        "recount products must exist "
+        "in the source stock count"
+        in error_message(response).lower()
+    )
+
+    assert (
+        StockCount.query
+        .filter_by(
+            recount_of_stock_count_id=source_id,
+        )
+        .count()
+        == 0
+    )
