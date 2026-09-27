@@ -162,6 +162,15 @@ export const API_ENDPOINTS = {
     HISTORY: (id: string) =>
       `${byId("/products", id)}/history`,
 
+    HISTORY_SALES: (id: string) =>
+      `${byId("/products", id)}/history/sales`,
+
+    HISTORY_PURCHASES: (id: string) =>
+      `${byId("/products", id)}/history/purchases`,
+
+    HISTORY_MOVEMENTS: (id: string) =>
+      `${byId("/products", id)}/history/movements`,
+
     ARCHIVE: (id: string) =>
       `${byId("/products", id)}/archive`,
 

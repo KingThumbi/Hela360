@@ -64,3 +64,19 @@ export {
 export {
   useRestoreProductUnit,
 } from "./useRestoreProductUnit";
+
+export {
+  useProductHistory,
+} from "./useProductHistory";
+
+export {
+  useProductSalesHistory,
+} from "./useProductSalesHistory";
+
+export {
+  useProductPurchaseHistory,
+} from "./useProductPurchaseHistory";
+
+export {
+  useProductMovementHistory,
+} from "./useProductMovementHistory";

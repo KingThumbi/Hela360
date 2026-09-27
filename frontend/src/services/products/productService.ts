@@ -44,6 +44,18 @@ import type {
   ProductTaxCode,
 } from "@/types/responses";
 
+import type {
+  ProductHistoryListResponse,
+  ProductHistorySummary,
+  ProductHistorySummaryResponse,
+  ProductMovementHistoryItem,
+  ProductMovementHistoryParams,
+  ProductPurchaseHistoryItem,
+  ProductPurchaseHistoryParams,
+  ProductSalesHistoryItem,
+  ProductSalesHistoryParams,
+} from "@/types/responses/product-history";
+
 interface ProductItemResponse {
   ok: true;
 
@@ -161,6 +173,99 @@ class ProductService extends BaseService<
 
     return response.data.item;
   }
+
+    async getProductHistory(
+      productId: string | number,
+      config?: AxiosRequestConfig,
+    ): Promise<ProductHistorySummary> {
+      const response =
+        await this.getRequest<ProductHistorySummaryResponse>(
+          API_ENDPOINTS.PRODUCTS.HISTORY(
+            String(productId),
+          ),
+          config,
+        );
+
+      return response.data.item;
+    }
+
+    async listProductSalesHistory(
+      productId: string | number,
+      params?: ProductSalesHistoryParams,
+      config?: AxiosRequestConfig,
+    ): Promise<
+      ProductHistoryListResponse<ProductSalesHistoryItem>
+    > {
+      const response =
+        await this.getRequest<
+          ProductHistoryListResponse<ProductSalesHistoryItem>
+        >(
+          API_ENDPOINTS.PRODUCTS.HISTORY_SALES(
+            String(productId),
+          ),
+          {
+            ...config,
+            params: {
+              ...config?.params,
+              ...params,
+            },
+          },
+        );
+
+      return response.data;
+    }
+
+    async listProductPurchaseHistory(
+      productId: string | number,
+      params?: ProductPurchaseHistoryParams,
+      config?: AxiosRequestConfig,
+    ): Promise<
+      ProductHistoryListResponse<ProductPurchaseHistoryItem>
+    > {
+      const response =
+        await this.getRequest<
+          ProductHistoryListResponse<ProductPurchaseHistoryItem>
+        >(
+          API_ENDPOINTS.PRODUCTS.HISTORY_PURCHASES(
+            String(productId),
+          ),
+          {
+            ...config,
+            params: {
+              ...config?.params,
+              ...params,
+            },
+          },
+        );
+
+      return response.data;
+    }
+
+    async listProductMovementHistory(
+      productId: string | number,
+      params?: ProductMovementHistoryParams,
+      config?: AxiosRequestConfig,
+    ): Promise<
+      ProductHistoryListResponse<ProductMovementHistoryItem>
+    > {
+      const response =
+        await this.getRequest<
+          ProductHistoryListResponse<ProductMovementHistoryItem>
+        >(
+          API_ENDPOINTS.PRODUCTS.HISTORY_MOVEMENTS(
+            String(productId),
+          ),
+          {
+            ...config,
+            params: {
+              ...config?.params,
+              ...params,
+            },
+          },
+        );
+
+      return response.data;
+    }
 
   async createProduct(
     payload: CreateProductRequest,

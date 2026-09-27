@@ -43,6 +43,7 @@ import {
 } from "@/features/inventory";
 import {
   MasterCataloguePage,
+  ProductIntelligencePage,
   ProductsPage,
 } from "@/features/products";
 import {
@@ -133,6 +134,21 @@ export const router = createBrowserRouter([
             }
           >
             <ProductsPage />
+          </ProtectedRoute>
+        ),
+      },
+
+      {
+        path: PATHS.PRODUCTS.DETAIL,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.PRODUCTS.ROOT
+              ].permission
+            }
+          >
+            <ProductIntelligencePage />
           </ProtectedRoute>
         ),
       },

@@ -1,11 +1,20 @@
 import {
+  Activity,
   Archive,
   Boxes,
+  ChevronDown,
+  ChevronRight,
   Eye,
   Pencil,
   RotateCcw,
   Trash2,
 } from "lucide-react";
+
+import {
+  Fragment,
+  useState,
+} from "react";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +26,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+import { PATHS } from "@/routes/routes";
+
+import {
+  ProductIntelligencePreview,
+} from "./ProductIntelligencePreview";
 
 import type {
   Product,
@@ -65,6 +80,25 @@ function ProductActions({
   if (mobile) {
     return (
       <div className="space-y-2">
+          <Link
+            to={PATHS.PRODUCTS.detail(product.id)}
+            className="
+              flex h-8 w-full items-center
+              justify-center gap-2 rounded-md
+              border bg-background px-3
+              text-sm font-medium
+              transition-colors
+              hover:bg-accent
+              hover:text-accent-foreground
+              focus-visible:outline-none
+              focus-visible:ring-2
+              focus-visible:ring-ring
+            "
+          >
+            <Activity className="size-4" />
+            Product Intelligence
+          </Link>
+
         <div className="grid grid-cols-3 gap-2">
           <Button
             type="button"
@@ -158,6 +192,26 @@ function ProductActions({
 
   return (
     <div className="flex justify-end gap-1">
+        <Link
+          to={PATHS.PRODUCTS.detail(product.id)}
+          title="Product Intelligence"
+          className="
+            inline-flex size-8 items-center
+            justify-center rounded-md
+            transition-colors
+            hover:bg-accent
+            hover:text-accent-foreground
+            focus-visible:outline-none
+            focus-visible:ring-2
+            focus-visible:ring-ring
+          "
+        >
+          <Activity className="size-4" />
+          <span className="sr-only">
+            Product Intelligence
+          </span>
+        </Link>
+
       <Button
         type="button"
         variant="ghost"
@@ -273,6 +327,11 @@ function ProductMobileCard({
   onLifecycle,
   onDelete,
 }: ProductActionsProps) {
+  const [
+    intelligenceOpen,
+    setIntelligenceOpen,
+  ] = useState(false);
+
   return (
     <article className="rounded-xl border bg-background p-4 shadow-sm">
       <button
@@ -386,6 +445,40 @@ function ProductMobileCard({
         </div>
       ) : null}
 
+      <div className="mb-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full justify-between"
+          aria-expanded={intelligenceOpen}
+          onClick={() =>
+            setIntelligenceOpen(
+              (current) => !current,
+            )
+          }
+        >
+          <span className="flex items-center gap-2">
+            <Activity className="size-4" />
+            Quick Intelligence
+          </span>
+
+          {intelligenceOpen ? (
+            <ChevronDown className="size-4" />
+          ) : (
+            <ChevronRight className="size-4" />
+          )}
+        </Button>
+
+        {intelligenceOpen ? (
+          <div className="mt-3 rounded-xl bg-muted/20 p-3">
+            <ProductIntelligencePreview
+              product={product}
+            />
+          </div>
+        ) : null}
+      </div>
+
       <ProductActions
         product={product}
         canEdit={canEdit}
@@ -414,6 +507,11 @@ export function ProductsTable({
   onLifecycle,
   onDelete,
 }: ProductsTableProps) {
+  const [
+    expandedProductId,
+    setExpandedProductId,
+  ] = useState<string | null>(null);
+
   return (
     <>
       <div className="space-y-3 p-3 md:hidden">
@@ -493,8 +591,8 @@ export function ProductsTable({
           <TableBody>
             {products.map(
               (product) => (
-                <TableRow
-                  key={product.id}
+                <Fragment key={product.id}>
+                  <TableRow
                   className="
                     group
                     transition-colors
@@ -556,6 +654,33 @@ export function ProductsTable({
                         </p>
                       ) : null}
                     </button>
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="mt-2 h-7 px-2 text-xs"
+                        aria-expanded={
+                          expandedProductId ===
+                          product.id
+                        }
+                        onClick={() =>
+                          setExpandedProductId(
+                            (current) =>
+                              current === product.id
+                                ? null
+                                : product.id,
+                          )
+                        }
+                      >
+                        {expandedProductId ===
+                        product.id ? (
+                          <ChevronDown className="size-3.5" />
+                        ) : (
+                          <ChevronRight className="size-3.5" />
+                        )}
+                        Quick Intelligence
+                      </Button>
                   </TableCell>
 
                   <TableCell className="hidden lg:table-cell">
@@ -628,8 +753,24 @@ export function ProductsTable({
                       onDelete={onDelete}
                     />
                   </TableCell>
-                </TableRow>
-              ),
+                  </TableRow>
+
+                  {expandedProductId ===
+                  product.id ? (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell
+                        colSpan={7}
+                        className="bg-muted/20 p-4"
+                      >
+                        <ProductIntelligencePreview
+                          product={product}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                  </Fragment>
+                ),
+
             )}
           </TableBody>
         </Table>

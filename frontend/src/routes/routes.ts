@@ -22,6 +22,9 @@ export const PATHS = {
   PRODUCTS: {
     ROOT: "/products",
     CATALOGUE: "/products/catalogue",
+    DETAIL: "/products/:productId",
+    detail: (productId: string) =>
+      `/products/${encodeURIComponent(productId)}`,
   },
 
   CUSTOMERS: {
