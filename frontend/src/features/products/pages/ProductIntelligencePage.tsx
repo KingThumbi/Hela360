@@ -1,9 +1,5 @@
 import {
   ArrowLeft,
-  Boxes,
-  PackageSearch,
-  ReceiptText,
-  ShoppingCart,
 } from "lucide-react";
 import {
   Link,
@@ -44,7 +40,6 @@ import {
 import { useAuthorization } from "@/hooks/useAuthorization";
 import {
   useProductHistory,
-  useProductMovementHistory,
   useProductPurchaseHistory,
   useProductSalesHistory,
 } from "@/hooks/queries/products";
@@ -52,10 +47,15 @@ import {
 import { PATHS } from "@/routes/routes";
 
 import type {
-  ProductMovementHistoryItem,
   ProductPurchaseHistoryItem,
   ProductSalesHistoryItem,
 } from "@/types/responses/product-history";
+
+import {
+  ProductMovementHistoryPanel,
+  ProductPurchaseHistoryPanel,
+  ProductSalesHistoryPanel,
+} from "../components/ProductHistoryPanels";
 
 function numeric(value: string | null | undefined) {
   if (value == null || value === "") {
@@ -157,17 +157,7 @@ export function ProductIntelligencePage() {
       },
     );
 
-  const movementQuery =
-    useProductMovementHistory(
-      productId,
-      {
-        page: 1,
-        per_page: 50,
-      },
-      {
-        enabled: canReadInventory,
-      },
-    );
+
 
   if (summaryQuery.isLoading) {
     return (
@@ -208,8 +198,7 @@ export function ProductIntelligencePage() {
   const purchases: ProductPurchaseHistoryItem[] =
     purchaseQuery.data?.items ?? [];
 
-  const movements: ProductMovementHistoryItem[] =
-    movementQuery.data?.items ?? [];
+
 
   const salesChartData = [...sales]
     .filter(
@@ -576,245 +565,36 @@ export function ProductIntelligencePage() {
               ) : null}
             </TabsContent>
 
-            <TabsContent value="sales">
-              {sales.length === 0 ? (
-                <EmptyPanel
-                  title="No sales history"
-                  description="No matching sales lines were found for this product."
+            <TabsContent
+                value="sales"
+                className="space-y-4"
+              >
+                <ProductSalesHistoryPanel
+                  productId={productId}
+                  enabled={canReadSales}
                 />
-              ) : (
-                <div className="space-y-3">
-                  {sales.map((item) => (
-                    <Card key={item.sale_item_id}>
-                      <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <ShoppingCart className="size-4" />
-                            <span className="font-medium">
-                              {item.sale.sale_number}
-                            </span>
-                            <Badge variant="outline">
-                              {item.sale.status}
-                            </Badge>
-                            {item.sale.refund_status &&
-                            item.sale.refund_status !==
-                              "not_refunded" ? (
-                              <Badge variant="outline">
-                                {
-                                  item.sale
-                                    .refund_status
-                                }
-                              </Badge>
-                            ) : null}
-                          </div>
+              </TabsContent>
 
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {displayDate(
-                              item.sale.sale_date,
-                            )}
-                            {" · "}
-                            {displayNumber(
-                              item.quantity,
-                            )}{" "}
-                            {item.uom.code ?? ""}
-                            {" · "}
-                            Transaction price{" "}
-                            {displayNumber(
-                              item.unit_price,
-                            )}
-                          </p>
-
-                          <p className="mt-1 text-sm">
-                            Base-unit price:{" "}
-                            <span className="font-medium">
-                              {displayNumber(
-                                item.normalized_base_unit_price,
-                              )}
-                            </span>
-                          </p>
-                        </div>
-
-                        <Link
-                          to={PATHS.SALES.receipt(
-                            item.sale.id,
-                          )}
-                          className="
-                            inline-flex
-                            h-8
-                            items-center
-                            justify-center
-                            gap-2
-                            rounded-md
-                            border
-                            bg-background
-                            px-3
-                            text-sm
-                            font-medium
-                            transition-colors
-                            hover:bg-accent
-                            hover:text-accent-foreground
-                            focus-visible:outline-none
-                            focus-visible:ring-2
-                            focus-visible:ring-ring
-                          "
-                        >
-                          <ReceiptText className="size-4" />
-                          Receipt
-                        </Link>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="purchases">
-              {purchases.length === 0 ? (
-                <EmptyPanel
-                  title="No purchase history"
-                  description="No posted receipt lines were found for this product."
+              <TabsContent
+                value="purchases"
+                className="space-y-4"
+              >
+                <ProductPurchaseHistoryPanel
+                  productId={productId}
+                  enabled={canReadInventory}
                 />
-              ) : (
-                <div className="space-y-3">
-                  {purchases.map((item) => (
-                    <Card key={item.receipt_item_id}>
-                      <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <PackageSearch className="size-4" />
-                            <span className="font-medium">
-                              {
-                                item.receipt
-                                  .receipt_number
-                              }
-                            </span>
-                            {item.supplier ? (
-                              <Badge variant="outline">
-                                {item.supplier.name}
-                              </Badge>
-                            ) : null}
-                          </div>
+              </TabsContent>
 
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {displayDate(
-                              item.receipt.posted_at,
-                            )}
-                            {" · "}
-                            {displayNumber(
-                              item.quantity,
-                            )}{" "}
-                            {item.uom.code ?? ""}
-                          </p>
-
-                          <p className="mt-1 text-sm">
-                            Unit cost{" "}
-                            <span className="font-medium">
-                              {displayNumber(
-                                item.unit_cost,
-                              )}
-                            </span>
-                            {" · "}
-                            Base cost{" "}
-                            <span className="font-medium">
-                              {displayNumber(
-                                item.base_unit_cost,
-                              )}
-                            </span>
-                          </p>
-                        </div>
-
-                        <Link
-                          to={PATHS.INVENTORY.receipt(
-                            item.receipt.id,
-                          )}
-                          className="
-                            inline-flex
-                            h-8
-                            items-center
-                            justify-center
-                            gap-2
-                            rounded-md
-                            border
-                            bg-background
-                            px-3
-                            text-sm
-                            font-medium
-                            transition-colors
-                            hover:bg-accent
-                            hover:text-accent-foreground
-                            focus-visible:outline-none
-                            focus-visible:ring-2
-                            focus-visible:ring-ring
-                          "
-                        >
-                          <ReceiptText className="size-4" />
-                          Goods Receipt
-                        </Link>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="movements">
-              {movements.length === 0 ? (
-                <EmptyPanel
-                  title="No stock movements"
-                  description="No inventory ledger movements were found for this product."
+              <TabsContent
+                value="movements"
+                className="space-y-4"
+              >
+                <ProductMovementHistoryPanel
+                  productId={productId}
+                  enabled={canReadInventory}
                 />
-              ) : (
-                <div className="space-y-3">
-                  {movements.map((item) => (
-                    <Card key={item.id}>
-                      <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <Boxes className="size-4" />
-                            <span className="font-medium">
-                              {item.movement_type}
-                            </span>
-                          </div>
-
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {displayDate(
-                              item.created_at,
-                            )}
-                            {" · "}
-                            Qty{" "}
-                            {displayNumber(
-                              item.quantity,
-                            )}
-                            {item.warehouse?.name
-                              ? ` · ${item.warehouse.name}`
-                              : ""}
-                          </p>
-
-                          {item.batch?.batch_number ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Batch{" "}
-                              {
-                                item.batch
-                                  .batch_number
-                              }
-                            </p>
-                          ) : null}
-                        </div>
-
-                        {item.reference?.type &&
-                        item.reference?.id ? (
-                          <Badge variant="outline">
-                            {item.reference.type} ·{" "}
-                            {item.reference.id}
-                          </Badge>
-                        ) : null}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
+              </TabsContent>
+              </Tabs>
         </div>
       </PageContent>
     </Page>
