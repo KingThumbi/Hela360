@@ -2506,7 +2506,7 @@ def test_product_history_returns_branch_scoped_summary(client):
         "sales_history": True,
         "purchase_history": True,
         "movement_history": True,
-        "stock_history": False,
+        "stock_history": True,
         "profitability": False,
     }
 

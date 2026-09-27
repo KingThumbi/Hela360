@@ -19,7 +19,13 @@ from app.models import (
     StockBalance,
     Supplier,
     Warehouse,
+    StockAdjustment,
+    StockAdjustmentItem,
+    StockCount,
+    StockCountItem,
+    User,
 )
+from app.serializers.stock_count import serialize_stock_count_item
 
 
 ZERO_QTY = Decimal("0.0000")
@@ -45,6 +51,16 @@ class ProductPurchaseHistoryFilters:
     warehouse_id: str | None = None
     supplier_id: str | None = None
 
+
+
+
+@dataclass(frozen=True)
+class ProductStockCountHistoryFilters:
+    page: int = 1
+    per_page: int = 25
+    date_from: date | None = None
+    date_to: date | None = None
+    warehouse_id: str | None = None
 
 @dataclass(frozen=True)
 class ProductHistorySummary:
@@ -696,6 +712,311 @@ class ProductHistoryQueryService:
                             else None
                         )
                     ),
+                }
+            )
+
+        return items, {
+            "page": filters.page,
+            "per_page": filters.per_page,
+            "total": total,
+            "pages": pages,
+            "has_prev": filters.page > 1,
+            "has_next": filters.page < pages,
+        }
+
+    def list_stock_counts(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductStockCountHistoryFilters,
+    ) -> tuple[list[dict], dict] | None:
+        """
+        Return physical Stock Count evidence for one Product.
+
+        Each result represents one StockCountItem rather than one
+        StockCount header. This preserves batch-level and UOM-level
+        historical evidence and permits exact linkage to the
+        StockAdjustmentItem that posted the variance.
+
+        Open blind counts deliberately hide system-derived quantities,
+        matching the canonical Stock Count serializer contract.
+        """
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise ValueError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            warehouse = (
+                self.session.query(Warehouse)
+                .filter(
+                    Warehouse.id == filters.warehouse_id,
+                    Warehouse.tenant_id == tenant_id,
+                    Warehouse.branch_id == branch_id,
+                )
+                .first()
+            )
+
+            if warehouse is None:
+                raise ValueError(
+                    "warehouse_id is not valid for this branch."
+                )
+
+        query = (
+            self.session.query(
+                StockCountItem,
+                StockCount,
+                Warehouse,
+                InventoryBatch,
+                User.id.label("counted_by_id"),
+                User.first_name.label(
+                    "counted_by_first_name"
+                ),
+                User.last_name.label(
+                    "counted_by_last_name"
+                ),
+                User.username.label(
+                    "counted_by_username"
+                ),
+                StockAdjustment,
+                StockAdjustmentItem,
+            )
+            .join(
+                StockCount,
+                StockCount.id
+                == StockCountItem.stock_count_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id
+                == StockCount.warehouse_id,
+            )
+            .outerjoin(
+                InventoryBatch,
+                InventoryBatch.id
+                == StockCountItem.batch_id,
+            )
+            .outerjoin(
+                User,
+                User.id
+                == StockCountItem.counted_by,
+            )
+            .outerjoin(
+                StockAdjustment,
+                (
+                    StockAdjustment.tenant_id
+                    == tenant_id
+                )
+                & (
+                    StockAdjustment.branch_id
+                    == branch_id
+                )
+                & (
+                    StockAdjustment.source_type
+                    == "stock_count"
+                )
+                & (
+                    StockAdjustment.source_id
+                    == StockCount.id
+                ),
+            )
+            .outerjoin(
+                StockAdjustmentItem,
+                (
+                    StockAdjustmentItem.stock_adjustment_id
+                    == StockAdjustment.id
+                )
+                & (
+                    StockAdjustmentItem.stock_count_item_id
+                    == StockCountItem.id
+                ),
+            )
+            .filter(
+                StockCountItem.product_id
+                == product_id,
+                StockCount.tenant_id
+                == tenant_id,
+                StockCount.branch_id
+                == branch_id,
+                Warehouse.tenant_id
+                == tenant_id,
+                Warehouse.branch_id
+                == branch_id,
+            )
+        )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                StockCount.warehouse_id
+                == filters.warehouse_id
+            )
+
+        if filters.date_from:
+            query = query.filter(
+                StockCount.started_at
+                >= datetime.combine(
+                    filters.date_from,
+                    time.min,
+                )
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                StockCount.started_at
+                <= datetime.combine(
+                    filters.date_to,
+                    time.max,
+                )
+            )
+
+        total = query.count()
+
+        pages = (
+            (total + filters.per_page - 1)
+            // filters.per_page
+            if total
+            else 0
+        )
+
+        rows = (
+            query.order_by(
+                StockCount.started_at.desc(),
+                StockCount.id.desc(),
+                StockCountItem.line_number.asc(),
+            )
+            .offset(
+                (filters.page - 1)
+                * filters.per_page
+            )
+            .limit(filters.per_page)
+            .all()
+        )
+
+        items = []
+
+        for (
+            count_item,
+            count,
+            warehouse,
+            batch,
+            counted_by_id,
+            counted_by_first_name,
+            counted_by_last_name,
+            counted_by_username,
+            adjustment,
+            adjustment_item,
+        ) in rows:
+            open_blind = (
+                count.status == "open"
+                and count.count_mode == "blind"
+            )
+
+            counted_by_context = (
+                {
+                    "id": str(counted_by_id),
+                    "first_name":
+                        counted_by_first_name,
+                    "last_name":
+                        counted_by_last_name,
+                    "username":
+                        counted_by_username,
+                }
+                if counted_by_id
+                else None
+            )
+
+            line = serialize_stock_count_item(
+                count_item,
+                product=product,
+                batch=batch,
+                counted_by=counted_by_context,
+                expose_system_quantities=(
+                    not open_blind
+                ),
+            )
+
+            adjustment_payload = None
+
+            if adjustment is not None:
+                adjustment_payload = {
+                    "id": str(adjustment.id),
+                    "adjustment_number":
+                        adjustment.adjustment_number,
+                    "status":
+                        adjustment.status,
+                    "posted_at": (
+                        adjustment.posted_at.isoformat()
+                        if adjustment.posted_at
+                        else None
+                    ),
+                    "quantity_delta": (
+                        str(
+                            adjustment_item.quantity_delta
+                        )
+                        if adjustment_item
+                        else None
+                    ),
+                }
+
+            items.append(
+                {
+                    "stock_count": {
+                        "id": str(count.id),
+                        "count_number":
+                            count.count_number,
+                        "status":
+                            count.status,
+                        "count_mode":
+                            count.count_mode,
+                        "scope_type":
+                            count.scope_type,
+                        "snapshot_at": (
+                            count.snapshot_at.isoformat()
+                            if count.snapshot_at
+                            else None
+                        ),
+                        "started_at": (
+                            count.started_at.isoformat()
+                            if count.started_at
+                            else None
+                        ),
+                        "completed_at": (
+                            count.completed_at.isoformat()
+                            if count.completed_at
+                            else None
+                        ),
+                    },
+                    "warehouse": {
+                        "id": str(warehouse.id),
+                        "code": warehouse.code,
+                        "name": warehouse.name,
+                    },
+                    "line": line,
+                    "adjustment":
+                        adjustment_payload,
                 }
             )
 

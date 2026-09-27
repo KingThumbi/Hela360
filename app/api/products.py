@@ -37,6 +37,7 @@ from app.services.tenant.products.product_history_query_service import (
     ProductHistoryQueryService,
     ProductPurchaseHistoryFilters,
     ProductSalesHistoryFilters,
+    ProductStockCountHistoryFilters,
 )
 from app.services.tenant.inventory.inventory_query_service import (
     InventoryMovementListFilters,
@@ -49,6 +50,11 @@ from app.services.tenant.inventory.goods_receipt_service import (
 )
 from app.services.tenant.pos.sales_query_service import (
     SalesListFilters,
+)
+
+from app.services.tenant.inventory.stock_count_service import (
+    StockCountListFilters,
+    StockCountQueryError,
 )
 
 bp = Blueprint("products", __name__)
@@ -489,7 +495,7 @@ def get_product_history(product_id: str):
                     "sales_history": True,
                     "purchase_history": True,
                     "movement_history": True,
-                    "stock_history": False,
+                    "stock_history": True,
                     "profitability": False,
                 },
             },
@@ -617,6 +623,51 @@ def get_product_purchase_history(product_id: str):
 
     if result is None:
         return _json_error("Product not found.", 404)
+
+    items, pagination = result
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "pagination": pagination,
+        }
+    )
+
+
+@bp.get("/products/<product_id>/history/stock-counts")
+@require_permission("inventory.count")
+def get_product_stock_count_history(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = StockCountListFilters.from_query(
+            request.args
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_stock_counts(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductStockCountHistoryFilters(
+                page=requested.page,
+                per_page=requested.per_page,
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                warehouse_id=requested.warehouse_id,
+            ),
+        )
+
+    except (StockCountQueryError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error(
+            "Product not found.",
+            404,
+        )
 
     items, pagination = result
 
