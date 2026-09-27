@@ -1,20 +1,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import func
 
 from app.models import (
+    GoodsReceipt,
+    GoodsReceiptItem,
     InventoryMovement,
     Product,
     ProductUnit,
     StockBalance,
+    Supplier,
+    Warehouse,
 )
 
 
 ZERO_QTY = Decimal("0.0000")
+
+
+@dataclass(frozen=True)
+class ProductPurchaseHistoryFilters:
+    page: int = 1
+    per_page: int = 25
+    date_from: date | None = None
+    date_to: date | None = None
+    warehouse_id: str | None = None
+    supplier_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,3 +155,258 @@ class ProductHistoryQueryService:
             movement_count=int(movement_count or 0),
             last_movement_at=last_movement_at,
         )
+
+    def list_purchases(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductPurchaseHistoryFilters,
+    ) -> tuple[list[dict], dict] | None:
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise ValueError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            warehouse = (
+                self.session.query(Warehouse)
+                .filter(
+                    Warehouse.id == filters.warehouse_id,
+                    Warehouse.tenant_id == tenant_id,
+                    Warehouse.branch_id == branch_id,
+                )
+                .first()
+            )
+            if warehouse is None:
+                raise ValueError(
+                    "warehouse_id is not valid for this branch."
+                )
+
+        if filters.supplier_id:
+            supplier = (
+                self.session.query(Supplier)
+                .filter(
+                    Supplier.id == filters.supplier_id,
+                    Supplier.tenant_id == tenant_id,
+                )
+                .first()
+            )
+            if supplier is None:
+                raise ValueError(
+                    "supplier_id is not valid for this tenant."
+                )
+
+        query = (
+            self.session.query(
+                GoodsReceiptItem,
+                GoodsReceipt,
+                Warehouse,
+                Supplier,
+            )
+            .join(
+                GoodsReceipt,
+                GoodsReceipt.id
+                == GoodsReceiptItem.goods_receipt_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id == GoodsReceipt.warehouse_id,
+            )
+            .outerjoin(
+                Supplier,
+                Supplier.id == GoodsReceipt.supplier_id,
+            )
+            .filter(
+                GoodsReceiptItem.product_id == product_id,
+                GoodsReceipt.tenant_id == tenant_id,
+                GoodsReceipt.branch_id == branch_id,
+                GoodsReceipt.status == "posted",
+                GoodsReceipt.posted_at.isnot(None),
+                Warehouse.tenant_id == tenant_id,
+                Warehouse.branch_id == branch_id,
+            )
+        )
+
+        if filters.date_from:
+            query = query.filter(
+                GoodsReceipt.posted_at
+                >= datetime.combine(
+                    filters.date_from,
+                    time.min,
+                )
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                GoodsReceipt.posted_at
+                <= datetime.combine(
+                    filters.date_to,
+                    time.max,
+                )
+            )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                GoodsReceipt.warehouse_id
+                == filters.warehouse_id
+            )
+
+        if filters.supplier_id:
+            query = query.filter(
+                GoodsReceipt.supplier_id
+                == filters.supplier_id
+            )
+
+        total = query.count()
+
+        rows = (
+            query.order_by(
+                GoodsReceipt.posted_at.desc(),
+                GoodsReceipt.id.desc(),
+                GoodsReceiptItem.line_number.asc(),
+                GoodsReceiptItem.id.asc(),
+            )
+            .offset(
+                (filters.page - 1)
+                * filters.per_page
+            )
+            .limit(filters.per_page)
+            .all()
+        )
+
+        pages = (
+            (total + filters.per_page - 1)
+            // filters.per_page
+            if total
+            else 0
+        )
+
+        items = [
+            {
+                "receipt_item_id": str(receipt_item.id),
+                "receipt": {
+                    "id": str(receipt.id),
+                    "receipt_number": receipt.receipt_number,
+                    "status": receipt.status,
+                    "received_at": (
+                        receipt.received_at.isoformat()
+                        if receipt.received_at
+                        else None
+                    ),
+                    "posted_at": (
+                        receipt.posted_at.isoformat()
+                        if receipt.posted_at
+                        else None
+                    ),
+                    "supplier_reference": (
+                        receipt.supplier_reference
+                    ),
+                    "supplier_invoice_number": (
+                        receipt.supplier_invoice_number
+                    ),
+                    "supplier_invoice_date": (
+                        receipt.supplier_invoice_date.isoformat()
+                        if receipt.supplier_invoice_date
+                        else None
+                    ),
+                    "invoice_currency": (
+                        receipt.invoice_currency
+                    ),
+                },
+                "warehouse": {
+                    "id": str(warehouse.id),
+                    "code": warehouse.code,
+                    "name": warehouse.name,
+                },
+                "supplier": (
+                    {
+                        "id": str(supplier.id),
+                        "supplier_code": (
+                            supplier.supplier_code
+                        ),
+                        "name": supplier.name,
+                    }
+                    if supplier
+                    else None
+                ),
+                "line_number": receipt_item.line_number,
+                "quantity": str(receipt_item.quantity),
+                "base_quantity": str(
+                    receipt_item.base_quantity
+                ),
+                "uom": {
+                    "code": (
+                        receipt_item.unit_code_snapshot
+                    ),
+                    "name": (
+                        receipt_item.unit_name_snapshot
+                    ),
+                    "conversion_factor_to_base": str(
+                        receipt_item
+                        .conversion_factor_to_base
+                    ),
+                },
+                "unit_cost": str(receipt_item.unit_cost),
+                "base_unit_cost": str(
+                    receipt_item.base_unit_cost
+                ),
+                "batch": {
+                    "id": (
+                        str(receipt_item.batch_id)
+                        if receipt_item.batch_id
+                        else None
+                    ),
+                    "batch_number": (
+                        receipt_item.batch_number
+                    ),
+                    "manufacture_date": (
+                        receipt_item.manufacture_date.isoformat()
+                        if receipt_item.manufacture_date
+                        else None
+                    ),
+                    "expiry_date": (
+                        receipt_item.expiry_date.isoformat()
+                        if receipt_item.expiry_date
+                        else None
+                    ),
+                },
+            }
+            for (
+                receipt_item,
+                receipt,
+                warehouse,
+                supplier,
+            ) in rows
+        ]
+
+        return items, {
+            "page": filters.page,
+            "per_page": filters.per_page,
+            "total": total,
+            "pages": pages,
+            "has_prev": filters.page > 1,
+            "has_next": filters.page < pages,
+        }

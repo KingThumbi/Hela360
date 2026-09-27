@@ -2504,7 +2504,7 @@ def test_product_history_returns_branch_scoped_summary(client):
 
     assert item["capabilities"] == {
         "sales_history": False,
-        "purchase_history": False,
+        "purchase_history": True,
         "movement_history": True,
         "stock_history": False,
         "profitability": False,

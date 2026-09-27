@@ -35,11 +35,16 @@ from app.services.tenant.auth.decorators import (
 )
 from app.services.tenant.products.product_history_query_service import (
     ProductHistoryQueryService,
+    ProductPurchaseHistoryFilters,
 )
 from app.services.tenant.inventory.inventory_query_service import (
     InventoryMovementListFilters,
     InventoryQueryError,
     InventoryQueryService,
+)
+from app.services.tenant.inventory.goods_receipt_service import (
+    GoodsReceiptListFilters,
+    GoodsReceiptQueryError,
 )
 
 bp = Blueprint("products", __name__)
@@ -478,7 +483,7 @@ def get_product_history(product_id: str):
                 },
                 "capabilities": {
                     "sales_history": False,
-                    "purchase_history": False,
+                    "purchase_history": True,
                     "movement_history": True,
                     "stock_history": False,
                     "profitability": False,
@@ -519,6 +524,49 @@ def get_product_movement_history(product_id: str):
 
     except InventoryQueryError as exc:
         return _json_error(str(exc), 400)
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "pagination": pagination,
+        }
+    )
+
+
+@bp.get("/products/<product_id>/history/purchases")
+@require_permission("inventory.read")
+def get_product_purchase_history(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = GoodsReceiptListFilters.from_query(
+            request.args
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_purchases(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductPurchaseHistoryFilters(
+                page=requested.page,
+                per_page=requested.per_page,
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                warehouse_id=requested.warehouse_id,
+                supplier_id=requested.supplier_id,
+            ),
+        )
+
+    except (GoodsReceiptQueryError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error("Product not found.", 404)
+
+    items, pagination = result
 
     return jsonify(
         {
