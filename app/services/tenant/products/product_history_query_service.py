@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import func
 
 from app.models import (
+    Customer,
     GoodsReceipt,
     GoodsReceiptItem,
+    InventoryBatch,
     InventoryMovement,
     Product,
     ProductUnit,
+    Sale,
+    SaleItem,
     StockBalance,
     Supplier,
     Warehouse,
@@ -19,6 +23,17 @@ from app.models import (
 
 
 ZERO_QTY = Decimal("0.0000")
+
+
+@dataclass(frozen=True)
+class ProductSalesHistoryFilters:
+    page: int = 1
+    per_page: int = 25
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    status: str | None = None
+    customer_id: str | None = None
+    warehouse_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -401,6 +416,288 @@ class ProductHistoryQueryService:
                 supplier,
             ) in rows
         ]
+
+        return items, {
+            "page": filters.page,
+            "per_page": filters.per_page,
+            "total": total,
+            "pages": pages,
+            "has_prev": filters.page > 1,
+            "has_next": filters.page < pages,
+        }
+
+    def list_sales(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductSalesHistoryFilters,
+    ) -> tuple[list[dict], dict] | None:
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise ValueError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            warehouse = (
+                self.session.query(Warehouse)
+                .filter(
+                    Warehouse.id == filters.warehouse_id,
+                    Warehouse.tenant_id == tenant_id,
+                    Warehouse.branch_id == branch_id,
+                )
+                .first()
+            )
+
+            if warehouse is None:
+                raise ValueError(
+                    "warehouse_id is not valid for this branch."
+                )
+
+        if filters.customer_id:
+            customer = (
+                self.session.query(Customer)
+                .filter(
+                    Customer.id == filters.customer_id,
+                    Customer.tenant_id == tenant_id,
+                )
+                .first()
+            )
+
+            if customer is None:
+                raise ValueError(
+                    "customer_id is not valid."
+                )
+
+        query = (
+            self.session.query(
+                SaleItem,
+                Sale,
+                Warehouse,
+                Customer,
+                InventoryBatch,
+            )
+            .join(
+                Sale,
+                Sale.id == SaleItem.sale_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id == Sale.warehouse_id,
+            )
+            .outerjoin(
+                Customer,
+                (Customer.id == Sale.customer_id)
+                & (Customer.tenant_id == Sale.tenant_id),
+            )
+            .outerjoin(
+                InventoryBatch,
+                InventoryBatch.id == SaleItem.batch_id,
+            )
+            .filter(
+                SaleItem.product_id == product_id,
+                Sale.tenant_id == tenant_id,
+                Sale.branch_id == branch_id,
+                Warehouse.tenant_id == tenant_id,
+                Warehouse.branch_id == branch_id,
+            )
+        )
+
+        if filters.date_from:
+            query = query.filter(
+                Sale.sale_date >= filters.date_from
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                Sale.sale_date <= filters.date_to
+            )
+
+        if filters.status:
+            query = query.filter(
+                Sale.status == filters.status
+            )
+
+        if filters.customer_id:
+            query = query.filter(
+                Sale.customer_id == filters.customer_id
+            )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                Sale.warehouse_id == filters.warehouse_id
+            )
+
+        total = query.count()
+
+        rows = (
+            query.order_by(
+                Sale.sale_date.desc(),
+                Sale.id.desc(),
+                SaleItem.id.asc(),
+            )
+            .offset(
+                (filters.page - 1)
+                * filters.per_page
+            )
+            .limit(filters.per_page)
+            .all()
+        )
+
+        pages = (
+            (total + filters.per_page - 1)
+            // filters.per_page
+            if total
+            else 0
+        )
+
+        items = []
+
+        for (
+            sale_item,
+            sale,
+            warehouse,
+            customer,
+            batch,
+        ) in rows:
+            conversion_factor = Decimal(
+                sale_item.conversion_factor_to_base or 1
+            )
+
+            normalized_unit_price = None
+
+            if conversion_factor > 0:
+                normalized_unit_price = (
+                    Decimal(sale_item.unit_price)
+                    / conversion_factor
+                ).quantize(
+                    Decimal("0.000001"),
+                    rounding=ROUND_HALF_UP,
+                )
+
+            items.append(
+                {
+                    "sale_item_id": str(sale_item.id),
+                    "sale": {
+                        "id": str(sale.id),
+                        "sale_number": sale.sale_number,
+                        "sale_date": (
+                            sale.sale_date.isoformat()
+                            if sale.sale_date
+                            else None
+                        ),
+                        "status": sale.status,
+                        "sale_channel": sale.sale_channel,
+                        "refund_status": sale.refund_status,
+                        "refunded_amount": str(
+                            sale.refunded_amount
+                        ),
+                    },
+                    "warehouse": {
+                        "id": str(warehouse.id),
+                        "code": warehouse.code,
+                        "name": warehouse.name,
+                    },
+                    "customer": (
+                        {
+                            "id": str(customer.id),
+                            "customer_number": (
+                                customer.customer_number
+                            ),
+                            "first_name": customer.first_name,
+                            "last_name": customer.last_name,
+                            "other_names": customer.other_names,
+                            "phone": customer.phone,
+                        }
+                        if customer
+                        else None
+                    ),
+                    "quantity": str(sale_item.quantity),
+                    "base_quantity": str(
+                        sale_item.base_quantity
+                    ),
+                    "uom": {
+                        "code": (
+                            sale_item.unit_code_snapshot
+                        ),
+                        "name": (
+                            sale_item.unit_name_snapshot
+                        ),
+                        "conversion_factor_to_base": str(
+                            sale_item
+                            .conversion_factor_to_base
+                        ),
+                    },
+                    "unit_price": str(
+                        sale_item.unit_price
+                    ),
+                    "normalized_base_unit_price": (
+                        str(normalized_unit_price)
+                        if normalized_unit_price
+                        is not None
+                        else None
+                    ),
+                    "discount_amount": str(
+                        sale_item.discount_amount
+                    ),
+                    "tax_amount": str(
+                        sale_item.tax_amount
+                    ),
+                    "line_total": str(
+                        sale_item.line_total
+                    ),
+                    "is_returned": bool(
+                        sale_item.is_returned
+                    ),
+                    "batch": (
+                        {
+                            "id": str(batch.id),
+                            "batch_number": (
+                                batch.batch_number
+                            ),
+                            "expiry_date": (
+                                batch.expiry_date.isoformat()
+                                if batch.expiry_date
+                                else None
+                            ),
+                        }
+                        if batch
+                        else (
+                            {
+                                "id": str(
+                                    sale_item.batch_id
+                                ),
+                                "batch_number": None,
+                                "expiry_date": None,
+                            }
+                            if sale_item.batch_id
+                            else None
+                        )
+                    ),
+                }
+            )
 
         return items, {
             "page": filters.page,

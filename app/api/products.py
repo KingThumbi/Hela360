@@ -36,6 +36,7 @@ from app.services.tenant.auth.decorators import (
 from app.services.tenant.products.product_history_query_service import (
     ProductHistoryQueryService,
     ProductPurchaseHistoryFilters,
+    ProductSalesHistoryFilters,
 )
 from app.services.tenant.inventory.inventory_query_service import (
     InventoryMovementListFilters,
@@ -45,6 +46,9 @@ from app.services.tenant.inventory.inventory_query_service import (
 from app.services.tenant.inventory.goods_receipt_service import (
     GoodsReceiptListFilters,
     GoodsReceiptQueryError,
+)
+from app.services.tenant.pos.sales_query_service import (
+    SalesListFilters,
 )
 
 bp = Blueprint("products", __name__)
@@ -482,7 +486,7 @@ def get_product_history(product_id: str):
                     ),
                 },
                 "capabilities": {
-                    "sales_history": False,
+                    "sales_history": True,
                     "purchase_history": True,
                     "movement_history": True,
                     "stock_history": False,
@@ -524,6 +528,54 @@ def get_product_movement_history(product_id: str):
 
     except InventoryQueryError as exc:
         return _json_error(str(exc), 400)
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "pagination": pagination,
+        }
+    )
+
+
+@bp.get("/products/<product_id>/history/sales")
+@require_permission("sales.read")
+def get_product_sales_history(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = SalesListFilters.from_query(
+            request.args
+        )
+
+        warehouse_id = (
+            request.args.get("warehouse_id") or None
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_sales(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductSalesHistoryFilters(
+                page=requested.page,
+                per_page=requested.per_page,
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                status=requested.status,
+                customer_id=requested.customer_id,
+                warehouse_id=warehouse_id,
+            ),
+        )
+
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error("Product not found.", 404)
+
+    items, pagination = result
 
     return jsonify(
         {
