@@ -650,6 +650,20 @@ export const QUERY_KEYS = {
         params ?? {},
       ] as const,
 
+    historyStockCounts: (
+      scope: TenantQueryScope,
+      productId: string | number,
+      params?: object,
+    ) =>
+      [
+        ...QUERY_KEYS.products.history(
+          scope,
+          productId,
+        ),
+        "stock-counts",
+        params ?? {},
+      ] as const,
+
     units: (
       scope: TenantQueryScope,
       productId: string | number,

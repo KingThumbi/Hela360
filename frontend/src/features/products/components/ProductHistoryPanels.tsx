@@ -1,5 +1,6 @@
 import {
   Boxes,
+  ClipboardCheck,
   PackageSearch,
   ReceiptText,
   ShoppingCart,
@@ -28,6 +29,7 @@ import {
   useProductMovementHistory,
   useProductPurchaseHistory,
   useProductSalesHistory,
+  useProductStockCountHistory,
 } from "@/hooks/queries/products";
 import { PATHS } from "@/routes/routes";
 import type { PaginationMeta } from "@/types/api";
@@ -380,6 +382,86 @@ function MovementReference({
       {reference.type} ·{" "}
       {reference.id}
     </Badge>
+  );
+}
+
+function stockCountLifecycleLabel(
+  lifecycle: string,
+) {
+  if (lifecycle === "counting") {
+    return "Counting";
+  }
+
+  if (lifecycle === "awaiting_posting") {
+    return "Awaiting Posting";
+  }
+
+  if (lifecycle === "posted") {
+    return "Posted";
+  }
+
+  if (lifecycle === "completed") {
+    return "Completed";
+  }
+
+  if (lifecycle === "cancelled") {
+    return "Cancelled";
+  }
+
+  if (lifecycle === "superseded") {
+    return "Superseded";
+  }
+
+  return lifecycle;
+}
+
+function stockCountLifecycleClassName(
+  lifecycle: string,
+) {
+  if (lifecycle === "posted") {
+    return (
+      "border-emerald-200 bg-emerald-50 " +
+      "text-emerald-700 dark:border-emerald-900 " +
+      "dark:bg-emerald-950/40 dark:text-emerald-300"
+    );
+  }
+
+  if (lifecycle === "awaiting_posting") {
+    return (
+      "border-amber-200 bg-amber-50 " +
+      "text-amber-700 dark:border-amber-900 " +
+      "dark:bg-amber-950/40 dark:text-amber-300"
+    );
+  }
+
+  if (lifecycle === "counting") {
+    return (
+      "border-sky-200 bg-sky-50 " +
+      "text-sky-700 dark:border-sky-900 " +
+      "dark:bg-sky-950/40 dark:text-sky-300"
+    );
+  }
+
+  if (lifecycle === "superseded") {
+    return (
+      "border-violet-200 bg-violet-50 " +
+      "text-violet-700 dark:border-violet-900 " +
+      "dark:bg-violet-950/30 dark:text-violet-300"
+    );
+  }
+
+  if (lifecycle === "cancelled") {
+    return (
+      "border-slate-200 bg-slate-50 " +
+      "text-slate-600 dark:border-slate-800 " +
+      "dark:bg-slate-900/50 dark:text-slate-300"
+    );
+  }
+
+  return (
+    "border-emerald-200 bg-emerald-50 " +
+    "text-emerald-700 dark:border-emerald-900 " +
+    "dark:bg-emerald-950/40 dark:text-emerald-300"
   );
 }
 
@@ -975,6 +1057,406 @@ export function ProductMovementHistoryPanel({
         isFetching={
           query.isFetching
         }
+        onPageChange={setPage}
+        onPageSizeChange={(next) => {
+          setPageSize(next);
+          setPage(1);
+        }}
+      />
+    </div>
+  );
+}
+
+export function ProductStockCountHistoryPanel({
+  productId,
+  enabled,
+  canViewAdjustment,
+}: {
+  productId: string;
+  enabled: boolean;
+  canViewAdjustment: boolean;
+}) {
+  const [page, setPage] =
+    useState(1);
+
+  const [pageSize, setPageSize] =
+    useState<PageSize>(25);
+
+  const [dateFrom, setDateFrom] =
+    useState("");
+
+  const [dateTo, setDateTo] =
+    useState("");
+
+  const query =
+    useProductStockCountHistory(
+      productId,
+      {
+        page,
+        per_page: pageSize,
+        date_from:
+          dateFrom || undefined,
+        date_to:
+          dateTo || undefined,
+      },
+      {
+        enabled,
+      },
+    );
+
+  const counts =
+    query.data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Stock count filters
+          </CardTitle>
+
+          <CardDescription>
+            Review physical-count evidence and
+            trace posted variances back to their
+            source inventory documents.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <DateRangeFilters
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            onDateFromChange={(value) => {
+              setDateFrom(value);
+              setPage(1);
+            }}
+            onDateToChange={(value) => {
+              setDateTo(value);
+              setPage(1);
+            }}
+          />
+        </CardContent>
+      </Card>
+
+      {query.isLoading ? (
+        <EmptyPanel
+          title="Loading stock-count history"
+          description="Loading physical inventory-count evidence for this product."
+        />
+      ) : query.isError ? (
+        <EmptyPanel
+          title="Unable to load stock-count history"
+          description={
+            query.error instanceof Error
+              ? query.error.message
+              : "Stock-count history could not be loaded."
+          }
+        />
+      ) : counts.length === 0 ? (
+        <EmptyPanel
+          title="No stock-count history"
+          description="No physical stock-count lines were found for this product."
+        />
+      ) : (
+        <div className="space-y-3">
+          {counts.map((item) => {
+            const line = item.line;
+
+            const batchNumber =
+              line.batch?.batch_number ??
+              line.observed_batch_number;
+
+            const expiryDate =
+              line.batch?.expiry_date ??
+              line.observed_expiry_date;
+
+            const countedUnit =
+              line.counted_unit_code ??
+              line.counted_unit_name;
+
+            const exposesExpected =
+              line.expected_quantity !==
+              undefined;
+
+            const exposesVariance =
+              line.variance_quantity !==
+              undefined;
+
+            const variance =
+              line.variance_quantity == null
+                ? null
+                : Number(
+                    line.variance_quantity,
+                  );
+
+            return (
+              <Card key={line.id}>
+                <CardContent className="space-y-4 p-4">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ClipboardCheck className="size-4" />
+
+                        <span className="font-medium">
+                          {
+                            item.stock_count
+                              .count_number
+                          }
+                        </span>
+
+                        <Badge
+                          variant="outline"
+                          className={
+                            stockCountLifecycleClassName(
+                              item.stock_count
+                                .lifecycle,
+                            )
+                          }
+                        >
+                          {stockCountLifecycleLabel(
+                            item.stock_count
+                              .lifecycle,
+                          )}
+                        </Badge>
+
+                        <Badge variant="outline">
+                          {
+                            item.stock_count
+                              .count_mode
+                          }
+                        </Badge>
+                      </div>
+
+                      <div className="text-sm text-muted-foreground">
+                        {displayDate(
+                          item.stock_count
+                            .completed_at ??
+                            item.stock_count
+                              .started_at,
+                        )}
+                        {" · "}
+                        {item.warehouse.name}
+                      </div>
+
+                      {batchNumber ? (
+                        <div className="text-sm text-muted-foreground">
+                          Batch{" "}
+                          <span className="font-medium text-foreground">
+                            {batchNumber}
+                          </span>
+
+                          {expiryDate
+                            ? ` · Expiry ${expiryDate}`
+                            : ""}
+                        </div>
+                      ) : null}
+
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        {exposesExpected ? (
+                          <div className="rounded-lg border bg-muted/30 p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Expected
+                            </p>
+
+                            <p className="mt-1 font-medium">
+                              {displayNumber(
+                                line.expected_quantity,
+                              )}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        <div className="rounded-lg border bg-muted/30 p-3">
+                          <p className="text-xs text-muted-foreground">
+                            Counted
+                          </p>
+
+                          <p className="mt-1 font-medium">
+                            {line.counted_unit_quantity !=
+                              null &&
+                            countedUnit
+                              ? `${displayNumber(
+                                  line.counted_unit_quantity,
+                                )} ${countedUnit}`
+                              : displayNumber(
+                                  line.counted_quantity,
+                                )}
+                          </p>
+
+                          {line.counted_unit_quantity !=
+                            null &&
+                          countedUnit &&
+                          line.counted_quantity !=
+                            null ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              ={" "}
+                              {displayNumber(
+                                line.counted_quantity,
+                              )}{" "}
+                              base units
+                            </p>
+                          ) : null}
+                        </div>
+
+                        {exposesVariance ? (
+                          <div className="rounded-lg border bg-muted/30 p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Variance
+                            </p>
+
+                            <p className="mt-1 font-medium">
+                              {variance != null &&
+                              Number.isFinite(
+                                variance,
+                              ) &&
+                              variance > 0
+                                ? "+"
+                                : ""}
+                              {displayNumber(
+                                line.variance_quantity,
+                              )}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {line.counted_conversion_factor_to_base ? (
+                          <div className="rounded-lg border bg-muted/30 p-3">
+                            <p className="text-xs text-muted-foreground">
+                              Historical conversion
+                            </p>
+
+                            <p className="mt-1 font-medium">
+                              1{" "}
+                              {countedUnit ??
+                                "entered unit"}
+                              {" = "}
+                              {displayNumber(
+                                line.counted_conversion_factor_to_base,
+                              )}{" "}
+                              base units
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {!exposesExpected &&
+                      item.stock_count
+                        .count_mode ===
+                        "blind" &&
+                      item.stock_count.status ===
+                        "open" ? (
+                        <p className="text-xs text-muted-foreground">
+                          System quantities are
+                          intentionally hidden while
+                          this blind count remains
+                          open.
+                        </p>
+                      ) : null}
+
+                      {line.source_type ===
+                        "discovered" ? (
+                        <Badge variant="outline">
+                          Discovered during count
+                        </Badge>
+                      ) : null}
+
+                      {line.notes ? (
+                        <p className="text-sm text-muted-foreground">
+                          {line.notes}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        to={
+                          PATHS.INVENTORY.stockCount(
+                            item.stock_count.id,
+                          )
+                        }
+                        className={
+                          sourceLinkClassName
+                        }
+                      >
+                        <ClipboardCheck className="size-4" />
+                        View Stock Count
+                      </Link>
+
+                      {item.adjustment &&
+                      canViewAdjustment ? (
+                        <Link
+                          to={
+                            PATHS.INVENTORY
+                              .stockAdjustment(
+                                item.adjustment.id,
+                              )
+                          }
+                          className={
+                            sourceLinkClassName
+                          }
+                        >
+                          <ReceiptText className="size-4" />
+                          View Adjustment
+                        </Link>
+                      ) : item.adjustment ? (
+                        <Badge variant="outline">
+                          Adjustment{" "}
+                          {
+                            item.adjustment
+                              .adjustment_number
+                          }
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {item.adjustment ? (
+                    <div className="border-t pt-3 text-xs text-muted-foreground">
+                      Adjustment{" "}
+                      <span className="font-medium text-foreground">
+                        {
+                          item.adjustment
+                            .adjustment_number
+                        }
+                      </span>
+
+                      {item.adjustment
+                        .quantity_delta != null
+                        ? ` · Inventory delta ${
+                            Number(
+                              item.adjustment
+                                .quantity_delta,
+                            ) > 0
+                              ? "+"
+                              : ""
+                          }${displayNumber(
+                            item.adjustment
+                              .quantity_delta,
+                          )}`
+                        : ""}
+
+                      {item.adjustment.posted_at
+                        ? ` · Posted ${displayDate(
+                            item.adjustment
+                              .posted_at,
+                          )}`
+                        : ""}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <HistoryPagination
+        pagination={
+          query.data?.pagination
+        }
+        pageSize={pageSize}
+        noun="stock-count lines"
+        isFetching={query.isFetching}
         onPageChange={setPage}
         onPageSizeChange={(next) => {
           setPageSize(next);

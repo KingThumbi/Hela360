@@ -170,6 +170,92 @@ export interface ProductMovementHistoryItem {
   created_at: string | null;
 }
 
+export interface ProductStockCountHistoryItem {
+  stock_count: {
+    id: string;
+    count_number: string;
+    status: string;
+    lifecycle:
+      | "counting"
+      | "awaiting_posting"
+      | "posted"
+      | "completed"
+      | "cancelled"
+      | "superseded"
+      | string;
+    count_mode: string;
+    scope_type: string;
+    snapshot_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+  };
+
+  warehouse: {
+    id: string;
+    code: string;
+    name: string;
+  };
+
+  line: {
+    id: string;
+    line_number: number;
+    source_type: string;
+
+    product: {
+      id: string;
+      internal_sku: string | null;
+      name: string;
+      track_batches: boolean;
+      track_expiry: boolean;
+    };
+
+    batch: {
+      id: string;
+      batch_number: string | null;
+      expiry_date: string | null;
+      is_expired: boolean;
+    } | null;
+
+    observed_batch_number: string | null;
+    observed_expiry_date: string | null;
+
+    counted_quantity: string | null;
+    counted_unit_quantity: string | null;
+    counted_product_unit_id: string | null;
+    counted_unit_code: string | null;
+    counted_unit_name: string | null;
+    counted_conversion_factor_to_base:
+      string | null;
+
+    counted_at: string | null;
+
+    counted_by: {
+      id?: string | null;
+      name?: string | null;
+      username?: string | null;
+    } | null;
+
+    notes: string | null;
+
+    /*
+     * Deliberately optional.
+     * Open blind counts omit system-derived
+     * quantities at the API boundary.
+     */
+    snapshot_quantity?: string | null;
+    expected_quantity?: string | null;
+    variance_quantity?: string | null;
+  };
+
+  adjustment: {
+    id: string;
+    adjustment_number: string;
+    status: string;
+    posted_at: string | null;
+    quantity_delta: string | null;
+  } | null;
+}
+
 export interface ProductHistoryListResponse<T> {
   ok: true;
   items: T[];
@@ -194,6 +280,9 @@ export interface ProductPurchaseHistoryParams
   extends ProductHistoryListParams {
   supplier_id?: string;
 }
+
+export interface ProductStockCountHistoryParams
+  extends ProductHistoryListParams {}
 
 export interface ProductMovementHistoryParams {
   page?: number;

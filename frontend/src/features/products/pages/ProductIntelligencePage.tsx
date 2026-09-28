@@ -55,6 +55,7 @@ import {
   ProductMovementHistoryPanel,
   ProductPurchaseHistoryPanel,
   ProductSalesHistoryPanel,
+  ProductStockCountHistoryPanel,
 } from "../components/ProductHistoryPanels";
 
 function numeric(value: string | null | undefined) {
@@ -130,6 +131,12 @@ export function ProductIntelligencePage() {
   const canReadInventory =
     authorization.can("inventory.read");
 
+  const canCountInventory =
+    authorization.can("inventory.count");
+
+  const canAdjustInventory =
+    authorization.can("inventory.adjust");
+
   const summaryQuery =
     useProductHistory(productId);
 
@@ -191,6 +198,10 @@ export function ProductIntelligencePage() {
   }
 
   const summary = summaryQuery.data;
+
+  const canViewStockHistory =
+    canCountInventory &&
+    summary.capabilities.stock_history;
 
   const sales: ProductSalesHistoryItem[] =
     salesQuery.data?.items ?? [];
@@ -390,6 +401,12 @@ export function ProductIntelligencePage() {
                     Movements
                   </TabsTrigger>
                 </>
+              ) : null}
+
+              {canViewStockHistory ? (
+                <TabsTrigger value="stock-counts">
+                  Stock Counts
+                </TabsTrigger>
               ) : null}
             </TabsList>
 
@@ -594,6 +611,21 @@ export function ProductIntelligencePage() {
                   enabled={canReadInventory}
                 />
               </TabsContent>
+
+              {canViewStockHistory ? (
+                <TabsContent
+                  value="stock-counts"
+                  className="space-y-4"
+                >
+                  <ProductStockCountHistoryPanel
+                    productId={productId}
+                    enabled={canViewStockHistory}
+                    canViewAdjustment={
+                      canAdjustInventory
+                    }
+                  />
+                </TabsContent>
+              ) : null}
               </Tabs>
         </div>
       </PageContent>

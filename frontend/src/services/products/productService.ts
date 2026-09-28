@@ -54,6 +54,8 @@ import type {
   ProductPurchaseHistoryParams,
   ProductSalesHistoryItem,
   ProductSalesHistoryParams,
+  ProductStockCountHistoryItem,
+  ProductStockCountHistoryParams,
 } from "@/types/responses/product-history";
 
 interface ProductItemResponse {
@@ -266,6 +268,32 @@ class ProductService extends BaseService<
 
       return response.data;
     }
+
+  async listProductStockCountHistory(
+    productId: string | number,
+    params?: ProductStockCountHistoryParams,
+    config?: AxiosRequestConfig,
+  ): Promise<
+    ProductHistoryListResponse<ProductStockCountHistoryItem>
+  > {
+    const response =
+      await this.getRequest<
+        ProductHistoryListResponse<ProductStockCountHistoryItem>
+      >(
+        API_ENDPOINTS.PRODUCTS.HISTORY_STOCK_COUNTS(
+          String(productId),
+        ),
+        {
+          ...config,
+          params: {
+            ...config?.params,
+            ...params,
+          },
+        },
+      );
+
+    return response.data;
+  }
 
   async createProduct(
     payload: CreateProductRequest,

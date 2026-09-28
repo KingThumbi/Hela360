@@ -504,6 +504,10 @@ def test_stock_count_history_is_product_and_branch_scoped(
         "count_number"
     ] == "SC-2026-A"
 
+    assert item["stock_count"][
+        "lifecycle"
+    ] == "posted"
+
     assert item["warehouse"] == {
         "id": WAREHOUSE_ID,
         "code": "MAIN",
@@ -636,11 +640,133 @@ def test_open_blind_count_hides_system_quantities(
         == "count-open-blind"
     )
 
+    assert item["stock_count"][
+        "lifecycle"
+    ] == "counting"
+
     line = item["line"]
 
     assert "snapshot_quantity" not in line
     assert "expected_quantity" not in line
     assert "variance_quantity" not in line
+
+
+def test_stock_count_history_lifecycle_uses_whole_count_variance(
+    client,
+):
+    started = datetime(
+        2026,
+        8,
+        12,
+        8,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    completed = datetime(
+        2026,
+        8,
+        12,
+        9,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    count = StockCount(
+        id="count-cross-line-variance",
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-CROSS-LINE",
+        idempotency_key="count-cross-line-variance",
+        request_fingerprint="f" * 64,
+        scope_type="full",
+        count_mode="visible",
+        status="completed",
+        snapshot_at=started,
+        started_at=started,
+        started_by=USER_ID,
+        completed_at=completed,
+        completed_by=USER_ID,
+    )
+
+    db.session.add(count)
+    db.session.flush()
+
+    db.session.add_all(
+        [
+            StockCountItem(
+                id="count-cross-line-product-a",
+                stock_count_id=count.id,
+                product_id=PRODUCT_ID,
+                source_type="snapshot",
+                line_number=1,
+                snapshot_quantity=Decimal(
+                    "5.0000"
+                ),
+                expected_quantity=Decimal(
+                    "5.0000"
+                ),
+                counted_quantity=Decimal(
+                    "5.0000"
+                ),
+                variance_quantity=Decimal(
+                    "0.0000"
+                ),
+                counted_at=completed,
+                counted_by=USER_ID,
+            ),
+            StockCountItem(
+                id="count-cross-line-product-b",
+                stock_count_id=count.id,
+                product_id=SECOND_PRODUCT_ID,
+                source_type="snapshot",
+                line_number=2,
+                snapshot_quantity=Decimal(
+                    "4.0000"
+                ),
+                expected_quantity=Decimal(
+                    "4.0000"
+                ),
+                counted_quantity=Decimal(
+                    "6.0000"
+                ),
+                variance_quantity=Decimal(
+                    "2.0000"
+                ),
+                counted_at=completed,
+                counted_by=USER_ID,
+            ),
+        ]
+    )
+
+    db.session.commit()
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/stock-counts"
+        )
+    )
+
+    assert response.status_code == 200
+
+    item = next(
+        row
+        for row in response.get_json()["items"]
+        if row["stock_count"]["id"]
+        == "count-cross-line-variance"
+    )
+
+    assert item["line"][
+        "variance_quantity"
+    ] == "0.0000"
+
+    assert item["stock_count"][
+        "lifecycle"
+    ] == "awaiting_posting"
+
+    assert item["adjustment"] is None
 
 
 def test_stock_count_history_supports_warehouse_and_date_filters(

@@ -80,3 +80,7 @@ export {
 export {
   useProductMovementHistory,
 } from "./useProductMovementHistory";
+
+export {
+  useProductStockCountHistory,
+} from "./useProductStockCountHistory";

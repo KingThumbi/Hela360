@@ -915,6 +915,43 @@ class ProductHistoryQueryService:
             .all()
         )
 
+        count_ids = {
+            count.id
+            for (
+                _count_item,
+                count,
+                _warehouse,
+                _batch,
+                _counted_by_id,
+                _counted_by_first_name,
+                _counted_by_last_name,
+                _counted_by_username,
+                _adjustment,
+                _adjustment_item,
+            ) in rows
+        }
+
+        variance_count_ids = set()
+
+        if count_ids:
+            variance_count_ids = {
+                stock_count_id
+                for (stock_count_id,) in (
+                    self.session.query(
+                        StockCountItem.stock_count_id
+                    )
+                    .filter(
+                        StockCountItem.stock_count_id.in_(
+                            count_ids
+                        ),
+                        StockCountItem.variance_quantity
+                        != ZERO_QTY,
+                    )
+                    .distinct()
+                    .all()
+                )
+            }
+
         items = []
 
         for (
@@ -958,6 +995,25 @@ class ProductHistoryQueryService:
                 ),
             )
 
+            if count.status == "open":
+                lifecycle = "counting"
+            elif count.status == "cancelled":
+                lifecycle = "cancelled"
+            elif count.status == "superseded":
+                lifecycle = "superseded"
+            elif count.status == "completed":
+                if (
+                    adjustment is not None
+                    and adjustment.status == "posted"
+                ):
+                    lifecycle = "posted"
+                elif count.id in variance_count_ids:
+                    lifecycle = "awaiting_posting"
+                else:
+                    lifecycle = "completed"
+            else:
+                lifecycle = count.status
+
             adjustment_payload = None
 
             if adjustment is not None:
@@ -989,6 +1045,8 @@ class ProductHistoryQueryService:
                             count.count_number,
                         "status":
                             count.status,
+                        "lifecycle":
+                            lifecycle,
                         "count_mode":
                             count.count_mode,
                         "scope_type":
