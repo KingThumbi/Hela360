@@ -138,11 +138,11 @@ function lifecycleDescription(status: GoodsReceiptStatus): string {
     case "receiving":
       return "Physical receiving is in progress. The receipt remains editable until receiving is completed.";
     case "received":
-      return "Physical receiving is complete. The receipt is awaiting review or approval.";
+      return "Physical receiving is complete, but inventory has NOT been updated. Approve this receipt, then post it to inventory.";
     case "under_review":
       return "The receipt is under review before approval.";
     case "approved":
-      return "The receipt has been approved and is ready for posting to inventory.";
+      return "The receipt is approved, but inventory has NOT been updated yet. Post it to inventory to create the stock movements.";
     case "posted":
       return "The receipt has been posted to inventory. Stock movements are now part of the inventory ledger.";
     case "cancelled":
@@ -399,6 +399,23 @@ function GoodsReceiptDetail({
           </div>
         </div>
       </PageSection>
+
+      {receipt.status === "received" ||
+      receipt.status === "approved" ? (
+        <div
+          className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          role="status"
+        >
+          <div className="font-semibold">
+            Inventory has not been updated
+          </div>
+          <div className="mt-1">
+            {receipt.status === "received"
+              ? "Physical receiving is complete. Approve this receipt and then post it to inventory before the received stock becomes available."
+              : "This receipt is approved and ready to post. Use Post to Inventory to add the received stock and create its inventory ledger movements."}
+          </div>
+        </div>
+      ) : null}
 
       <PageSection>
         <div className="grid gap-4 lg:grid-cols-4">

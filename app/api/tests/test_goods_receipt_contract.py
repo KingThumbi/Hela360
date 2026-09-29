@@ -3306,6 +3306,71 @@ def test_complete_receiving_revalidates_persisted_evidence(client):
     assert InventoryMovement.query.count() == 0
 
 
+def test_complete_receiving_rejects_quantity_accepted_quantity_mismatch(
+    client,
+):
+    created = client.post(
+        "/api/inventory/goods-receipts/drafts",
+        json=draft_payload(
+            idempotency_key="complete-receiving-quantity-mismatch",
+        ),
+    )
+
+    assert created.status_code == 201
+    receipt_id = created.get_json()["item"]["id"]
+
+    updated = client.patch(
+        f"/api/inventory/goods-receipts/{receipt_id}",
+        json=editable_receipt_payload(),
+    )
+
+    assert updated.status_code == 200
+
+    started = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/begin-receiving"
+    )
+
+    assert started.status_code == 200
+    assert started.get_json()["item"]["status"] == "receiving"
+
+    # Simulate corrupted/stale persisted evidence where the quantity
+    # that would later be posted to stock no longer agrees with the
+    # physically accepted quantity.
+    receipt_item = GoodsReceiptItem.query.one()
+    receipt_item.quantity = Decimal("50")
+    receipt_item.accepted_quantity = Decimal("5")
+    db.session.commit()
+
+    response = client.post(
+        f"/api/inventory/goods-receipts/"
+        f"{receipt_id}/complete-receiving"
+    )
+
+    assert response.status_code == 409
+    assert (
+        "stock quantity must match accepted quantity"
+        in error_message(response).lower()
+    )
+
+    db.session.expire_all()
+
+    receipt = db.session.get(GoodsReceipt, receipt_id)
+    receipt_item = GoodsReceiptItem.query.one()
+
+    assert receipt.status == "receiving"
+    assert receipt.received_at is None
+    assert receipt.received_by is None
+
+    assert receipt_item.quantity == Decimal("50")
+    assert receipt_item.accepted_quantity == Decimal("5")
+
+    # Rejected completion must never mutate inventory.
+    assert InventoryBatch.query.count() == 0
+    assert StockBalance.query.count() == 0
+    assert InventoryMovement.query.count() == 0
+
+
 def test_complete_receiving_requires_inventory_receive_permission(
     app_context,
     identity,

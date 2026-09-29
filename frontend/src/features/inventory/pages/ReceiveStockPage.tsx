@@ -1043,7 +1043,10 @@ export function ReceiveStockPage() {
         await completeReceiving.mutateAsync(saved.id);
 
       syncReceiptState(received);
-      toast.success("Goods receipt receiving completed.");
+      toast.success(
+        "Receiving completed. Inventory has NOT been updated yet. "
+          + "Approve and post this receipt to add the stock.",
+      );
 
       navigate(
         PATHS.INVENTORY.receipt(received.id),

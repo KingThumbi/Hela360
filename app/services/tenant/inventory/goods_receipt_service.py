@@ -683,6 +683,22 @@ class GoodsReceiptService:
                 product_unit_id=receipt_item.product_unit_id,
             )
 
+            # The compatibility quantity field is the canonical quantity
+            # that will be converted to base units and posted to inventory.
+            # When physical receiving evidence exists, it must agree with the
+            # accepted quantity before receiving can complete. This prevents a
+            # receipt from later posting a quantity different from the stock
+            # actually accepted.
+            if (
+                receipt_item.accepted_quantity is not None
+                and _q4(receipt_item.quantity)
+                != _q4(receipt_item.accepted_quantity)
+            ):
+                raise ConflictError(
+                    "Goods receipt stock quantity must match accepted quantity "
+                    "before completing receiving."
+                )
+
             expected_base_quantity = (
                 unit_resolution.to_base_quantity(
                     receipt_item.quantity
