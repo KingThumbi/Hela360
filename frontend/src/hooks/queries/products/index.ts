@@ -82,5 +82,9 @@ export {
 } from "./useProductMovementHistory";
 
 export {
+  useProductBatchHistory,
+} from "./useProductBatchHistory";
+
+export {
   useProductStockCountHistory,
 } from "./useProductStockCountHistory";

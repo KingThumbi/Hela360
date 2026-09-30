@@ -55,6 +55,7 @@ class InventoryMovementListFilters:
     date_to: date | None = None
     product_id: str | None = None
     warehouse_id: str | None = None
+    batch_id: str | None = None
     movement_type: str | None = None
     reference_type: str | None = None
     reference_id: str | None = None
@@ -68,6 +69,7 @@ class InventoryMovementListFilters:
             date_to=_parse_date(args.get("date_to"), "date_to"),
             product_id=_optional_text(args.get("product_id")),
             warehouse_id=_optional_text(args.get("warehouse_id")),
+            batch_id=_optional_text(args.get("batch_id")),
             movement_type=_optional_text(args.get("movement_type")),
             reference_type=_optional_text(args.get("reference_type")),
             reference_id=_optional_text(args.get("reference_id")),
@@ -387,6 +389,8 @@ class InventoryQueryService:
             query = query.filter(InventoryMovement.product_id == filters.product_id)
         if filters.warehouse_id:
             query = query.filter(InventoryMovement.warehouse_id == filters.warehouse_id)
+        if filters.batch_id:
+            query = query.filter(InventoryMovement.batch_id == filters.batch_id)
         if filters.movement_type:
             query = query.filter(InventoryMovement.movement_type == filters.movement_type)
         if filters.reference_type:
@@ -670,6 +674,16 @@ class InventoryQueryService:
             "id": str(movement.id),
             "movement_type": movement.movement_type,
             "quantity": str(_q4(movement.quantity)),
+            "unit_cost": (
+                str(movement.unit_cost)
+                if movement.unit_cost is not None
+                else None
+            ),
+            "unit_price": (
+                str(movement.unit_price)
+                if movement.unit_price is not None
+                else None
+            ),
             "product": {
                 "id": str(product.id),
                 "internal_sku": product.internal_sku,

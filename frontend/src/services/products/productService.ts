@@ -45,6 +45,8 @@ import type {
 } from "@/types/responses";
 
 import type {
+  ProductBatchHistoryItem,
+  ProductBatchHistoryParams,
   ProductHistoryListResponse,
   ProductHistorySummary,
   ProductHistorySummaryResponse,
@@ -268,6 +270,32 @@ class ProductService extends BaseService<
 
       return response.data;
     }
+
+  async listProductBatchHistory(
+    productId: string | number,
+    params?: ProductBatchHistoryParams,
+    config?: AxiosRequestConfig,
+  ): Promise<
+    ProductHistoryListResponse<ProductBatchHistoryItem>
+  > {
+    const response =
+      await this.getRequest<
+        ProductHistoryListResponse<ProductBatchHistoryItem>
+      >(
+        API_ENDPOINTS.PRODUCTS.HISTORY_BATCHES(
+          String(productId),
+        ),
+        {
+          ...config,
+          params: {
+            ...config?.params,
+            ...params,
+          },
+        },
+      );
+
+    return response.data;
+  }
 
   async listProductStockCountHistory(
     productId: string | number,

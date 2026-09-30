@@ -460,3 +460,67 @@ def test_product_movement_history_requires_inventory_read(
 
     assert response.status_code == 403
     assert captured["kwargs"]["permission"] == "inventory.read"
+
+
+def test_product_movement_history_supports_batch_filter(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}/history/movements"
+            f"?batch_id={BATCH_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert [
+        item["id"]
+        for item in payload["items"]
+    ] == [
+        "movement-new",
+        "movement-old",
+    ]
+
+    assert all(
+        item["batch"]["id"] == BATCH_ID
+        for item in payload["items"]
+    )
+
+
+def test_product_movement_history_unknown_batch_is_empty(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}/history/movements"
+            "?batch_id=does-not-exist"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["items"] == []
+    assert payload["pagination"]["total"] == 0
+
+
+def test_product_movement_history_exposes_persisted_prices(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}/history/movements"
+            f"?batch_id={BATCH_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["items"][0]
+
+    assert item["unit_cost"] == "3.25"
+    assert item["unit_price"] == "5.50"

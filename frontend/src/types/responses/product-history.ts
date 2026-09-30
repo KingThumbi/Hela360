@@ -165,9 +165,42 @@ export interface ProductMovementHistoryItem {
   performed_by?: {
     id?: string | null;
     name?: string | null;
+    username?: string | null;
   } | null;
 
   created_at: string | null;
+}
+
+export interface ProductBatchHistoryItem {
+  id: string;
+
+  batch_number: string | null;
+
+  warehouse: {
+    id: string;
+    code: string;
+    name: string;
+  };
+
+  expiry_date: string | null;
+  manufacture_date: string | null;
+  received_at: string | null;
+
+  unit_cost: string | null;
+
+  quantity_on_hand: string;
+  quantity_reserved: string;
+  quantity_available: string;
+
+  status: string;
+
+  is_expired: boolean;
+  is_sellable: boolean;
+
+  days_to_expiry: number | null;
+
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface ProductStockCountHistoryItem {
@@ -281,13 +314,21 @@ export interface ProductPurchaseHistoryParams
   supplier_id?: string;
 }
 
-export interface ProductStockCountHistoryParams
-  extends ProductHistoryListParams {}
+export interface ProductBatchHistoryParams {
+  page?: number;
+  per_page?: number;
+  warehouse_id?: string;
+  include_zero?: boolean;
+}
+
+export type ProductStockCountHistoryParams =
+  ProductHistoryListParams;
 
 export interface ProductMovementHistoryParams {
   page?: number;
   per_page?: number;
   warehouse_id?: string;
+  batch_id?: string;
   movement_type?: string;
   date_from?: string;
   date_to?: string;

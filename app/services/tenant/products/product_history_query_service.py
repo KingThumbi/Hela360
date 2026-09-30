@@ -43,6 +43,14 @@ class ProductSalesHistoryFilters:
 
 
 @dataclass(frozen=True)
+class ProductBatchHistoryFilters:
+    page: int = 1
+    per_page: int = 25
+    warehouse_id: str | None = None
+    include_zero: bool = False
+
+
+@dataclass(frozen=True)
 class ProductPurchaseHistoryFilters:
     page: int = 1
     per_page: int = 25
@@ -186,6 +194,209 @@ class ProductHistoryQueryService:
             movement_count=int(movement_count or 0),
             last_movement_at=last_movement_at,
         )
+
+    def list_batches(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductBatchHistoryFilters,
+        operational_date: date | None = None,
+    ) -> tuple[list[dict], dict] | None:
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        today = operational_date or date.today()
+
+        query = (
+            self.session.query(
+                InventoryBatch,
+                Warehouse,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id
+                == InventoryBatch.warehouse_id,
+            )
+            .filter(
+                InventoryBatch.tenant_id == tenant_id,
+                InventoryBatch.product_id == product_id,
+                Warehouse.tenant_id == tenant_id,
+                Warehouse.branch_id == branch_id,
+            )
+        )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                InventoryBatch.warehouse_id
+                == filters.warehouse_id
+            )
+
+        if not filters.include_zero:
+            query = query.filter(
+                InventoryBatch.quantity_on_hand
+                != ZERO_QTY
+            )
+
+        rows = query.all()
+
+        def q4(value) -> Decimal:
+            return Decimal(
+                value or ZERO_QTY
+            ).quantize(
+                Decimal("0.0001"),
+                rounding=ROUND_HALF_UP,
+            )
+
+        items = []
+
+        for batch, warehouse in rows:
+            quantity_on_hand = q4(
+                batch.quantity_on_hand
+            )
+            quantity_reserved = q4(
+                batch.quantity_reserved
+            )
+            quantity_available = q4(
+                quantity_on_hand
+                - quantity_reserved
+            )
+
+            is_expired = (
+                batch.expiry_date is not None
+                and batch.expiry_date < today
+            )
+
+            is_sellable = (
+                (batch.status or "").lower()
+                == "available"
+                and quantity_available > ZERO_QTY
+                and not is_expired
+                and (
+                    not product.track_expiry
+                    or batch.expiry_date is not None
+                )
+            )
+
+            days_to_expiry = (
+                (
+                    batch.expiry_date
+                    - today
+                ).days
+                if batch.expiry_date is not None
+                else None
+            )
+
+            items.append(
+                {
+                    "id": str(batch.id),
+                    "batch_number":
+                        batch.batch_number,
+                    "warehouse": {
+                        "id": str(warehouse.id),
+                        "code": warehouse.code,
+                        "name": warehouse.name,
+                    },
+                    "expiry_date": (
+                        batch.expiry_date.isoformat()
+                        if batch.expiry_date
+                        else None
+                    ),
+                    "manufacture_date": (
+                        batch.manufacture_date.isoformat()
+                        if batch.manufacture_date
+                        else None
+                    ),
+                    "received_at": (
+                        batch.received_at.isoformat()
+                        if batch.received_at
+                        else None
+                    ),
+                    "unit_cost": (
+                        str(batch.unit_cost)
+                        if batch.unit_cost is not None
+                        else None
+                    ),
+                    "quantity_on_hand":
+                        str(quantity_on_hand),
+                    "quantity_reserved":
+                        str(quantity_reserved),
+                    "quantity_available":
+                        str(quantity_available),
+                    "status":
+                        batch.status,
+                    "is_expired":
+                        is_expired,
+                    "is_sellable":
+                        is_sellable,
+                    "days_to_expiry":
+                        days_to_expiry,
+                    "created_at": (
+                        batch.created_at.isoformat()
+                        if batch.created_at
+                        else None
+                    ),
+                    "updated_at": (
+                        batch.updated_at.isoformat()
+                        if batch.updated_at
+                        else None
+                    ),
+                }
+            )
+
+        items.sort(
+            key=lambda item: (
+                item["is_expired"],
+                item["expiry_date"] is None,
+                item["expiry_date"]
+                or "9999-12-31",
+                item["batch_number"] or "",
+                item["id"],
+            )
+        )
+
+        total = len(items)
+        pages = (
+            (
+                total
+                + filters.per_page
+                - 1
+            )
+            // filters.per_page
+            if total
+            else 0
+        )
+
+        start = (
+            filters.page - 1
+        ) * filters.per_page
+
+        end = start + filters.per_page
+
+        return items[start:end], {
+            "page": filters.page,
+            "per_page": filters.per_page,
+            "total": total,
+            "pages": pages,
+            "has_prev": filters.page > 1,
+            "has_next":
+                filters.page < pages,
+        }
 
     def list_purchases(
         self,

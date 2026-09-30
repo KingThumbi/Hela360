@@ -171,6 +171,9 @@ export const API_ENDPOINTS = {
     HISTORY_MOVEMENTS: (id: string) =>
       `${byId("/products", id)}/history/movements`,
 
+    HISTORY_BATCHES: (id: string) =>
+      `${byId("/products", id)}/history/batches`,
+
     HISTORY_STOCK_COUNTS: (id: string) =>
       `${byId("/products", id)}/history/stock-counts`,
 

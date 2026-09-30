@@ -34,6 +34,7 @@ from app.services.tenant.auth.decorators import (
     require_permission,
 )
 from app.services.tenant.products.product_history_query_service import (
+    ProductBatchHistoryFilters,
     ProductHistoryQueryService,
     ProductPurchaseHistoryFilters,
     ProductSalesHistoryFilters,
@@ -519,6 +520,7 @@ def get_product_movement_history(product_id: str):
             date_to=filters.date_to,
             product_id=product_id,
             warehouse_id=filters.warehouse_id,
+            batch_id=filters.batch_id,
             movement_type=filters.movement_type,
             reference_type=filters.reference_type,
             reference_id=filters.reference_id,
@@ -534,6 +536,65 @@ def get_product_movement_history(product_id: str):
 
     except InventoryQueryError as exc:
         return _json_error(str(exc), 400)
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+            "pagination": pagination,
+        }
+    )
+
+
+@bp.get("/products/<product_id>/history/batches")
+@require_permission("inventory.read")
+def get_product_batch_history(product_id: str):
+    identity = _current_identity()
+
+    try:
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_batches(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductBatchHistoryFilters(
+                page=_positive_int_arg(
+                    "page",
+                    1,
+                ),
+                per_page=_positive_int_arg(
+                    "per_page",
+                    25,
+                ),
+                warehouse_id=(
+                    request.args.get(
+                        "warehouse_id"
+                    )
+                    or None
+                ),
+                include_zero=_to_bool(
+                    request.args.get(
+                        "include_zero"
+                    ),
+                    False,
+                ),
+            ),
+        )
+
+    except ValueError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    if result is None:
+        return _json_error(
+            "Product not found.",
+            404,
+        )
+
+    items, pagination = result
 
     return jsonify(
         {

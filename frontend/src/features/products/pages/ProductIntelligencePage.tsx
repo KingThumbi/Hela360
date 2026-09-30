@@ -52,6 +52,7 @@ import type {
 } from "@/types/responses/product-history";
 
 import {
+  ProductBatchHistoryPanel,
   ProductMovementHistoryPanel,
   ProductPurchaseHistoryPanel,
   ProductSalesHistoryPanel,
@@ -397,6 +398,10 @@ export function ProductIntelligencePage() {
                   <TabsTrigger value="purchases">
                     Purchases
                   </TabsTrigger>
+                  <TabsTrigger value="batches">
+                    Batches
+                  </TabsTrigger>
+
                   <TabsTrigger value="movements">
                     Movements
                   </TabsTrigger>
@@ -597,6 +602,16 @@ export function ProductIntelligencePage() {
                 className="space-y-4"
               >
                 <ProductPurchaseHistoryPanel
+                  productId={productId}
+                  enabled={canReadInventory}
+                />
+              </TabsContent>
+
+              <TabsContent
+                value="batches"
+                className="space-y-4"
+              >
+                <ProductBatchHistoryPanel
                   productId={productId}
                   enabled={canReadInventory}
                 />

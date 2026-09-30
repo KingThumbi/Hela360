@@ -29,11 +29,13 @@ import {
   useProductMovementHistory,
   useProductPurchaseHistory,
   useProductSalesHistory,
+  useProductBatchHistory,
   useProductStockCountHistory,
 } from "@/hooks/queries/products";
 import { PATHS } from "@/routes/routes";
 import type { PaginationMeta } from "@/types/api";
 import type {
+  ProductBatchHistoryItem,
   ProductMovementHistoryItem,
 } from "@/types/responses/product-history";
 
@@ -1066,6 +1068,466 @@ export function ProductMovementHistoryPanel({
     </div>
   );
 }
+
+function ProductBatchMovementTimeline({
+  productId,
+  batch,
+  enabled,
+}: {
+  productId: string;
+  batch: ProductBatchHistoryItem;
+  enabled: boolean;
+}) {
+  const [page, setPage] =
+    useState(1);
+
+  const [pageSize, setPageSize] =
+    useState<PageSize>(25);
+
+  const query =
+    useProductMovementHistory(
+      productId,
+      {
+        page,
+        per_page: pageSize,
+        batch_id: batch.id,
+      },
+      {
+        enabled,
+      },
+    );
+
+  const movements =
+    query.data?.items ?? [];
+
+  return (
+    <div className="space-y-3 border-t pt-4">
+      <div>
+        <p className="font-medium">
+          Batch movement timeline
+        </p>
+
+        <p className="mt-1 text-sm text-muted-foreground">
+          Canonical ledger activity for batch{" "}
+          {batch.batch_number ??
+            batch.id}.
+        </p>
+      </div>
+
+      {query.isLoading ? (
+        <EmptyPanel
+          title="Loading batch timeline"
+          description="Loading inventory-ledger movements for this batch."
+        />
+      ) : query.isError ? (
+        <EmptyPanel
+          title="Unable to load batch timeline"
+          description={
+            query.error instanceof Error
+              ? query.error.message
+              : "Batch movement history could not be loaded."
+          }
+        />
+      ) : movements.length === 0 ? (
+        <EmptyPanel
+          title="No batch movements"
+          description="No inventory-ledger movements were found for this canonical batch."
+        />
+      ) : (
+        <div className="space-y-3">
+          {movements.map((item) => {
+            const quantity =
+              Number(item.quantity);
+
+            const direction =
+              quantity > 0
+                ? "In"
+                : quantity < 0
+                  ? "Out"
+                  : "Neutral";
+
+            return (
+              <div
+                key={item.id}
+                className="rounded-xl border p-4"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Boxes className="size-4" />
+
+                      <span className="font-medium">
+                        {item.movement_type}
+                      </span>
+
+                      <Badge variant="outline">
+                        {direction}
+                      </Badge>
+                    </div>
+
+                    <p className="text-sm text-muted-foreground">
+                      {displayDate(
+                        item.created_at,
+                      )}
+                      {" · "}
+                      Qty{" "}
+                      {displayNumber(
+                        item.quantity,
+                      )}
+                      {item.warehouse?.name
+                        ? ` · ${item.warehouse.name}`
+                        : ""}
+                    </p>
+
+                    <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                      {item.unit_cost != null ? (
+                        <span>
+                          Unit cost{" "}
+                          <span className="font-medium text-foreground">
+                            {displayNumber(
+                              item.unit_cost,
+                            )}
+                          </span>
+                        </span>
+                      ) : null}
+
+                      {item.unit_price != null ? (
+                        <span>
+                          Unit price{" "}
+                          <span className="font-medium text-foreground">
+                            {displayNumber(
+                              item.unit_price,
+                            )}
+                          </span>
+                        </span>
+                      ) : null}
+
+                      {item.performed_by?.name ||
+                      item.performed_by?.username ? (
+                        <span>
+                          By{" "}
+                          <span className="font-medium text-foreground">
+                            {item.performed_by
+                              .name ??
+                              item.performed_by
+                                .username}
+                          </span>
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <MovementReference
+                    item={item}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <HistoryPagination
+        pagination={
+          query.data?.pagination
+        }
+        pageSize={pageSize}
+        noun="batch movements"
+        isFetching={query.isFetching}
+        onPageChange={setPage}
+        onPageSizeChange={(next) => {
+          setPageSize(next);
+          setPage(1);
+        }}
+      />
+    </div>
+  );
+}
+
+
+export function ProductBatchHistoryPanel({
+  productId,
+  enabled,
+}: {
+  productId: string;
+  enabled: boolean;
+}) {
+  const [page, setPage] =
+    useState(1);
+
+  const [pageSize, setPageSize] =
+    useState<PageSize>(25);
+
+  const [includeZero, setIncludeZero] =
+    useState(false);
+
+  const [
+    expandedBatchId,
+    setExpandedBatchId,
+  ] = useState<string | null>(null);
+
+  const query =
+    useProductBatchHistory(
+      productId,
+      {
+        page,
+        per_page: pageSize,
+        include_zero: includeZero,
+      },
+      {
+        enabled,
+      },
+    );
+
+  const batches =
+    query.data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Batch inventory
+          </CardTitle>
+
+          <CardDescription>
+            Current canonical batch state across
+            this branch. Quantities shown here are
+            current balances, not reconstructed
+            historical balances.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              checked={includeZero}
+              onChange={(event) => {
+                setIncludeZero(
+                  event.target.checked,
+                );
+                setPage(1);
+              }}
+              className="size-4 rounded border"
+            />
+
+            <span>
+              Include depleted batches
+            </span>
+          </label>
+        </CardContent>
+      </Card>
+
+      {query.isLoading ? (
+        <EmptyPanel
+          title="Loading batches"
+          description="Loading current canonical batch state for this product."
+        />
+      ) : query.isError ? (
+        <EmptyPanel
+          title="Unable to load batches"
+          description={
+            query.error instanceof Error
+              ? query.error.message
+              : "Batch inventory could not be loaded."
+          }
+        />
+      ) : batches.length === 0 ? (
+        <EmptyPanel
+          title="No batches"
+          description={
+            includeZero
+              ? "No batch records were found for this product in the current branch."
+              : "No batches with stock on hand were found. Enable depleted batches to inspect zero-stock batch identities."
+          }
+        />
+      ) : (
+        <div className="space-y-3">
+          {batches.map((batch) => (
+            <Card key={batch.id}>
+              <CardContent className="space-y-4 p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Boxes className="size-4" />
+
+                      <span className="font-medium">
+                        {batch.batch_number ??
+                          "Unnumbered batch"}
+                      </span>
+
+                      <Badge variant="outline">
+                        {batch.status}
+                      </Badge>
+
+                      {batch.is_expired ? (
+                        <Badge
+                          variant="outline"
+                          className="border-destructive/40 bg-destructive/10 text-destructive"
+                        >
+                          Expired
+                        </Badge>
+                      ) : batch.is_sellable ? (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+                        >
+                          Sellable
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">
+                          Not sellable
+                        </Badge>
+                      )}
+                    </div>
+
+                    <p className="text-sm text-muted-foreground">
+                      {batch.warehouse.name}
+                      {" · "}
+                      {batch.warehouse.code}
+                    </p>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          On hand
+                        </p>
+                        <p className="mt-1 font-medium">
+                          {displayNumber(
+                            batch.quantity_on_hand,
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Reserved
+                        </p>
+                        <p className="mt-1 font-medium">
+                          {displayNumber(
+                            batch.quantity_reserved,
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Available
+                        </p>
+                        <p className="mt-1 font-medium">
+                          {displayNumber(
+                            batch.quantity_available,
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">
+                          Current unit cost
+                        </p>
+                        <p className="mt-1 font-medium">
+                          {displayNumber(
+                            batch.unit_cost,
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                      <p>
+                        Manufacture:{" "}
+                        <span className="font-medium text-foreground">
+                          {displayDate(
+                            batch.manufacture_date,
+                          )}
+                        </span>
+                      </p>
+
+                      <p>
+                        Expiry:{" "}
+                        <span className="font-medium text-foreground">
+                          {displayDate(
+                            batch.expiry_date,
+                          )}
+                        </span>
+                      </p>
+
+                      <p>
+                        Received:{" "}
+                        <span className="font-medium text-foreground">
+                          {displayDate(
+                            batch.received_at,
+                          )}
+                        </span>
+                      </p>
+
+                      <p>
+                        Days to expiry:{" "}
+                        <span className="font-medium text-foreground">
+                          {batch.days_to_expiry ??
+                            "—"}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedBatchId(
+                          expandedBatchId ===
+                            batch.id
+                            ? null
+                            : batch.id,
+                        );
+                      }}
+                      className="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                    >
+                      {expandedBatchId ===
+                      batch.id
+                        ? "Hide timeline"
+                        : "View timeline"}
+                    </button>
+                  </div>
+                </div>
+
+                {expandedBatchId ===
+                batch.id ? (
+                  <ProductBatchMovementTimeline
+                    productId={productId}
+                    batch={batch}
+                    enabled={
+                      enabled &&
+                      expandedBatchId ===
+                        batch.id
+                    }
+                  />
+                ) : null}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <HistoryPagination
+        pagination={
+          query.data?.pagination
+        }
+        pageSize={pageSize}
+        noun="batches"
+        isFetching={query.isFetching}
+        onPageChange={setPage}
+        onPageSizeChange={(next) => {
+          setPageSize(next);
+          setPage(1);
+        }}
+      />
+    </div>
+  );
+}
+
 
 export function ProductStockCountHistoryPanel({
   productId,
