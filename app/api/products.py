@@ -696,6 +696,95 @@ def get_product_purchase_history(product_id: str):
     )
 
 
+@bp.get(
+    "/products/<product_id>/history/sales/price-trend"
+)
+@require_permission("sales.read")
+def get_product_sales_price_trend(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = SalesListFilters.from_query(
+            request.args
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_sales_price_trend(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductSalesHistoryFilters(
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                warehouse_id=(
+                    request.args.get(
+                        "warehouse_id"
+                    )
+                    or None
+                ),
+            ),
+        )
+
+    except ValueError as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error(
+            "Product not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": result,
+        }
+    )
+
+
+@bp.get(
+    "/products/<product_id>/history/purchases/price-trend"
+)
+@require_permission("inventory.read")
+def get_product_purchase_price_trend(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = GoodsReceiptListFilters.from_query(
+            request.args
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_purchase_price_trend(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductPurchaseHistoryFilters(
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                warehouse_id=requested.warehouse_id,
+            ),
+        )
+
+    except (GoodsReceiptQueryError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error(
+            "Product not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": result,
+        }
+    )
+
+
 @bp.get("/products/<product_id>/history/stock-counts")
 @require_permission("inventory.count")
 def get_product_stock_count_history(product_id: str):

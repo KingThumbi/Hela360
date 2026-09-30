@@ -512,6 +512,130 @@ def test_purchase_history_requires_branch(
     assert "branch" in response.get_json()["error"]
 
 
+def test_purchase_price_trend_is_complete_chronological_and_posted(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/purchases/price-trend"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert "pagination" not in payload
+
+    items = payload["items"]
+
+    assert [
+        item["source"]["id"]
+        for item in items
+    ] == [
+        "receipt-old",
+        "receipt-new",
+    ]
+
+    assert [
+        item["value"]
+        for item in items
+    ] == [
+        "9.00",
+        "10.00",
+    ]
+
+    assert items[0]["source"] == {
+        "type": "goods_receipt",
+        "id": "receipt-old",
+        "number": "GRN-OLD",
+    }
+
+    assert all(
+        item["source"]["id"]
+        != "receipt-unposted"
+        for item in items
+    )
+
+
+def test_purchase_price_trend_filters_date_and_warehouse(
+    client,
+):
+    receipt(
+        "receipt-front-trend",
+        receipt_number="GRN-FRONT-TREND",
+        warehouse_id=SECOND_WAREHOUSE_ID,
+        posted_at=datetime(
+            2026,
+            8,
+            13,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        unit_cost=Decimal("110.00"),
+        base_unit_cost=Decimal("11.00"),
+    )
+    db.session.commit()
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/purchases/price-trend"
+            "?date_from=2026-08-13"
+            "&date_to=2026-08-13"
+            f"&warehouse_id={SECOND_WAREHOUSE_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    items = response.get_json()["items"]
+
+    assert [
+        item["source"]["id"]
+        for item in items
+    ] == ["receipt-front-trend"]
+
+    assert items[0]["value"] == "11.00"
+
+
+def test_purchase_price_trend_rejects_cross_tenant_product(
+    client,
+):
+    response = client.get(
+        (
+            "/api/products/other-tenant-product/"
+            "history/purchases/price-trend"
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Product not found.",
+    }
+
+
+def test_purchase_price_trend_requires_branch(
+    client,
+    identity: SimpleNamespace,
+):
+    identity.branch_id = None
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/purchases/price-trend"
+        )
+    )
+
+    assert response.status_code == 400
+    assert "branch" in response.get_json()["error"]
+
+
 def test_purchase_history_requires_inventory_read(
     app_context,
     identity: SimpleNamespace,

@@ -1,8 +1,10 @@
 import {
   ArrowLeft,
 } from "lucide-react";
+import { useState } from "react";
 import {
   Link,
+  useNavigate,
   useParams,
 } from "react-router-dom";
 import {
@@ -23,6 +25,7 @@ import {
   PageTitle,
 } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -40,16 +43,11 @@ import {
 import { useAuthorization } from "@/hooks/useAuthorization";
 import {
   useProductHistory,
-  useProductPurchaseHistory,
-  useProductSalesHistory,
+  useProductPurchasePriceTrend,
+  useProductSalesPriceTrend,
 } from "@/hooks/queries/products";
 
 import { PATHS } from "@/routes/routes";
-
-import type {
-  ProductPurchaseHistoryItem,
-  ProductSalesHistoryItem,
-} from "@/types/responses/product-history";
 
 import {
   ProductBatchHistoryPanel,
@@ -58,6 +56,51 @@ import {
   ProductSalesHistoryPanel,
   ProductStockCountHistoryPanel,
 } from "../components/ProductHistoryPanels";
+
+type PriceTrendChartPoint = {
+  id: string;
+  date: string;
+  label: string;
+  value: number | null;
+  rawValue: string;
+  quantity: string;
+  uom: string | null;
+  sourceId: string;
+  sourceType: "sale" | "goods_receipt";
+  status?: string | null;
+  refundStatus?: string | null;
+  isReturned?: boolean;
+  supplier?: string | null;
+};
+
+function priceTrendSourcePath(
+  point: PriceTrendChartPoint,
+) {
+  if (point.sourceType === "sale") {
+    return PATHS.SALES.receipt(
+      point.sourceId,
+    );
+  }
+
+  if (
+    point.sourceType ===
+    "goods_receipt"
+  ) {
+    return PATHS.INVENTORY.receipt(
+      point.sourceId,
+    );
+  }
+
+  return null;
+}
+
+function priceTrendSourceLabel(
+  point: PriceTrendChartPoint,
+) {
+  return point.sourceType === "sale"
+    ? "Sale Receipt"
+    : "Goods Receipt";
+}
 
 function numeric(value: string | null | undefined) {
   if (value == null || value === "") {
@@ -123,6 +166,7 @@ function EmptyPanel({
 
 export function ProductIntelligencePage() {
   const { productId = "" } = useParams();
+  const navigate = useNavigate();
 
   const authorization = useAuthorization();
 
@@ -141,25 +185,32 @@ export function ProductIntelligencePage() {
   const summaryQuery =
     useProductHistory(productId);
 
-  const salesQuery =
-    useProductSalesHistory(
+  const [trendDateFrom, setTrendDateFrom] =
+    useState("");
+
+  const [trendDateTo, setTrendDateTo] =
+    useState("");
+
+  const trendParams = {
+    date_from:
+      trendDateFrom || undefined,
+    date_to:
+      trendDateTo || undefined,
+  };
+
+  const salesTrendQuery =
+    useProductSalesPriceTrend(
       productId,
-      {
-        page: 1,
-        per_page: 50,
-      },
+      trendParams,
       {
         enabled: canReadSales,
       },
     );
 
-  const purchaseQuery =
-    useProductPurchaseHistory(
+  const purchaseTrendQuery =
+    useProductPurchasePriceTrend(
       productId,
-      {
-        page: 1,
-        per_page: 50,
-      },
+      trendParams,
       {
         enabled: canReadInventory,
       },
@@ -204,47 +255,47 @@ export function ProductIntelligencePage() {
     canCountInventory &&
     summary.capabilities.stock_history;
 
-  const sales: ProductSalesHistoryItem[] =
-    salesQuery.data?.items ?? [];
+  const salesChartData: PriceTrendChartPoint[] =
+    (salesTrendQuery.data?.items ?? [])
+      .filter(
+        (item) =>
+          item.occurred_at &&
+          numeric(item.value) !== null,
+      )
+      .map((item) => ({
+        id: item.id,
+        date: item.occurred_at!,
+        label: item.source.number,
+        value: numeric(item.value),
+        rawValue: item.transaction_value,
+        quantity: item.quantity,
+        uom: item.uom.code,
+        sourceId: item.source.id,
+        sourceType: item.source.type,
+        status: item.status,
+        refundStatus: item.refund_status,
+        isReturned: item.is_returned,
+      }));
 
-  const purchases: ProductPurchaseHistoryItem[] =
-    purchaseQuery.data?.items ?? [];
-
-
-
-  const salesChartData = [...sales]
-    .filter(
-      (item) =>
-        item.normalized_base_unit_price != null &&
-        item.sale.sale_date,
-    )
-    .reverse()
-    .map((item) => ({
-      id: item.sale_item_id,
-      date: item.sale.sale_date,
-      label: item.sale.sale_number,
-      value: numeric(
-        item.normalized_base_unit_price,
-      ),
-      rawPrice: item.unit_price,
-      uom: item.uom.code,
-    }));
-
-  const purchaseChartData = [...purchases]
-    .filter(
-      (item) =>
-        item.base_unit_cost != null &&
-        item.receipt.posted_at,
-    )
-    .reverse()
-    .map((item) => ({
-      id: item.receipt_item_id,
-      date: item.receipt.posted_at,
-      label: item.receipt.receipt_number,
-      value: numeric(item.base_unit_cost),
-      rawCost: item.unit_cost,
-      uom: item.uom.code,
-    }));
+  const purchaseChartData: PriceTrendChartPoint[] =
+    (purchaseTrendQuery.data?.items ?? [])
+      .filter(
+        (item) =>
+          item.occurred_at &&
+          numeric(item.value) !== null,
+      )
+      .map((item) => ({
+        id: item.id,
+        date: item.occurred_at!,
+        label: item.source.number,
+        value: numeric(item.value),
+        rawValue: item.transaction_value,
+        quantity: item.quantity,
+        uom: item.uom.code,
+        sourceId: item.source.id,
+        sourceType: item.source.type,
+        supplier: item.supplier?.name ?? null,
+      }));
 
   const stock =
     summary.current_stock ?? {};
@@ -419,6 +470,58 @@ export function ProductIntelligencePage() {
               value="overview"
               className="space-y-4"
             >
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    Price trend period
+                  </CardTitle>
+                  <CardDescription>
+                    Filter authoritative transaction
+                    evidence used by both price charts.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        From
+                      </span>
+                      <Input
+                        type="date"
+                        value={trendDateFrom}
+                        onChange={(event) =>
+                          setTrendDateFrom(
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        To
+                      </span>
+                      <Input
+                        type="date"
+                        value={trendDateTo}
+                        onChange={(event) =>
+                          setTrendDateTo(
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    These charts are not paginated. Every
+                    matching persisted price point in the
+                    selected period is represented.
+                  </p>
+                </CardContent>
+              </Card>
+
               <div className="grid gap-4 xl:grid-cols-2">
                 <Card>
                   <CardHeader>
@@ -437,6 +540,20 @@ export function ProductIntelligencePage() {
                       <EmptyPanel
                         title="Sales history unavailable"
                         description="You do not have permission to view sales history."
+                      />
+                    ) : salesTrendQuery.isLoading ? (
+                      <EmptyPanel
+                        title="Loading selling-price trend"
+                        description="Loading complete persisted selling-price evidence."
+                      />
+                    ) : salesTrendQuery.isError ? (
+                      <EmptyPanel
+                        title="Unable to load selling-price trend"
+                        description={
+                          salesTrendQuery.error instanceof Error
+                            ? salesTrendQuery.error.message
+                            : "Selling-price trend could not be loaded."
+                        }
                       />
                     ) : salesChartData.length === 0 ? (
                       <EmptyPanel
@@ -465,32 +582,176 @@ export function ProductIntelligencePage() {
                             />
                             <YAxis />
                             <Tooltip
-                              formatter={(
-                                value,
-                              ) => [
-                                displayNumber(
-                                  value as number,
-                                ),
-                                "Base-unit selling price",
-                              ]}
-                              labelFormatter={(
-                                value,
-                              ) =>
-                                displayDate(
-                                  String(value),
-                                )
-                              }
+                              wrapperStyle={{
+                                pointerEvents: "auto",
+                              }}
+                              content={({
+                                active,
+                                payload,
+                              }) => {
+                                if (
+                                  !active ||
+                                  !payload?.length
+                                ) {
+                                  return null;
+                                }
+
+                                const point =
+                                  payload[0]
+                                    .payload as
+                                    PriceTrendChartPoint;
+
+                                const sourcePath =
+                                  priceTrendSourcePath(
+                                    point,
+                                  );
+
+                                return (
+                                  <div className="min-w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
+                                    <p className="font-medium">
+                                      {point.label}
+                                    </p>
+
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      {displayDate(
+                                        point.date,
+                                      )}
+                                    </p>
+
+                                    <div className="mt-3 space-y-1.5">
+                                      <p>
+                                        Base-unit price:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.value,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      <p>
+                                        Transaction price:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.rawValue,
+                                          )}
+                                        </span>
+                                        {point.uom
+                                          ? ` / ${point.uom}`
+                                          : ""}
+                                      </p>
+
+                                      <p>
+                                        Base quantity:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.quantity,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      {point.status ? (
+                                        <p>
+                                          Status:{" "}
+                                          <span className="font-medium">
+                                            {point.status}
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {point.refundStatus &&
+                                      point.refundStatus !==
+                                        "not_refunded" ? (
+                                        <p>
+                                          Refund:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              point.refundStatus
+                                            }
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {point.isReturned ? (
+                                        <p className="font-medium text-amber-700 dark:text-amber-300">
+                                          Returned sale evidence
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    {sourcePath ? (
+                                      <Link
+                                        to={sourcePath}
+                                        className="mt-3 inline-flex h-8 items-center rounded-md border px-3 font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                      >
+                                        Open{" "}
+                                        {priceTrendSourceLabel(
+                                          point,
+                                        )}
+                                      </Link>
+                                    ) : null}
+                                  </div>
+                                );
+                              }}
                             />
+
                             <Line
                               type="monotone"
                               dataKey="value"
                               stroke="currentColor"
-                              dot
+                              dot={(props) => {
+                                const {
+                                  cx,
+                                  cy,
+                                  payload,
+                                } = props;
+
+                                const point =
+                                  payload as
+                                    PriceTrendChartPoint;
+
+                                const sourcePath =
+                                  priceTrendSourcePath(
+                                    point,
+                                  );
+
+                                return (
+                                  <circle
+                                    cx={cx}
+                                    cy={cy}
+                                    r={4}
+                                    fill="currentColor"
+                                    stroke="var(--background)"
+                                    strokeWidth={2}
+                                    className={
+                                      sourcePath
+                                        ? "cursor-pointer"
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      if (
+                                        sourcePath
+                                      ) {
+                                        navigate(
+                                          sourcePath,
+                                        );
+                                      }
+                                    }}
+                                  />
+                                );
+                              }}
                             />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
                     )}
+
+                    {salesChartData.length > 0 ? (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Hover for transaction evidence.
+                        Select a chart point to open its
+                        source Sale Receipt.
+                      </p>
+                    ) : null}
                   </CardContent>
                 </Card>
 
@@ -510,6 +771,20 @@ export function ProductIntelligencePage() {
                       <EmptyPanel
                         title="Purchase history unavailable"
                         description="You do not have permission to view inventory purchase history."
+                      />
+                    ) : purchaseTrendQuery.isLoading ? (
+                      <EmptyPanel
+                        title="Loading purchase-cost trend"
+                        description="Loading complete posted Goods Receipt cost evidence."
+                      />
+                    ) : purchaseTrendQuery.isError ? (
+                      <EmptyPanel
+                        title="Unable to load purchase-cost trend"
+                        description={
+                          purchaseTrendQuery.error instanceof Error
+                            ? purchaseTrendQuery.error.message
+                            : "Purchase-cost trend could not be loaded."
+                        }
                       />
                     ) : purchaseChartData.length === 0 ? (
                       <EmptyPanel
@@ -538,32 +813,157 @@ export function ProductIntelligencePage() {
                             />
                             <YAxis />
                             <Tooltip
-                              formatter={(
-                                value,
-                              ) => [
-                                displayNumber(
-                                  value as number,
-                                ),
-                                "Base-unit purchase cost",
-                              ]}
-                              labelFormatter={(
-                                value,
-                              ) =>
-                                displayDate(
-                                  String(value),
-                                )
-                              }
+                              wrapperStyle={{
+                                pointerEvents: "auto",
+                              }}
+                              content={({
+                                active,
+                                payload,
+                              }) => {
+                                if (
+                                  !active ||
+                                  !payload?.length
+                                ) {
+                                  return null;
+                                }
+
+                                const point =
+                                  payload[0]
+                                    .payload as
+                                    PriceTrendChartPoint;
+
+                                const sourcePath =
+                                  priceTrendSourcePath(
+                                    point,
+                                  );
+
+                                return (
+                                  <div className="min-w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
+                                    <p className="font-medium">
+                                      {point.label}
+                                    </p>
+
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      {displayDate(
+                                        point.date,
+                                      )}
+                                    </p>
+
+                                    <div className="mt-3 space-y-1.5">
+                                      <p>
+                                        Base-unit cost:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.value,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      <p>
+                                        Transaction cost:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.rawValue,
+                                          )}
+                                        </span>
+                                        {point.uom
+                                          ? ` / ${point.uom}`
+                                          : ""}
+                                      </p>
+
+                                      <p>
+                                        Base quantity:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            point.quantity,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      {point.supplier ? (
+                                        <p>
+                                          Supplier:{" "}
+                                          <span className="font-medium">
+                                            {point.supplier}
+                                          </span>
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    {sourcePath ? (
+                                      <Link
+                                        to={sourcePath}
+                                        className="mt-3 inline-flex h-8 items-center rounded-md border px-3 font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                      >
+                                        Open{" "}
+                                        {priceTrendSourceLabel(
+                                          point,
+                                        )}
+                                      </Link>
+                                    ) : null}
+                                  </div>
+                                );
+                              }}
                             />
+
                             <Line
                               type="monotone"
                               dataKey="value"
                               stroke="currentColor"
-                              dot
+                              dot={(props) => {
+                                const {
+                                  cx,
+                                  cy,
+                                  payload,
+                                } = props;
+
+                                const point =
+                                  payload as
+                                    PriceTrendChartPoint;
+
+                                const sourcePath =
+                                  priceTrendSourcePath(
+                                    point,
+                                  );
+
+                                return (
+                                  <circle
+                                    cx={cx}
+                                    cy={cy}
+                                    r={4}
+                                    fill="currentColor"
+                                    stroke="var(--background)"
+                                    strokeWidth={2}
+                                    className={
+                                      sourcePath
+                                        ? "cursor-pointer"
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      if (
+                                        sourcePath
+                                      ) {
+                                        navigate(
+                                          sourcePath,
+                                        );
+                                      }
+                                    }}
+                                  />
+                                );
+                              }}
                             />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
                     )}
+
+                    {purchaseChartData.length > 0 ? (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Hover for persisted receipt
+                        evidence. Select a chart point to
+                        open its source Goods Receipt.
+                      </p>
+                    ) : null}
                   </CardContent>
                 </Card>
               </div>

@@ -132,6 +132,42 @@ export interface ProductPurchaseHistoryItem {
   batch: ProductHistoryBatch;
 }
 
+export interface ProductPriceTrendItem {
+  id: string;
+  occurred_at: string | null;
+  value: string;
+  quantity: string;
+  transaction_value: string;
+
+  uom: ProductHistoryUom;
+
+  warehouse: {
+    id: string;
+    code: string;
+    name: string;
+  };
+
+  status?: string | null;
+  refund_status?: string | null;
+  is_returned?: boolean;
+
+  supplier?: {
+    id: string;
+    name: string;
+  } | null;
+
+  source: {
+    type: "sale" | "goods_receipt";
+    id: string;
+    number: string;
+  };
+}
+
+export interface ProductPriceTrendResponse {
+  ok: true;
+  items: ProductPriceTrendItem[];
+}
+
 export interface ProductMovementHistoryItem {
   id: string;
   movement_type: string;
@@ -312,6 +348,12 @@ export interface ProductSalesHistoryParams
 export interface ProductPurchaseHistoryParams
   extends ProductHistoryListParams {
   supplier_id?: string;
+}
+
+export interface ProductPriceTrendParams {
+  date_from?: string;
+  date_to?: string;
+  warehouse_id?: string;
 }
 
 export interface ProductBatchHistoryParams {

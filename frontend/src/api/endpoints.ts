@@ -168,6 +168,12 @@ export const API_ENDPOINTS = {
     HISTORY_PURCHASES: (id: string) =>
       `${byId("/products", id)}/history/purchases`,
 
+    HISTORY_SALES_PRICE_TREND: (id: string) =>
+      `${byId("/products", id)}/history/sales/price-trend`,
+
+    HISTORY_PURCHASE_PRICE_TREND: (id: string) =>
+      `${byId("/products", id)}/history/purchases/price-trend`,
+
     HISTORY_MOVEMENTS: (id: string) =>
       `${byId("/products", id)}/history/movements`,
 

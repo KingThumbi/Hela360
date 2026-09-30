@@ -636,6 +636,34 @@ export const QUERY_KEYS = {
         params ?? {},
       ] as const,
 
+    historySalesPriceTrend: (
+      scope: TenantQueryScope,
+      productId: string | number,
+      params?: object,
+    ) =>
+      [
+        ...QUERY_KEYS.products.history(
+          scope,
+          productId,
+        ),
+        "sales-price-trend",
+        params ?? {},
+      ] as const,
+
+    historyPurchasePriceTrend: (
+      scope: TenantQueryScope,
+      productId: string | number,
+      params?: object,
+    ) =>
+      [
+        ...QUERY_KEYS.products.history(
+          scope,
+          productId,
+        ),
+        "purchase-price-trend",
+        params ?? {},
+      ] as const,
+
     historyMovements: (
       scope: TenantQueryScope,
       productId: string | number,

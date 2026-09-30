@@ -935,6 +935,352 @@ class ProductHistoryQueryService:
             "has_next": filters.page < pages,
         }
 
+    def list_sales_price_trend(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductSalesHistoryFilters,
+    ) -> list[dict] | None:
+        """
+        Return complete persisted selling-price evidence for one
+        product and selected branch/date/warehouse scope.
+
+        This is deliberately non-paginated because callers use it
+        as a chart data source. It must not silently represent only
+        one page of a product's price history.
+        """
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise ValueError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            warehouse = (
+                self.session.query(Warehouse)
+                .filter(
+                    Warehouse.id == filters.warehouse_id,
+                    Warehouse.tenant_id == tenant_id,
+                    Warehouse.branch_id == branch_id,
+                )
+                .first()
+            )
+
+            if warehouse is None:
+                raise ValueError(
+                    "warehouse_id is not valid for this branch."
+                )
+
+        query = (
+            self.session.query(
+                SaleItem,
+                Sale,
+                Warehouse,
+            )
+            .join(
+                Sale,
+                Sale.id == SaleItem.sale_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id == Sale.warehouse_id,
+            )
+            .filter(
+                SaleItem.product_id == product_id,
+                Sale.tenant_id == tenant_id,
+                Sale.branch_id == branch_id,
+                Warehouse.tenant_id == tenant_id,
+                Warehouse.branch_id == branch_id,
+            )
+        )
+
+        if filters.date_from:
+            query = query.filter(
+                Sale.sale_date >= filters.date_from
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                Sale.sale_date <= filters.date_to
+            )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                Sale.warehouse_id == filters.warehouse_id
+            )
+
+        rows = (
+            query.order_by(
+                Sale.sale_date.asc(),
+                Sale.id.asc(),
+                SaleItem.id.asc(),
+            )
+            .all()
+        )
+
+        items = []
+
+        for sale_item, sale, warehouse in rows:
+            conversion_factor = Decimal(
+                sale_item.conversion_factor_to_base or 1
+            )
+
+            if conversion_factor <= 0:
+                continue
+
+            normalized_price = (
+                Decimal(sale_item.unit_price)
+                / conversion_factor
+            ).quantize(
+                Decimal("0.000001"),
+                rounding=ROUND_HALF_UP,
+            )
+
+            items.append(
+                {
+                    "id": str(sale_item.id),
+                    "occurred_at": (
+                        sale.sale_date.isoformat()
+                        if sale.sale_date
+                        else None
+                    ),
+                    "value": str(normalized_price),
+                    "quantity": str(
+                        sale_item.base_quantity
+                    ),
+                    "transaction_value": str(
+                        sale_item.unit_price
+                    ),
+                    "uom": {
+                        "code":
+                            sale_item.unit_code_snapshot,
+                        "name":
+                            sale_item.unit_name_snapshot,
+                        "conversion_factor_to_base": str(
+                            sale_item
+                            .conversion_factor_to_base
+                        ),
+                    },
+                    "warehouse": {
+                        "id": str(warehouse.id),
+                        "code": warehouse.code,
+                        "name": warehouse.name,
+                    },
+                    "status": sale.status,
+                    "refund_status":
+                        sale.refund_status,
+                    "is_returned": bool(
+                        sale_item.is_returned
+                    ),
+                    "source": {
+                        "type": "sale",
+                        "id": str(sale.id),
+                        "number": sale.sale_number,
+                    },
+                }
+            )
+
+        return items
+
+    def list_purchase_price_trend(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductPurchaseHistoryFilters,
+    ) -> list[dict] | None:
+        """
+        Return complete posted Goods Receipt cost evidence for one
+        product and selected branch/date/warehouse scope.
+
+        Only posted receipts are authoritative inventory-cost
+        evidence.
+        """
+        if not branch_id:
+            raise ValueError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        product = (
+            self.session.query(Product)
+            .filter(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+            )
+            .first()
+        )
+
+        if product is None:
+            return None
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise ValueError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            warehouse = (
+                self.session.query(Warehouse)
+                .filter(
+                    Warehouse.id == filters.warehouse_id,
+                    Warehouse.tenant_id == tenant_id,
+                    Warehouse.branch_id == branch_id,
+                )
+                .first()
+            )
+
+            if warehouse is None:
+                raise ValueError(
+                    "warehouse_id is not valid for this branch."
+                )
+
+        query = (
+            self.session.query(
+                GoodsReceiptItem,
+                GoodsReceipt,
+                Warehouse,
+                Supplier,
+            )
+            .join(
+                GoodsReceipt,
+                GoodsReceipt.id
+                == GoodsReceiptItem.goods_receipt_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id
+                == GoodsReceipt.warehouse_id,
+            )
+            .outerjoin(
+                Supplier,
+                Supplier.id == GoodsReceipt.supplier_id,
+            )
+            .filter(
+                GoodsReceiptItem.product_id == product_id,
+                GoodsReceipt.tenant_id == tenant_id,
+                GoodsReceipt.branch_id == branch_id,
+                GoodsReceipt.status == "posted",
+                GoodsReceipt.posted_at.isnot(None),
+                Warehouse.tenant_id == tenant_id,
+                Warehouse.branch_id == branch_id,
+            )
+        )
+
+        if filters.date_from:
+            query = query.filter(
+                GoodsReceipt.posted_at
+                >= datetime.combine(
+                    filters.date_from,
+                    time.min,
+                )
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                GoodsReceipt.posted_at
+                <= datetime.combine(
+                    filters.date_to,
+                    time.max,
+                )
+            )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                GoodsReceipt.warehouse_id
+                == filters.warehouse_id
+            )
+
+        rows = (
+            query.order_by(
+                GoodsReceipt.posted_at.asc(),
+                GoodsReceipt.id.asc(),
+                GoodsReceiptItem.line_number.asc(),
+                GoodsReceiptItem.id.asc(),
+            )
+            .all()
+        )
+
+        return [
+            {
+                "id": str(receipt_item.id),
+                "occurred_at": (
+                    receipt.posted_at.isoformat()
+                    if receipt.posted_at
+                    else None
+                ),
+                "value": str(
+                    receipt_item.base_unit_cost
+                ),
+                "quantity": str(
+                    receipt_item.base_quantity
+                ),
+                "transaction_value": str(
+                    receipt_item.unit_cost
+                ),
+                "uom": {
+                    "code":
+                        receipt_item.unit_code_snapshot,
+                    "name":
+                        receipt_item.unit_name_snapshot,
+                    "conversion_factor_to_base": str(
+                        receipt_item
+                        .conversion_factor_to_base
+                    ),
+                },
+                "warehouse": {
+                    "id": str(warehouse.id),
+                    "code": warehouse.code,
+                    "name": warehouse.name,
+                },
+                "supplier": (
+                    {
+                        "id": str(supplier.id),
+                        "name": supplier.name,
+                    }
+                    if supplier
+                    else None
+                ),
+                "source": {
+                    "type": "goods_receipt",
+                    "id": str(receipt.id),
+                    "number": receipt.receipt_number,
+                },
+            }
+            for (
+                receipt_item,
+                receipt,
+                warehouse,
+                supplier,
+            ) in rows
+        ]
+
     def list_stock_counts(
         self,
         *,

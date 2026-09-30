@@ -593,6 +593,133 @@ def test_sales_history_requires_branch(
     assert "branch" in response.get_json()["error"]
 
 
+def test_sales_price_trend_is_complete_chronological_and_normalized(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/sales/price-trend"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert "pagination" not in payload
+
+    items = payload["items"]
+
+    assert [
+        item["source"]["id"]
+        for item in items
+    ] == [
+        "sale-old",
+        "sale-refunded",
+        "sale-new",
+    ]
+
+    assert [
+        item["value"]
+        for item in items
+    ] == [
+        "10.000000",
+        "12.000000",
+        "12.000000",
+    ]
+
+    assert items[0]["source"] == {
+        "type": "sale",
+        "id": "sale-old",
+        "number": "SALE-OLD",
+    }
+
+    refunded = items[1]
+
+    assert refunded["status"] == "refunded"
+    assert refunded["refund_status"] == "refunded"
+    assert refunded["is_returned"] is True
+
+
+def test_sales_price_trend_filters_date_and_warehouse(
+    client,
+):
+    add_sale(
+        "sale-front-trend",
+        sale_number="SALE-FRONT-TREND",
+        sale_date=datetime(
+            2026,
+            8,
+            13,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        warehouse_id=SECOND_WAREHOUSE_ID,
+        till_id=SECOND_TILL_ID,
+        batch_id=None,
+        unit_price=Decimal("150.00"),
+    )
+    db.session.commit()
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/sales/price-trend"
+            "?date_from=2026-08-13"
+            "&date_to=2026-08-13"
+            f"&warehouse_id={SECOND_WAREHOUSE_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    items = response.get_json()["items"]
+
+    assert [
+        item["source"]["id"]
+        for item in items
+    ] == ["sale-front-trend"]
+
+    assert items[0]["value"] == "15.000000"
+
+
+def test_sales_price_trend_rejects_cross_tenant_product(
+    client,
+):
+    response = client.get(
+        (
+            "/api/products/other-tenant-product/"
+            "history/sales/price-trend"
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {
+        "ok": False,
+        "error": "Product not found.",
+    }
+
+
+def test_sales_price_trend_requires_branch(
+    client,
+    identity: SimpleNamespace,
+):
+    identity.branch_id = None
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/sales/price-trend"
+        )
+    )
+
+    assert response.status_code == 400
+    assert "branch" in response.get_json()["error"]
+
+
 def test_sales_history_requires_sales_read(
     app_context,
     identity: SimpleNamespace,

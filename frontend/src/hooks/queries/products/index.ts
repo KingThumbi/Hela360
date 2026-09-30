@@ -78,6 +78,14 @@ export {
 } from "./useProductPurchaseHistory";
 
 export {
+  useProductSalesPriceTrend,
+} from "./useProductSalesPriceTrend";
+
+export {
+  useProductPurchasePriceTrend,
+} from "./useProductPurchasePriceTrend";
+
+export {
   useProductMovementHistory,
 } from "./useProductMovementHistory";
 
