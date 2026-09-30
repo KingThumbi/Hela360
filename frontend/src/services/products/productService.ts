@@ -52,6 +52,7 @@ import type {
   ProductHistorySummaryResponse,
   ProductMovementHistoryItem,
   ProductMovementHistoryParams,
+  ProductMovementTimelineResponse,
   ProductPriceTrendParams,
   ProductPriceTrendResponse,
   ProductPurchaseHistoryItem,
@@ -277,6 +278,28 @@ class ProductService extends BaseService<
       const response =
         await this.getRequest<ProductPriceTrendResponse>(
           API_ENDPOINTS.PRODUCTS.HISTORY_PURCHASE_PRICE_TREND(
+            String(productId),
+          ),
+          {
+            ...config,
+            params: {
+              ...config?.params,
+              ...params,
+            },
+          },
+        );
+
+      return response.data;
+    }
+
+    async listProductMovementTimeline(
+      productId: string | number,
+      params?: ProductMovementHistoryParams,
+      config?: AxiosRequestConfig,
+    ): Promise<ProductMovementTimelineResponse> {
+      const response =
+        await this.getRequest<ProductMovementTimelineResponse>(
+          API_ENDPOINTS.PRODUCTS.HISTORY_MOVEMENT_TIMELINE(
             String(productId),
           ),
           {

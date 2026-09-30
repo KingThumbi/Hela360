@@ -678,6 +678,20 @@ export const QUERY_KEYS = {
         params ?? {},
       ] as const,
 
+    historyMovementTimeline: (
+      scope: TenantQueryScope,
+      productId: string | number,
+      params?: object,
+    ) =>
+      [
+        ...QUERY_KEYS.products.history(
+          scope,
+          productId,
+        ),
+        "movement-timeline",
+        params ?? {},
+      ] as const,
+
     historyBatches: (
       scope: TenantQueryScope,
       productId: string | number,

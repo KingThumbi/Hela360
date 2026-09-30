@@ -8,9 +8,12 @@ import {
   useParams,
 } from "react-router-dom";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -43,11 +46,16 @@ import {
 import { useAuthorization } from "@/hooks/useAuthorization";
 import {
   useProductHistory,
+  useProductMovementTimeline,
   useProductPurchasePriceTrend,
   useProductSalesPriceTrend,
 } from "@/hooks/queries/products";
 
 import { PATHS } from "@/routes/routes";
+
+import type {
+  ProductMovementHistoryItem,
+} from "@/types/responses/product-history";
 
 import {
   ProductBatchHistoryPanel,
@@ -100,6 +108,61 @@ function priceTrendSourceLabel(
   return point.sourceType === "sale"
     ? "Sale Receipt"
     : "Goods Receipt";
+}
+
+function movementSourcePath(
+  item: ProductMovementHistoryItem,
+) {
+  const referenceType =
+    item.reference?.type;
+
+  const referenceId =
+    item.reference?.id;
+
+  if (!referenceId) {
+    return null;
+  }
+
+  if (referenceType === "sale") {
+    return PATHS.SALES.receipt(
+      referenceId,
+    );
+  }
+
+  if (referenceType === "goods_receipt") {
+    return PATHS.INVENTORY.receipt(
+      referenceId,
+    );
+  }
+
+  if (referenceType === "stock_adjustment") {
+    return PATHS.INVENTORY.stockAdjustment(
+      referenceId,
+    );
+  }
+
+  return null;
+}
+
+function movementSourceLabel(
+  item: ProductMovementHistoryItem,
+) {
+  const referenceType =
+    item.reference?.type;
+
+  if (referenceType === "sale") {
+    return "Sale Receipt";
+  }
+
+  if (referenceType === "goods_receipt") {
+    return "Goods Receipt";
+  }
+
+  if (referenceType === "stock_adjustment") {
+    return "Stock Adjustment";
+  }
+
+  return null;
 }
 
 function numeric(value: string | null | undefined) {
@@ -216,6 +279,20 @@ export function ProductIntelligencePage() {
       },
     );
 
+  const movementTimelineQuery =
+    useProductMovementTimeline(
+      productId,
+      {
+        date_from:
+          trendDateFrom || undefined,
+        date_to:
+          trendDateTo || undefined,
+      },
+      {
+        enabled: canReadInventory,
+      },
+    );
+
 
 
   if (summaryQuery.isLoading) {
@@ -295,6 +372,20 @@ export function ProductIntelligencePage() {
         sourceId: item.source.id,
         sourceType: item.source.type,
         supplier: item.supplier?.name ?? null,
+      }));
+
+  const movementChartData =
+    (movementTimelineQuery.data?.items ?? [])
+      .filter(
+        (item) =>
+          item.created_at &&
+          numeric(item.quantity) !== null,
+      )
+      .map((item) => ({
+        ...item,
+        created_at: item.created_at!,
+        numericQuantity:
+          numeric(item.quantity),
       }));
 
   const stock =
@@ -473,11 +564,12 @@ export function ProductIntelligencePage() {
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    Price trend period
+                    Product intelligence period
                   </CardTitle>
                   <CardDescription>
-                    Filter authoritative transaction
-                    evidence used by both price charts.
+                    Filter authoritative price and
+                    inventory-ledger evidence across the
+                    Product Intelligence overview.
                   </CardDescription>
                 </CardHeader>
 
@@ -515,9 +607,9 @@ export function ProductIntelligencePage() {
                   </div>
 
                   <p className="mt-3 text-xs text-muted-foreground">
-                    These charts are not paginated. Every
-                    matching persisted price point in the
-                    selected period is represented.
+                    Overview graphs are not paginated.
+                    Every matching persisted evidence point
+                    in the selected period is represented.
                   </p>
                 </CardContent>
               </Card>
@@ -967,6 +1059,250 @@ export function ProductIntelligencePage() {
                   </CardContent>
                 </Card>
               </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    Inventory movement timeline
+                  </CardTitle>
+
+                  <CardDescription>
+                    Signed base-unit inventory ledger
+                    movements. Positive quantities move
+                    stock in; negative quantities move
+                    stock out.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                  {!canReadInventory ? (
+                    <EmptyPanel
+                      title="Movement timeline unavailable"
+                      description="You do not have permission to view inventory movements."
+                    />
+                  ) : movementTimelineQuery.isLoading ? (
+                    <EmptyPanel
+                      title="Loading movement timeline"
+                      description="Loading complete persisted inventory-ledger evidence."
+                    />
+                  ) : movementTimelineQuery.isError ? (
+                    <EmptyPanel
+                      title="Unable to load movement timeline"
+                      description={
+                        movementTimelineQuery.error instanceof Error
+                          ? movementTimelineQuery.error.message
+                          : "Inventory movement timeline could not be loaded."
+                      }
+                    />
+                  ) : movementChartData.length === 0 ? (
+                    <EmptyPanel
+                      title="No movement evidence"
+                      description="No inventory ledger movements were found for the selected period."
+                    />
+                  ) : (
+                    <>
+                      <div className="h-80">
+                        <ResponsiveContainer
+                          width="100%"
+                          height="100%"
+                        >
+                          <BarChart
+                            data={movementChartData}
+                          >
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                            />
+
+                            <XAxis
+                              dataKey="created_at"
+                              tickFormatter={(value) =>
+                                new Date(
+                                  String(value),
+                                ).toLocaleDateString()
+                              }
+                            />
+
+                            <YAxis />
+
+                            <ReferenceLine y={0} />
+
+                            <Tooltip
+                              wrapperStyle={{
+                                pointerEvents: "auto",
+                              }}
+                              content={({
+                                active,
+                                payload,
+                              }) => {
+                                if (
+                                  !active ||
+                                  !payload?.length
+                                ) {
+                                  return null;
+                                }
+
+                                const item =
+                                  payload[0]
+                                    .payload as
+                                    ProductMovementHistoryItem & {
+                                      numericQuantity:
+                                        number | null;
+                                    };
+
+                                const sourcePath =
+                                  movementSourcePath(
+                                    item,
+                                  );
+
+                                const sourceLabel =
+                                  movementSourceLabel(
+                                    item,
+                                  );
+
+                                const quantity =
+                                  Number(
+                                    item.quantity,
+                                  );
+
+                                const direction =
+                                  quantity > 0
+                                    ? "Stock in"
+                                    : quantity < 0
+                                      ? "Stock out"
+                                      : "Neutral";
+
+                                return (
+                                  <div className="min-w-64 rounded-xl border bg-background p-4 text-sm shadow-lg">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium">
+                                        {
+                                          item.movement_type
+                                        }
+                                      </span>
+
+                                      <Badge variant="outline">
+                                        {direction}
+                                      </Badge>
+                                    </div>
+
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      {displayDate(
+                                        item.created_at,
+                                      )}
+                                    </p>
+
+                                    <div className="mt-3 space-y-1.5">
+                                      <p>
+                                        Quantity:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            item.quantity,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      {item.warehouse?.name ? (
+                                        <p>
+                                          Warehouse:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              item
+                                                .warehouse
+                                                .name
+                                            }
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.batch?.batch_number ? (
+                                        <p>
+                                          Batch:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              item.batch
+                                                .batch_number
+                                            }
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.unit_cost != null ? (
+                                        <p>
+                                          Persisted unit cost:{" "}
+                                          <span className="font-medium">
+                                            {displayNumber(
+                                              item.unit_cost,
+                                            )}
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.unit_price != null ? (
+                                        <p>
+                                          Persisted unit price:{" "}
+                                          <span className="font-medium">
+                                            {displayNumber(
+                                              item.unit_price,
+                                            )}
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.performed_by ? (
+                                        <p>
+                                          Performed by:{" "}
+                                          <span className="font-medium">
+                                            {item.performed_by.name ??
+                                              item.performed_by.username ??
+                                              "Unknown"}
+                                          </span>
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    {sourcePath &&
+                                    sourceLabel ? (
+                                      <Link
+                                        to={sourcePath}
+                                        className="mt-3 inline-flex h-8 items-center rounded-md border px-3 font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                      >
+                                        Open{" "}
+                                        {sourceLabel}
+                                      </Link>
+                                    ) : item.reference?.type ? (
+                                      <p className="mt-3 text-xs text-muted-foreground">
+                                        Source evidence:{" "}
+                                        {
+                                          item.reference
+                                            .type
+                                        }
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                );
+                              }}
+                            />
+
+                            <Bar
+                              dataKey="numericQuantity"
+                              fill="currentColor"
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        This graph shows persisted signed
+                        movements, not a reconstructed
+                        historical stock balance. Hover a
+                        movement for its ledger evidence and
+                        source document where a canonical
+                        route exists.
+                      </p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
 
               {!summary.capabilities.profitability ? (
                 <Card>

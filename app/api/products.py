@@ -546,6 +546,53 @@ def get_product_movement_history(product_id: str):
     )
 
 
+@bp.get(
+    "/products/<product_id>/history/movements/timeline"
+)
+@require_permission("inventory.read")
+def get_product_movement_timeline(product_id: str):
+    identity = _current_identity()
+
+    try:
+        requested = (
+            InventoryMovementListFilters.from_query(
+                request.args
+            )
+        )
+
+        filters = InventoryMovementListFilters(
+            date_from=requested.date_from,
+            date_to=requested.date_to,
+            product_id=product_id,
+            warehouse_id=requested.warehouse_id,
+            batch_id=requested.batch_id,
+            movement_type=requested.movement_type,
+            reference_type=requested.reference_type,
+            reference_id=requested.reference_id,
+        )
+
+        items = InventoryQueryService(
+            db.session
+        ).list_movement_timeline(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            filters=filters,
+        )
+
+    except InventoryQueryError as exc:
+        return _json_error(
+            str(exc),
+            400,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": items,
+        }
+    )
+
+
 @bp.get("/products/<product_id>/history/batches")
 @require_permission("inventory.read")
 def get_product_batch_history(product_id: str):

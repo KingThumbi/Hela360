@@ -434,6 +434,183 @@ class InventoryQueryService:
             ) in rows
         ], _pagination(filters.page, filters.per_page, total)
 
+    def list_movement_timeline(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        filters: InventoryMovementListFilters,
+    ) -> list[dict]:
+        """
+        Return complete chronological inventory-ledger evidence.
+
+        This deliberately has no pagination because it is the
+        Product Intelligence chart source. It exposes persisted
+        signed movements only and does not reconstruct historical
+        stock balances.
+        """
+        if not branch_id:
+            raise InventoryQueryError(
+                "Authenticated user is not assigned to a branch."
+            )
+
+        if (
+            filters.date_from
+            and filters.date_to
+            and filters.date_from > filters.date_to
+        ):
+            raise InventoryQueryError(
+                "date_from must be before or equal to date_to."
+            )
+
+        if filters.warehouse_id:
+            self._require_branch_warehouse(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                warehouse_id=filters.warehouse_id,
+            )
+
+        if filters.product_id:
+            self._require_tenant_product(
+                tenant_id=tenant_id,
+                product_id=filters.product_id,
+            )
+
+        query = (
+            self.session.query(
+                InventoryMovement,
+                Product,
+                Warehouse,
+                InventoryBatch,
+                User.id.label("performed_by_id"),
+                User.first_name.label(
+                    "performed_by_first_name"
+                ),
+                User.last_name.label(
+                    "performed_by_last_name"
+                ),
+                User.username.label(
+                    "performed_by_username"
+                ),
+            )
+            .join(
+                Product,
+                Product.id
+                == InventoryMovement.product_id,
+            )
+            .join(
+                Warehouse,
+                Warehouse.id
+                == InventoryMovement.warehouse_id,
+            )
+            .outerjoin(
+                InventoryBatch,
+                InventoryBatch.id
+                == InventoryMovement.batch_id,
+            )
+            .outerjoin(
+                User,
+                User.id
+                == InventoryMovement.created_by,
+            )
+            .filter(
+                InventoryMovement.tenant_id
+                == tenant_id,
+                InventoryMovement.branch_id
+                == branch_id,
+                Product.tenant_id
+                == tenant_id,
+                Warehouse.tenant_id
+                == tenant_id,
+                Warehouse.branch_id
+                == branch_id,
+            )
+        )
+
+        if filters.date_from:
+            query = query.filter(
+                InventoryMovement.created_at
+                >= _day_start(filters.date_from)
+            )
+
+        if filters.date_to:
+            query = query.filter(
+                InventoryMovement.created_at
+                <= _day_end(filters.date_to)
+            )
+
+        if filters.product_id:
+            query = query.filter(
+                InventoryMovement.product_id
+                == filters.product_id
+            )
+
+        if filters.warehouse_id:
+            query = query.filter(
+                InventoryMovement.warehouse_id
+                == filters.warehouse_id
+            )
+
+        if filters.batch_id:
+            query = query.filter(
+                InventoryMovement.batch_id
+                == filters.batch_id
+            )
+
+        if filters.movement_type:
+            query = query.filter(
+                InventoryMovement.movement_type
+                == filters.movement_type
+            )
+
+        if filters.reference_type:
+            query = query.filter(
+                InventoryMovement.reference_type
+                == filters.reference_type
+            )
+
+        if filters.reference_id:
+            query = query.filter(
+                InventoryMovement.reference_id
+                == filters.reference_id
+            )
+
+        rows = (
+            query.order_by(
+                InventoryMovement.created_at.asc(),
+                InventoryMovement.id.asc(),
+            )
+            .all()
+        )
+
+        return [
+            self._serialize_movement(
+                movement=movement,
+                product=product,
+                warehouse=warehouse,
+                batch=batch,
+                performed_by={
+                    "id": performed_by_id,
+                    "first_name":
+                        performed_by_first_name,
+                    "last_name":
+                        performed_by_last_name,
+                    "username":
+                        performed_by_username,
+                },
+            )
+            for (
+                movement,
+                product,
+                warehouse,
+                batch,
+                performed_by_id,
+                performed_by_first_name,
+                performed_by_last_name,
+                performed_by_username,
+            ) in rows
+        ]
+
     def _require_branch_warehouse(
         self,
         *,

@@ -90,6 +90,10 @@ export {
 } from "./useProductMovementHistory";
 
 export {
+  useProductMovementTimeline,
+} from "./useProductMovementTimeline";
+
+export {
   useProductBatchHistory,
 } from "./useProductBatchHistory";
 

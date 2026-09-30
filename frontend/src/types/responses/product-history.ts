@@ -207,6 +207,11 @@ export interface ProductMovementHistoryItem {
   created_at: string | null;
 }
 
+export interface ProductMovementTimelineResponse {
+  ok: true;
+  items: ProductMovementHistoryItem[];
+}
+
 export interface ProductBatchHistoryItem {
   id: string;
 

@@ -305,6 +305,155 @@ def seed_data():
     db.session.commit()
 
 
+def test_product_movement_timeline_is_complete_and_chronological(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/movements/timeline"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert "pagination" not in payload
+
+    assert [
+        item["id"]
+        for item in payload["items"]
+    ] == [
+        "movement-old",
+        "movement-new",
+    ]
+
+    assert [
+        item["quantity"]
+        for item in payload["items"]
+    ] == [
+        "-2.0000",
+        "1.0000",
+    ]
+
+    assert payload["items"][0]["reference"] == {
+        "type": "sale",
+        "id": "sale-1",
+    }
+
+    assert payload["items"][1]["reference"] == {
+        "type": "sale_refund",
+        "id": "refund-1",
+    }
+
+
+def test_product_movement_timeline_preserves_prices_and_actor(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/movements/timeline"
+        )
+    )
+
+    assert response.status_code == 200
+
+    item = response.get_json()["items"][0]
+
+    assert item["unit_cost"] == "3.25"
+    assert item["unit_price"] == "5.50"
+
+    assert item["performed_by"] == {
+        "id": USER_ID,
+        "name": "Inventory Auditor",
+        "username": "inventory",
+    }
+
+
+def test_product_movement_timeline_supports_filters(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/movements/timeline"
+            "?movement_type=sale"
+            f"&batch_id={BATCH_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    items = response.get_json()["items"]
+
+    assert [
+        item["id"]
+        for item in items
+    ] == [
+        "movement-old",
+    ]
+
+
+def test_product_movement_timeline_path_product_cannot_be_overridden(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/movements/timeline"
+            f"?product_id={SECOND_PRODUCT_ID}"
+        )
+    )
+
+    assert response.status_code == 200
+
+    assert [
+        item["id"]
+        for item in response.get_json()["items"]
+    ] == [
+        "movement-old",
+        "movement-new",
+    ]
+
+
+def test_product_movement_timeline_rejects_cross_tenant_product(
+    client,
+):
+    response = client.get(
+        (
+            "/api/products/other-tenant-product/"
+            "history/movements/timeline"
+        )
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "ok": False,
+        "error":
+            "product_id is not valid for this tenant.",
+    }
+
+
+def test_product_movement_timeline_requires_branch(
+    client,
+    identity: SimpleNamespace,
+):
+    identity.branch_id = None
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/movements/timeline"
+        )
+    )
+
+    assert response.status_code == 400
+    assert "branch" in response.get_json()["error"]
+
+
 def test_product_movement_history_is_product_and_branch_scoped(
     client,
 ):
