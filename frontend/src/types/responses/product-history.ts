@@ -138,6 +138,7 @@ export interface ProductPriceTrendItem {
   value: string;
   quantity: string;
   transaction_value: string;
+  currency?: string | null;
 
   uom: ProductHistoryUom;
 

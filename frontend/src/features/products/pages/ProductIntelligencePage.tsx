@@ -68,6 +68,10 @@ import {
 } from "../components/ProductOperationalInsights";
 
 import {
+  ProductSupplierIntelligence,
+} from "../components/ProductSupplierIntelligence";
+
+import {
   ProductBatchHistoryPanel,
   ProductMovementHistoryPanel,
   ProductPurchaseHistoryPanel,
@@ -785,6 +789,15 @@ export function ProductIntelligencePage() {
                     : []
                 }
               />
+
+              {canReadInventory ? (
+                <ProductSupplierIntelligence
+                  purchases={
+                    purchaseTrendQuery.data
+                      ?.items ?? []
+                  }
+                />
+              ) : null}
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <Card>

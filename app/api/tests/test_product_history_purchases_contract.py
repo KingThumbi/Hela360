@@ -124,6 +124,7 @@ def receipt(
     branch_id: str = BRANCH_ID,
     warehouse_id: str = WAREHOUSE_ID,
     supplier_id: str | None = SUPPLIER_ID,
+    invoice_currency: str = "KES",
     status: str = "posted",
     posted_at: datetime | None = None,
     received_at: datetime | None = None,
@@ -153,7 +154,7 @@ def receipt(
         supplier_reference=f"DN-{receipt_id}",
         supplier_invoice_number=f"INV-{receipt_id}",
         supplier_invoice_date=date(2026, 8, 9),
-        invoice_currency="KES",
+        invoice_currency=invoice_currency,
         idempotency_key=f"idem-{receipt_id}",
         request_fingerprint=f"fingerprint-{receipt_id}",
         created_by=USER_ID,
@@ -665,3 +666,47 @@ def test_purchase_history_requires_inventory_read(
 
     assert response.status_code == 403
     assert captured["kwargs"]["permission"] == "inventory.read"
+
+
+
+def test_purchase_price_trend_preserves_receipt_currency(
+    client,
+):
+    receipt(
+        "receipt-usd",
+        receipt_number="GRN-USD",
+        supplier_id=SECOND_SUPPLIER_ID,
+        invoice_currency="USD",
+        posted_at=datetime(
+            2026,
+            8,
+            12,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        ),
+    )
+    db.session.commit()
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/purchases/price-trend"
+        )
+    )
+
+    assert response.status_code == 200
+
+    items_by_receipt = {
+        item["source"]["id"]: item
+        for item in response.get_json()["items"]
+    }
+
+    assert (
+        items_by_receipt["receipt-new"]["currency"]
+        == "KES"
+    )
+    assert (
+        items_by_receipt["receipt-usd"]["currency"]
+        == "USD"
+    )

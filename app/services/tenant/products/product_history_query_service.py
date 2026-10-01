@@ -1238,6 +1238,7 @@ class ProductHistoryQueryService:
                 "value": str(
                     receipt_item.base_unit_cost
                 ),
+                "currency": receipt.invoice_currency,
                 "quantity": str(
                     receipt_item.base_quantity
                 ),
