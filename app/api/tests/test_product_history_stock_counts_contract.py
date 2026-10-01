@@ -477,6 +477,139 @@ def seed_data():
     db.session.commit()
 
 
+def test_stock_count_variance_trend_is_complete_and_chronological(
+    client,
+):
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/stock-counts/variance-trend"
+        )
+    )
+
+    assert response.status_code == 200
+
+    payload = response.get_json()
+
+    assert payload["ok"] is True
+    assert "pagination" not in payload
+
+    assert [
+        item["stock_count"]["id"]
+        for item in payload["items"]
+    ] == [
+        "count-a",
+    ]
+
+    item = payload["items"][0]
+
+    assert item["line"]["expected_quantity"] == (
+        "10.0000"
+    )
+
+    assert item["line"]["counted_quantity"] == (
+        "12.0000"
+    )
+
+    assert item["line"]["variance_quantity"] == (
+        "2.0000"
+    )
+
+    assert item["line"]["counted_unit_quantity"] == (
+        "2.0000"
+    )
+
+    assert item["line"]["counted_unit_code"] == (
+        "BOX"
+    )
+
+    assert item["stock_count"]["lifecycle"] == (
+        "posted"
+    )
+
+    assert item["adjustment"]["quantity_delta"] == (
+        "2.0000"
+    )
+
+
+def test_stock_count_variance_trend_preserves_blind_count_hiding(
+    client,
+):
+    count = StockCount(
+        id="timeline-open-blind",
+        tenant_id=TENANT_ID,
+        branch_id=BRANCH_ID,
+        warehouse_id=WAREHOUSE_ID,
+        count_number="SC-TIMELINE-BLIND",
+        idempotency_key="timeline-open-blind",
+        request_fingerprint="9" * 64,
+        scope_type="full",
+        count_mode="blind",
+        status="open",
+        snapshot_at=datetime(
+            2026,
+            8,
+            11,
+            8,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        started_at=datetime(
+            2026,
+            8,
+            11,
+            8,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        started_by=USER_ID,
+    )
+
+    db.session.add(count)
+    db.session.flush()
+
+    db.session.add(
+        StockCountItem(
+            id="timeline-open-blind-line",
+            stock_count_id=count.id,
+            product_id=PRODUCT_ID,
+            batch_id=BATCH_ID,
+            source_type="snapshot",
+            line_number=1,
+            snapshot_quantity=Decimal("12.0000"),
+            expected_quantity=Decimal("12.0000"),
+            counted_quantity=None,
+            variance_quantity=None,
+        )
+    )
+
+    db.session.commit()
+
+    response = client.get(
+        (
+            f"/api/products/{PRODUCT_ID}"
+            "/history/stock-counts/variance-trend"
+        )
+    )
+
+    assert response.status_code == 200
+
+    item = next(
+        row
+        for row in response.get_json()["items"]
+        if row["stock_count"]["id"]
+        == "timeline-open-blind"
+    )
+
+    assert item["stock_count"]["lifecycle"] == (
+        "counting"
+    )
+
+    assert "expected_quantity" not in item["line"]
+    assert "snapshot_quantity" not in item["line"]
+    assert "variance_quantity" not in item["line"]
+
+
 def test_stock_count_history_is_product_and_branch_scoped(
     client,
 ):

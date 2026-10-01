@@ -100,3 +100,7 @@ export {
 export {
   useProductStockCountHistory,
 } from "./useProductStockCountHistory";
+
+export {
+  useProductStockCountVarianceTrend,
+} from "./useProductStockCountVarianceTrend";

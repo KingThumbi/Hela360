@@ -61,6 +61,7 @@ import type {
   ProductSalesHistoryParams,
   ProductStockCountHistoryItem,
   ProductStockCountHistoryParams,
+  ProductStockCountVarianceTrendResponse,
 } from "@/types/responses/product-history";
 
 interface ProductItemResponse {
@@ -352,6 +353,28 @@ class ProductService extends BaseService<
         ProductHistoryListResponse<ProductBatchHistoryItem>
       >(
         API_ENDPOINTS.PRODUCTS.HISTORY_BATCHES(
+          String(productId),
+        ),
+        {
+          ...config,
+          params: {
+            ...config?.params,
+            ...params,
+          },
+        },
+      );
+
+    return response.data;
+  }
+
+  async listProductStockCountVarianceTrend(
+    productId: string | number,
+    params?: ProductStockCountHistoryParams,
+    config?: AxiosRequestConfig,
+  ): Promise<ProductStockCountVarianceTrendResponse> {
+    const response =
+      await this.getRequest<ProductStockCountVarianceTrendResponse>(
+        API_ENDPOINTS.PRODUCTS.HISTORY_STOCK_COUNT_VARIANCE_TREND(
           String(productId),
         ),
         {

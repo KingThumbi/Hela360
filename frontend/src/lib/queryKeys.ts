@@ -720,6 +720,20 @@ export const QUERY_KEYS = {
         params ?? {},
       ] as const,
 
+    historyStockCountVarianceTrend: (
+      scope: TenantQueryScope,
+      productId: string | number,
+      params?: object,
+    ) =>
+      [
+        ...QUERY_KEYS.products.history(
+          scope,
+          productId,
+        ),
+        "stock-count-variance-trend",
+        params ?? {},
+      ] as const,
+
     units: (
       scope: TenantQueryScope,
       productId: string | number,

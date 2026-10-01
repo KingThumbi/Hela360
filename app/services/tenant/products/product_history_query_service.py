@@ -1643,3 +1643,61 @@ class ProductHistoryQueryService:
             "has_prev": filters.page > 1,
             "has_next": filters.page < pages,
         }
+
+
+    def list_stock_count_variance_timeline(
+        self,
+        *,
+        tenant_id: str,
+        branch_id: str | None,
+        product_id: str,
+        filters: ProductStockCountHistoryFilters,
+    ) -> list[dict] | None:
+        """
+        Return complete chronological Stock Count evidence for
+        Product Intelligence.
+
+        This deliberately reuses list_stock_counts() so lifecycle,
+        blind-count visibility, UOM snapshots, variance evidence,
+        and Stock Adjustment linkage remain canonical.
+        """
+        page = 1
+        per_page = 100
+        items = []
+
+        while True:
+            result = self.list_stock_counts(
+                tenant_id=tenant_id,
+                branch_id=branch_id,
+                product_id=product_id,
+                filters=ProductStockCountHistoryFilters(
+                    page=page,
+                    per_page=per_page,
+                    date_from=filters.date_from,
+                    date_to=filters.date_to,
+                    warehouse_id=filters.warehouse_id,
+                ),
+            )
+
+            if result is None:
+                return None
+
+            page_items, pagination = result
+
+            items.extend(page_items)
+
+            if not pagination["has_next"]:
+                break
+
+            page += 1
+
+        items.sort(
+            key=lambda item: (
+                item["stock_count"]["started_at"] or "",
+                item["stock_count"]["id"],
+                item["line"]["line_number"],
+                item["line"]["id"],
+            )
+        )
+
+        return items

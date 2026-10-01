@@ -330,6 +330,11 @@ export interface ProductStockCountHistoryItem {
   } | null;
 }
 
+export interface ProductStockCountVarianceTrendResponse {
+  ok: true;
+  items: ProductStockCountHistoryItem[];
+}
+
 export interface ProductHistoryListResponse<T> {
   ok: true;
   items: T[];

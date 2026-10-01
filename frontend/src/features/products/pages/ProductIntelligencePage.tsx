@@ -49,12 +49,14 @@ import {
   useProductMovementTimeline,
   useProductPurchasePriceTrend,
   useProductSalesPriceTrend,
+  useProductStockCountVarianceTrend,
 } from "@/hooks/queries/products";
 
 import { PATHS } from "@/routes/routes";
 
 import type {
   ProductMovementHistoryItem,
+  ProductStockCountHistoryItem,
 } from "@/types/responses/product-history";
 
 import {
@@ -163,6 +165,47 @@ function movementSourceLabel(
   }
 
   return null;
+}
+
+function stockCountPath(
+  item: ProductStockCountHistoryItem,
+) {
+  return PATHS.INVENTORY.stockCount(
+    item.stock_count.id,
+  );
+}
+
+function stockAdjustmentPath(
+  item: ProductStockCountHistoryItem,
+) {
+  if (!item.adjustment?.id) {
+    return null;
+  }
+
+  return PATHS.INVENTORY.stockAdjustment(
+    item.adjustment.id,
+  );
+}
+
+function stockCountLifecycleLabel(
+  lifecycle: string,
+) {
+  switch (lifecycle) {
+    case "counting":
+      return "Counting";
+    case "awaiting_posting":
+      return "Awaiting posting";
+    case "posted":
+      return "Posted";
+    case "completed":
+      return "Completed";
+    case "cancelled":
+      return "Cancelled";
+    case "superseded":
+      return "Superseded";
+    default:
+      return lifecycle;
+  }
 }
 
 function numeric(value: string | null | undefined) {
@@ -293,6 +336,20 @@ export function ProductIntelligencePage() {
       },
     );
 
+  const stockCountVarianceQuery =
+    useProductStockCountVarianceTrend(
+      productId,
+      {
+        date_from:
+          trendDateFrom || undefined,
+        date_to:
+          trendDateTo || undefined,
+      },
+      {
+        enabled: canCountInventory,
+      },
+    );
+
 
 
   if (summaryQuery.isLoading) {
@@ -386,6 +443,27 @@ export function ProductIntelligencePage() {
         created_at: item.created_at!,
         numericQuantity:
           numeric(item.quantity),
+      }));
+
+  const stockCountVarianceData =
+    (stockCountVarianceQuery.data?.items ?? [])
+      .map((item) => ({
+        ...item,
+        occurredAt:
+          item.stock_count.completed_at ??
+          item.stock_count.started_at,
+        expectedQuantity:
+          numeric(
+            item.line.expected_quantity,
+          ),
+        countedQuantity:
+          numeric(
+            item.line.counted_quantity,
+          ),
+        varianceQuantity:
+          numeric(
+            item.line.variance_quantity,
+          ),
       }));
 
   const stock =
@@ -1298,6 +1376,348 @@ export function ProductIntelligencePage() {
                         movement for its ledger evidence and
                         source document where a canonical
                         route exists.
+                      </p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    Stock count & variance intelligence
+                  </CardTitle>
+
+                  <CardDescription>
+                    Compare system quantity with physical
+                    counts and follow each variance through
+                    its Stock Count lifecycle and resulting
+                    inventory adjustment.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                  {!canCountInventory ? (
+                    <EmptyPanel
+                      title="Stock count intelligence unavailable"
+                      description="You do not have permission to view Stock Count evidence."
+                    />
+                  ) : stockCountVarianceQuery.isLoading ? (
+                    <EmptyPanel
+                      title="Loading stock count intelligence"
+                      description="Loading complete physical-count and variance evidence."
+                    />
+                  ) : stockCountVarianceQuery.isError ? (
+                    <EmptyPanel
+                      title="Unable to load stock count intelligence"
+                      description={
+                        stockCountVarianceQuery.error instanceof Error
+                          ? stockCountVarianceQuery.error.message
+                          : "Stock Count variance evidence could not be loaded."
+                      }
+                    />
+                  ) : stockCountVarianceData.length === 0 ? (
+                    <EmptyPanel
+                      title="No stock count evidence"
+                      description="No Stock Count lines were found for this product in the selected period."
+                    />
+                  ) : (
+                    <>
+                      <div className="h-80">
+                        <ResponsiveContainer
+                          width="100%"
+                          height="100%"
+                        >
+                          <BarChart
+                            data={stockCountVarianceData}
+                          >
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                            />
+
+                            <XAxis
+                              dataKey="stock_count.count_number"
+                            />
+
+                            <YAxis />
+
+                            <ReferenceLine y={0} />
+
+                            <Tooltip
+                              wrapperStyle={{
+                                pointerEvents: "auto",
+                              }}
+                              content={({
+                                active,
+                                payload,
+                              }) => {
+                                if (
+                                  !active ||
+                                  !payload?.length
+                                ) {
+                                  return null;
+                                }
+
+                                const item =
+                                  payload[0]
+                                    .payload as
+                                    ProductStockCountHistoryItem & {
+                                      occurredAt:
+                                        string | null;
+                                      expectedQuantity:
+                                        number | null;
+                                      countedQuantity:
+                                        number | null;
+                                      varianceQuantity:
+                                        number | null;
+                                    };
+
+                                const adjustmentPath =
+                                  stockAdjustmentPath(
+                                    item,
+                                  );
+
+                                return (
+                                  <div className="min-w-72 rounded-xl border bg-background p-4 text-sm shadow-lg">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium">
+                                        {
+                                          item.stock_count
+                                            .count_number
+                                        }
+                                      </span>
+
+                                      <Badge variant="outline">
+                                        {stockCountLifecycleLabel(
+                                          item.stock_count
+                                            .lifecycle,
+                                        )}
+                                      </Badge>
+                                    </div>
+
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      {displayDate(
+                                        item.occurredAt,
+                                      )}
+                                      {" · "}
+                                      {
+                                        item.warehouse
+                                          .name
+                                      }
+                                    </p>
+
+                                    <div className="mt-3 space-y-1.5">
+                                      {item.line
+                                        .expected_quantity !==
+                                      undefined ? (
+                                        <p>
+                                          System quantity:{" "}
+                                          <span className="font-medium">
+                                            {displayNumber(
+                                              item.line
+                                                .expected_quantity,
+                                            )}
+                                          </span>
+                                        </p>
+                                      ) : (
+                                        <p className="text-muted-foreground">
+                                          System quantity hidden
+                                          during blind counting
+                                        </p>
+                                      )}
+
+                                      <p>
+                                        Counted quantity:{" "}
+                                        <span className="font-medium">
+                                          {displayNumber(
+                                            item.line
+                                              .counted_quantity,
+                                          )}
+                                        </span>
+                                      </p>
+
+                                      {item.line
+                                        .variance_quantity !==
+                                      undefined ? (
+                                        <p>
+                                          Variance:{" "}
+                                          <span className="font-medium">
+                                            {displayNumber(
+                                              item.line
+                                                .variance_quantity,
+                                            )}
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.line
+                                        .counted_unit_quantity !=
+                                        null ? (
+                                        <p>
+                                          Physical entry:{" "}
+                                          <span className="font-medium">
+                                            {displayNumber(
+                                              item.line
+                                                .counted_unit_quantity,
+                                            )}{" "}
+                                            {item.line
+                                              .counted_unit_code ??
+                                              item.line
+                                                .counted_unit_name ??
+                                              ""}
+                                          </span>
+
+                                          {item.line
+                                            .counted_conversion_factor_to_base !=
+                                          null ? (
+                                            <>
+                                              {" · "}
+                                              ×{" "}
+                                              {displayNumber(
+                                                item.line
+                                                  .counted_conversion_factor_to_base,
+                                              )}
+                                              {" → "}
+                                              {displayNumber(
+                                                item.line
+                                                  .counted_quantity,
+                                              )}{" "}
+                                              base units
+                                            </>
+                                          ) : null}
+                                        </p>
+                                      ) : null}
+
+                                      {item.line.batch
+                                        ?.batch_number ? (
+                                        <p>
+                                          Batch:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              item.line
+                                                .batch
+                                                .batch_number
+                                            }
+                                          </span>
+                                        </p>
+                                      ) : item.line
+                                          .observed_batch_number ? (
+                                        <p>
+                                          Observed batch:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              item.line
+                                                .observed_batch_number
+                                            }
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.line
+                                        .counted_by ? (
+                                        <p>
+                                          Counted by:{" "}
+                                          <span className="font-medium">
+                                            {item.line
+                                              .counted_by
+                                              .name ??
+                                              item.line
+                                                .counted_by
+                                                .username ??
+                                              "Unknown"}
+                                          </span>
+                                        </p>
+                                      ) : null}
+
+                                      {item.adjustment ? (
+                                        <p>
+                                          Adjustment:{" "}
+                                          <span className="font-medium">
+                                            {
+                                              item.adjustment
+                                                .adjustment_number
+                                            }
+                                          </span>
+                                          {" · "}
+                                          {displayNumber(
+                                            item.adjustment
+                                              .quantity_delta,
+                                          )}
+                                        </p>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                      <Link
+                                        to={stockCountPath(
+                                          item,
+                                        )}
+                                        className="inline-flex h-8 items-center rounded-md border px-3 font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                      >
+                                        Open Stock Count
+                                      </Link>
+
+                                      {adjustmentPath ? (
+                                        <Link
+                                          to={
+                                            adjustmentPath
+                                          }
+                                          className="inline-flex h-8 items-center rounded-md border px-3 font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                        >
+                                          Open Adjustment
+                                        </Link>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            />
+
+                            <Bar
+                              dataKey="expectedQuantity"
+                              name="System quantity"
+                              fill="currentColor"
+                              fillOpacity={0.3}
+                            />
+
+                            <Bar
+                              dataKey="countedQuantity"
+                              name="Counted quantity"
+                              fill="currentColor"
+                              fillOpacity={0.65}
+                            />
+
+                            <Bar
+                              dataKey="varianceQuantity"
+                              name="Variance"
+                              fill="currentColor"
+                              fillOpacity={1}
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                        <span>
+                          System quantity = persisted expected
+                          quantity at count time
+                        </span>
+
+                        <span>
+                          Counted quantity = canonical base
+                          quantity from the physical count
+                        </span>
+
+                        <span>
+                          Variance = counted minus expected
+                        </span>
+                      </div>
+
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Open blind counts deliberately do not
+                        expose system or variance quantities
+                        until the Stock Count contract permits
+                        them.
                       </p>
                     </>
                   )}

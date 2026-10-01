@@ -877,6 +877,50 @@ def get_product_stock_count_history(product_id: str):
     )
 
 
+@bp.get(
+    "/products/<product_id>/history/stock-counts/variance-trend"
+)
+@require_permission("inventory.count")
+def get_product_stock_count_variance_trend(
+    product_id: str,
+):
+    identity = _current_identity()
+
+    try:
+        requested = StockCountListFilters.from_query(
+            request.args
+        )
+
+        result = ProductHistoryQueryService(
+            db.session
+        ).list_stock_count_variance_timeline(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            product_id=product_id,
+            filters=ProductStockCountHistoryFilters(
+                date_from=requested.date_from,
+                date_to=requested.date_to,
+                warehouse_id=requested.warehouse_id,
+            ),
+        )
+
+    except (StockCountQueryError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+
+    if result is None:
+        return _json_error(
+            "Product not found.",
+            404,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "items": result,
+        }
+    )
+
+
 @bp.post("/products/uom-remediation-reviews")
 @require_permission("products.edit")
 def create_uom_remediation_review():

@@ -186,6 +186,9 @@ export const API_ENDPOINTS = {
     HISTORY_STOCK_COUNTS: (id: string) =>
       `${byId("/products", id)}/history/stock-counts`,
 
+    HISTORY_STOCK_COUNT_VARIANCE_TREND: (id: string) =>
+      `${byId("/products", id)}/history/stock-counts/variance-trend`,
+
     ARCHIVE: (id: string) =>
       `${byId("/products", id)}/archive`,
 
