@@ -60,6 +60,10 @@ import type {
 } from "@/types/responses/product-history";
 
 import {
+  ProductUnifiedActivityTimeline,
+} from "../components/ProductUnifiedActivityTimeline";
+
+import {
   ProductBatchHistoryPanel,
   ProductMovementHistoryPanel,
   ProductPurchaseHistoryPanel,
@@ -389,6 +393,11 @@ export function ProductIntelligencePage() {
     canCountInventory &&
     summary.capabilities.stock_history;
 
+  const canViewActivity =
+    canReadSales ||
+    canReadInventory ||
+    canCountInventory;
+
   const salesChartData: PriceTrendChartPoint[] =
     (salesTrendQuery.data?.items ?? [])
       .filter(
@@ -465,6 +474,48 @@ export function ProductIntelligencePage() {
             item.line.variance_quantity,
           ),
       }));
+
+  const activityIsLoading =
+    (
+      canReadSales &&
+      salesTrendQuery.isLoading
+    ) ||
+    (
+      canReadInventory &&
+      (
+        purchaseTrendQuery.isLoading ||
+        movementTimelineQuery.isLoading
+      )
+    ) ||
+    (
+      canCountInventory &&
+      stockCountVarianceQuery.isLoading
+    );
+
+  const activitySourceErrors = [
+    canReadSales &&
+    salesTrendQuery.isError
+      ? "sales"
+      : null,
+
+    canReadInventory &&
+    purchaseTrendQuery.isError
+      ? "purchases"
+      : null,
+
+    canReadInventory &&
+    movementTimelineQuery.isError
+      ? "inventory movements"
+      : null,
+
+    canCountInventory &&
+    stockCountVarianceQuery.isError
+      ? "stock counts"
+      : null,
+  ].filter(
+    (value): value is string =>
+      Boolean(value),
+  );
 
   const stock =
     summary.current_stock ?? {};
@@ -606,6 +657,12 @@ export function ProductIntelligencePage() {
               <TabsTrigger value="overview">
                 Overview
               </TabsTrigger>
+
+              {canViewActivity ? (
+                <TabsTrigger value="activity">
+                  Activity
+                </TabsTrigger>
+              ) : null}
 
               {canReadSales ? (
                 <TabsTrigger value="sales">
@@ -1742,6 +1799,109 @@ export function ProductIntelligencePage() {
                 </Card>
               ) : null}
             </TabsContent>
+
+            {canViewActivity ? (
+              <TabsContent
+                value="activity"
+                className="space-y-4"
+              >
+                <Card>
+                  <CardHeader>
+                    <CardTitle>
+                      Activity period
+                    </CardTitle>
+
+                    <CardDescription>
+                      Filter the complete authorized
+                      Product Activity evidence trail.
+                    </CardDescription>
+                  </CardHeader>
+
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          From
+                        </span>
+
+                        <Input
+                          type="date"
+                          value={trendDateFrom}
+                          onChange={(event) =>
+                            setTrendDateFrom(
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          To
+                        </span>
+
+                        <Input
+                          type="date"
+                          value={trendDateTo}
+                          onChange={(event) =>
+                            setTrendDateTo(
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      This uses the same non-paginated
+                      evidence feeds as the Product
+                      Intelligence overview.
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <ProductUnifiedActivityTimeline
+                  sales={
+                    canReadSales
+                      ? (
+                          salesTrendQuery.data
+                            ?.items ?? []
+                        )
+                      : []
+                  }
+                  purchases={
+                    canReadInventory
+                      ? (
+                          purchaseTrendQuery.data
+                            ?.items ?? []
+                        )
+                      : []
+                  }
+                  movements={
+                    canReadInventory
+                      ? (
+                          movementTimelineQuery.data
+                            ?.items ?? []
+                        )
+                      : []
+                  }
+                  stockCounts={
+                    canCountInventory
+                      ? (
+                          stockCountVarianceQuery.data
+                            ?.items ?? []
+                        )
+                      : []
+                  }
+                  isLoading={
+                    activityIsLoading
+                  }
+                  sourceErrors={
+                    activitySourceErrors
+                  }
+                />
+              </TabsContent>
+            ) : null}
 
             <TabsContent
                 value="sales"
