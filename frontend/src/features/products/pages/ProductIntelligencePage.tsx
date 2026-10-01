@@ -64,6 +64,10 @@ import {
 } from "../components/ProductUnifiedActivityTimeline";
 
 import {
+  ProductOperationalInsights,
+} from "../components/ProductOperationalInsights";
+
+import {
   ProductBatchHistoryPanel,
   ProductMovementHistoryPanel,
   ProductPurchaseHistoryPanel,
@@ -748,6 +752,39 @@ export function ProductIntelligencePage() {
                   </p>
                 </CardContent>
               </Card>
+
+              <ProductOperationalInsights
+                product={summary.product}
+                quantityAvailable={
+                  stock.quantity_available as
+                    | string
+                    | undefined
+                }
+                sales={
+                  canReadSales
+                    ? (
+                        salesTrendQuery.data
+                          ?.items ?? []
+                      )
+                    : []
+                }
+                purchases={
+                  canReadInventory
+                    ? (
+                        purchaseTrendQuery.data
+                          ?.items ?? []
+                      )
+                    : []
+                }
+                stockCounts={
+                  canCountInventory
+                    ? (
+                        stockCountVarianceQuery.data
+                          ?.items ?? []
+                      )
+                    : []
+                }
+              />
 
               <div className="grid gap-4 xl:grid-cols-2">
                 <Card>
