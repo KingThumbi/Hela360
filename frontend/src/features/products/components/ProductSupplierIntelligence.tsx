@@ -15,6 +15,10 @@ import type {
   ProductPriceTrendItem,
 } from "@/types/responses/product-history";
 
+import {
+  ProductSupplierHistoryPanel,
+} from "./ProductSupplierHistoryPanel";
+
 type PurchaseEvidence = ProductPriceTrendItem & {
   currency?: string | null;
 };
@@ -347,10 +351,10 @@ export function ProductSupplierIntelligence({
                           </p>
 
                           <Badge variant="outline">
-                            {supplier.receipts.length} receipt
+                            {supplier.receipts.length} purchase
                             {supplier.receipts.length === 1
-                              ? ""
-                              : " lines"}
+                              ? " entry"
+                              : " entries"}
                           </Badge>
                         </div>
 
@@ -385,6 +389,15 @@ export function ProductSupplierIntelligence({
                         Open Goods Receipt
                       </Link>
                     </div>
+
+                    <ProductSupplierHistoryPanel
+                      supplierName={
+                        supplier.name
+                      }
+                      purchases={
+                        supplier.receipts
+                      }
+                    />
                   </div>
                 );
               })}
