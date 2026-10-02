@@ -3,6 +3,8 @@ import {
 } from "lucide-react";
 
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -110,6 +112,13 @@ type CostPoint = {
   date: string;
   cost: number;
   receiptNumber: string;
+};
+
+type ReceiptActivityPoint = {
+  month: string;
+  label: string;
+  receiptCount: number;
+  baseUnits: number;
 };
 
 export function ProductSupplierHistoryPanel({
@@ -236,6 +245,129 @@ export function ProductSupplierHistoryPanel({
         ),
     ).length;
 
+  /*
+   * Receipt activity is based on unique posted
+   * Goods Receipt source documents. Quantity remains
+   * line-level because multiple persisted product
+   * entries on the same receipt can legitimately
+   * contribute to the product total.
+   */
+  const receiptActivityByMonth =
+    new Map<
+      string,
+      {
+        receiptIds: Set<string>;
+        baseUnits: number;
+      }
+    >();
+
+  for (const item of purchases) {
+    if (!item.occurred_at) {
+      continue;
+    }
+
+    const month =
+      item.occurred_at.slice(0, 7);
+
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      continue;
+    }
+
+    const existing =
+      receiptActivityByMonth.get(
+        month,
+      ) ?? {
+        receiptIds: new Set<string>(),
+        baseUnits: 0,
+      };
+
+    existing.receiptIds.add(
+      item.source.id,
+    );
+
+    existing.baseUnits +=
+      numeric(item.quantity) ?? 0;
+
+    receiptActivityByMonth.set(
+      month,
+      existing,
+    );
+  }
+
+  const receiptActivity: ReceiptActivityPoint[] =
+    Array.from(
+      receiptActivityByMonth.entries(),
+    )
+      .sort(([left], [right]) =>
+        left.localeCompare(right),
+      )
+      .map(
+        ([month, activity]) => ({
+          month,
+          label: new Intl.DateTimeFormat(
+            undefined,
+            {
+              month: "short",
+              year: "numeric",
+              timeZone: "UTC",
+            },
+          ).format(
+            new Date(
+              `${month}-01T00:00:00Z`,
+            ),
+          ),
+          receiptCount:
+            activity.receiptIds.size,
+          baseUnits:
+            activity.baseUnits,
+        }),
+      );
+
+  const receiptTimestamps =
+    Array.from(
+      new Map(
+        purchases
+          .filter(
+            (item) =>
+              Boolean(item.occurred_at),
+          )
+          .map((item) => [
+            item.source.id,
+            timestamp(item),
+          ]),
+      ).values(),
+    )
+      .filter(
+        (value) => value > 0,
+      )
+      .sort(
+        (left, right) =>
+          left - right,
+      );
+
+  const receiptIntervals =
+    receiptTimestamps
+      .slice(1)
+      .map(
+        (value, index) =>
+          value -
+          receiptTimestamps[index],
+      )
+      .filter(
+        (value) => value > 0,
+      );
+
+  const averageReceiptCadenceDays =
+    receiptIntervals.length > 0
+      ? receiptIntervals.reduce(
+          (total, interval) =>
+            total + interval,
+          0,
+        ) /
+        receiptIntervals.length /
+        (24 * 60 * 60 * 1000)
+      : null;
+
   return (
     <div className="mt-4">
       <details className="group overflow-hidden rounded-xl border">
@@ -305,6 +437,161 @@ export function ProductSupplierHistoryPanel({
               </p>
             </div>
           </div>
+
+          <section className="space-y-3">
+            <div>
+              <p className="font-medium">
+                Documented receipt activity
+              </p>
+
+              <p className="mt-1 text-sm text-muted-foreground">
+                Posted Goods Receipt activity for this
+                supplier in the selected Product
+                Intelligence period.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border p-4">
+                <p className="text-xs text-muted-foreground">
+                  Average days between receipts
+                </p>
+
+                <p className="mt-1 text-xl font-semibold">
+                  {displayNumber(
+                    averageReceiptCadenceDays,
+                  )}
+                </p>
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Calculated only when at least two
+                  distinct posted receipts exist.
+                </p>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <p className="text-xs text-muted-foreground">
+                  Active receipt months
+                </p>
+
+                <p className="mt-1 text-xl font-semibold">
+                  {displayNumber(
+                    receiptActivity.length,
+                  )}
+                </p>
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Calendar months with posted receipt
+                  evidence.
+                </p>
+              </div>
+
+              <div className="rounded-xl border p-4">
+                <p className="text-xs text-muted-foreground">
+                  Total base units received
+                </p>
+
+                <p className="mt-1 text-xl font-semibold">
+                  {displayNumber(
+                    baseUnitsReceived,
+                  )}
+                </p>
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Across the selected supplier period.
+                </p>
+              </div>
+            </div>
+
+            {receiptActivity.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+                No dated posted receipt activity is
+                available for this supplier.
+              </div>
+            ) : (
+              <div className="h-64 rounded-xl border p-4">
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                >
+                  <BarChart
+                    data={receiptActivity}
+                    margin={{
+                      top: 8,
+                      right: 8,
+                      left: 0,
+                      bottom: 8,
+                    }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                    />
+
+                    <XAxis
+                      dataKey="label"
+                    />
+
+                    <YAxis allowDecimals={false} />
+
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (
+                          !active ||
+                          !payload?.length
+                        ) {
+                          return null;
+                        }
+
+                        const point =
+                          payload[0]
+                            .payload as ReceiptActivityPoint;
+
+                        return (
+                          <div className="min-w-52 rounded-xl border bg-background p-3 text-sm shadow-lg">
+                            <p className="font-medium">
+                              {point.label}
+                            </p>
+
+                            <p className="mt-2">
+                              Posted receipts:{" "}
+                              <span className="font-medium">
+                                {displayNumber(
+                                  point.receiptCount,
+                                )}
+                              </span>
+                            </p>
+
+                            <p className="mt-1">
+                              Base units received:{" "}
+                              <span className="font-medium">
+                                {displayNumber(
+                                  point.baseUnits,
+                                )}
+                              </span>
+                            </p>
+                          </div>
+                        );
+                      }}
+                    />
+
+                    <Bar
+                      dataKey="receiptCount"
+                      name="Posted receipts"
+                      fill="currentColor"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              Receipt cadence and activity describe
+              documented posted-receipt history only.
+              They are not a supplier reliability score
+              and do not establish lead times, service
+              quality, or future delivery performance.
+            </p>
+          </section>
 
           {latestReceipt ? (
             <div className="rounded-xl border p-4">
