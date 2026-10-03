@@ -1268,6 +1268,36 @@ class ProductHistoryQueryService:
                     if supplier
                     else None
                 ),
+                "batch": (
+                    {
+                        "id": (
+                            str(receipt_item.batch_id)
+                            if receipt_item.batch_id
+                            else None
+                        ),
+                        "batch_number":
+                            receipt_item.batch_number,
+                        "manufacture_date": (
+                            receipt_item
+                            .manufacture_date.isoformat()
+                            if receipt_item.manufacture_date
+                            else None
+                        ),
+                        "expiry_date": (
+                            receipt_item
+                            .expiry_date.isoformat()
+                            if receipt_item.expiry_date
+                            else None
+                        ),
+                    }
+                    if (
+                        receipt_item.batch_id
+                        or receipt_item.batch_number
+                        or receipt_item.manufacture_date
+                        or receipt_item.expiry_date
+                    )
+                    else None
+                ),
                 "source": {
                     "type": "goods_receipt",
                     "id": str(receipt.id),

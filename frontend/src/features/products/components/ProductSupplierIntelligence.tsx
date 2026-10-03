@@ -12,6 +12,7 @@ import {
 import { PATHS } from "@/routes/routes";
 
 import type {
+  ProductMovementHistoryItem,
   ProductPriceTrendItem,
 } from "@/types/responses/product-history";
 
@@ -134,8 +135,10 @@ const linkClassName = `
 
 export function ProductSupplierIntelligence({
   purchases,
+  movements,
 }: {
   purchases: ProductPriceTrendItem[];
+  movements: ProductMovementHistoryItem[];
 }) {
   const evidence =
     purchases as PurchaseEvidence[];
@@ -396,6 +399,9 @@ export function ProductSupplierIntelligence({
                       }
                       purchases={
                         supplier.receipts
+                      }
+                      movements={
+                        movements
                       }
                     />
                   </div>

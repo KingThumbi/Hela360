@@ -157,6 +157,8 @@ export interface ProductPriceTrendItem {
     name: string;
   } | null;
 
+  batch?: ProductHistoryBatch | null;
+
   source: {
     type: "sale" | "goods_receipt";
     id: string;

@@ -24,6 +24,7 @@ import {
 import { PATHS } from "@/routes/routes";
 
 import type {
+  ProductMovementHistoryItem,
   ProductPriceTrendItem,
 } from "@/types/responses/product-history";
 
@@ -114,6 +115,13 @@ type CostPoint = {
   receiptNumber: string;
 };
 
+type SupplierBatchTrace = {
+  id: string | null;
+  batchNumber: string | null;
+  purchases: ProductPriceTrendItem[];
+  latestPurchase: ProductPriceTrendItem;
+};
+
 type ReceiptActivityPoint = {
   month: string;
   label: string;
@@ -124,9 +132,11 @@ type ReceiptActivityPoint = {
 export function ProductSupplierHistoryPanel({
   supplierName,
   purchases,
+  movements,
 }: {
   supplierName: string;
   purchases: ProductPriceTrendItem[];
+  movements: ProductMovementHistoryItem[];
 }) {
   const sortedPurchases = [
     ...purchases,
@@ -368,6 +378,133 @@ export function ProductSupplierHistoryPanel({
         (24 * 60 * 60 * 1000)
       : null;
 
+  const movementsByBatchId =
+    new Map<
+      string,
+      ProductMovementHistoryItem[]
+    >();
+
+  for (const movement of movements) {
+    const batchId =
+      movement.batch?.id;
+
+    if (!batchId) {
+      continue;
+    }
+
+    const group =
+      movementsByBatchId.get(
+        batchId,
+      ) ?? [];
+
+    group.push(movement);
+
+    movementsByBatchId.set(
+      batchId,
+      group,
+    );
+  }
+
+  const batchesByKey =
+    new Map<
+      string,
+      SupplierBatchTrace
+    >();
+
+  for (const item of purchases) {
+    const batchId =
+      item.batch?.id ?? null;
+
+    const batchNumber =
+      item.batch?.batch_number ?? null;
+
+    const key =
+      batchId ??
+      (
+        batchNumber
+          ? `number::${batchNumber}`
+          : "__batch_unrecorded__"
+      );
+
+    const existing =
+      batchesByKey.get(key);
+
+    if (!existing) {
+      batchesByKey.set(key, {
+        id: batchId,
+        batchNumber,
+        purchases: [item],
+        latestPurchase: item,
+      });
+
+      continue;
+    }
+
+    existing.purchases.push(item);
+
+    if (
+      timestamp(item) >
+      timestamp(existing.latestPurchase)
+    ) {
+      existing.latestPurchase = item;
+    }
+  }
+
+  const supplierBatches =
+    Array.from(
+      batchesByKey.values(),
+    ).sort(
+      (left, right) =>
+        timestamp(
+          right.latestPurchase,
+        ) -
+        timestamp(
+          left.latestPurchase,
+        ),
+    );
+
+  function movementSourcePath(
+    movement: ProductMovementHistoryItem,
+  ) {
+    const reference =
+      movement.reference;
+
+    if (
+      !reference?.type ||
+      !reference?.id
+    ) {
+      return null;
+    }
+
+    if (
+      reference.type === "sale"
+    ) {
+      return PATHS.SALES.receipt(
+        reference.id,
+      );
+    }
+
+    if (
+      reference.type ===
+      "goods_receipt"
+    ) {
+      return PATHS.INVENTORY.receipt(
+        reference.id,
+      );
+    }
+
+    if (
+      reference.type ===
+      "stock_adjustment"
+    ) {
+      return PATHS.INVENTORY.stockAdjustment(
+        reference.id,
+      );
+    }
+
+    return null;
+  }
+
   return (
     <div className="mt-4">
       <details className="group overflow-hidden rounded-xl border">
@@ -591,6 +728,264 @@ export function ProductSupplierHistoryPanel({
               and do not establish lead times, service
               quality, or future delivery performance.
             </p>
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <p className="font-medium">
+                Supplier-linked batches
+              </p>
+
+              <p className="mt-1 text-sm text-muted-foreground">
+                Batch identities recorded on this
+                supplier's posted receipt lines, with
+                matching canonical inventory-ledger
+                activity where a batch ID is available.
+              </p>
+            </div>
+
+            {supplierBatches.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">
+                No batch evidence is recorded on the
+                supplier's purchase entries.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {supplierBatches.map(
+                  (batch) => {
+                    const batchMovements =
+                      batch.id
+                        ? (
+                            movementsByBatchId.get(
+                              batch.id,
+                            ) ?? []
+                          ).slice(
+                            0,
+                            8,
+                          )
+                        : [];
+
+                    const movementCount =
+                      batch.id
+                        ? (
+                            movementsByBatchId.get(
+                              batch.id,
+                            ) ?? []
+                          ).length
+                        : null;
+
+                    const purchaseSources =
+                      Array.from(
+                        new Map(
+                          batch.purchases.map(
+                            (item) => [
+                              item.source.id,
+                              item.source.number,
+                            ],
+                          ),
+                        ).entries(),
+                      );
+
+                    return (
+                      <details
+                        key={
+                          batch.id ??
+                          (
+                            batch.batchNumber ??
+                            "__batch_unrecorded__"
+                          )
+                        }
+                        className="group overflow-hidden rounded-xl border"
+                      >
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-muted/30 [&::-webkit-details-marker]:hidden">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-medium">
+                                {batch.batchNumber ??
+                                  "Batch number not recorded"}
+                              </p>
+
+                              <Badge variant="outline">
+                                {batch.purchases.length} purchase
+                                {batch.purchases.length === 1
+                                  ? " entry"
+                                  : " entries"}
+                              </Badge>
+
+                              {movementCount != null ? (
+                                <Badge variant="outline">
+                                  {movementCount} movement
+                                  {movementCount === 1
+                                    ? ""
+                                    : "s"}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">
+                                  Canonical batch ID unavailable
+                                </Badge>
+                              )}
+                            </div>
+
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Latest receipt:{" "}
+                              {displayDate(
+                                batch.latestPurchase
+                                  .occurred_at,
+                              )}
+                              {" · "}
+                              {batch.latestPurchase
+                                .source.number}
+                            </p>
+                          </div>
+
+                          <span className="text-xs text-muted-foreground transition-transform group-open:rotate-180">
+                            ▼
+                          </span>
+                        </summary>
+
+                        <div className="space-y-5 border-t p-4">
+                          <section className="space-y-2">
+                            <p className="font-medium">
+                              Receipt evidence
+                            </p>
+
+                            <div className="flex flex-wrap gap-2">
+                              {purchaseSources.map(
+                                ([sourceId, sourceNumber]) => (
+                                  <Link
+                                    key={sourceId}
+                                    to={PATHS.INVENTORY.receipt(
+                                      sourceId,
+                                    )}
+                                    className="inline-flex h-8 items-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                  >
+                                    {sourceNumber}
+                                  </Link>
+                                ),
+                              )}
+                            </div>
+                          </section>
+
+                          <section className="space-y-2">
+                            <p className="font-medium">
+                              Inventory movement evidence
+                            </p>
+
+                            {!batch.id ? (
+                              <p className="text-sm text-muted-foreground">
+                                Movement matching is not
+                                available because this
+                                receipt line has no canonical
+                                batch ID. The recorded batch
+                                snapshot remains preserved
+                                above.
+                              </p>
+                            ) : batchMovements.length === 0 ? (
+                              <p className="text-sm text-muted-foreground">
+                                No canonical inventory
+                                movements were found for this
+                                batch in the selected period.
+                              </p>
+                            ) : (
+                              <div className="space-y-2">
+                                {batchMovements.map(
+                                  (movement) => {
+                                    const quantity =
+                                      numeric(
+                                        movement.quantity,
+                                      );
+
+                                    const direction =
+                                      quantity == null
+                                        ? "Neutral"
+                                        : quantity > 0
+                                          ? "In"
+                                          : quantity < 0
+                                            ? "Out"
+                                            : "Neutral";
+
+                                    const sourcePath =
+                                      movementSourcePath(
+                                        movement,
+                                      );
+
+                                    return (
+                                      <div
+                                        key={
+                                          movement.id
+                                        }
+                                        className="flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between"
+                                      >
+                                        <div>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <p className="font-medium">
+                                              {
+                                                movement.movement_type
+                                              }
+                                            </p>
+
+                                            <Badge variant="outline">
+                                              {direction}
+                                            </Badge>
+                                          </div>
+
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            {displayDate(
+                                              movement.created_at,
+                                            )}
+                                            {" · Qty "}
+                                            {displayNumber(
+                                              movement.quantity,
+                                            )}
+                                            {movement.warehouse
+                                              ?.name
+                                              ? ` · ${movement.warehouse.name}`
+                                              : ""}
+                                          </p>
+                                        </div>
+
+                                        {sourcePath ? (
+                                          <Link
+                                            to={
+                                              sourcePath
+                                            }
+                                            className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                                          >
+                                            Open Source
+                                          </Link>
+                                        ) : (
+                                          <Badge variant="outline">
+                                            Source route unavailable
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    );
+                                  },
+                                )}
+                              </div>
+                            )}
+
+                            {movementCount != null &&
+                            movementCount >
+                              batchMovements.length ? (
+                              <p className="text-xs text-muted-foreground">
+                                Showing the latest{" "}
+                                {batchMovements.length} of{" "}
+                                {movementCount} matched
+                                movements. Use the full
+                                Product Activity and Movement
+                                History views for the complete
+                                timeline.
+                              </p>
+                            ) : null}
+                          </section>
+                        </div>
+                      </details>
+                    );
+                  },
+                )}
+              </div>
+            )}
           </section>
 
           {latestReceipt ? (

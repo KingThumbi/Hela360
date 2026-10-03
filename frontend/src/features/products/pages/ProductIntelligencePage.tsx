@@ -796,6 +796,10 @@ export function ProductIntelligencePage() {
                     purchaseTrendQuery.data
                       ?.items ?? []
                   }
+                  movements={
+                    movementTimelineQuery.data
+                      ?.items ?? []
+                  }
                 />
               ) : null}
 

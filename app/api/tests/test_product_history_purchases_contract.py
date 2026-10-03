@@ -554,6 +554,13 @@ def test_purchase_price_trend_is_complete_chronological_and_posted(
         "number": "GRN-OLD",
     }
 
+    assert items[0]["batch"] == {
+        "id": None,
+        "batch_number": "BATCH-receipt-old",
+        "manufacture_date": "2026-01-01",
+        "expiry_date": "2027-12-31",
+    }
+
     assert all(
         item["source"]["id"]
         != "receipt-unposted"
