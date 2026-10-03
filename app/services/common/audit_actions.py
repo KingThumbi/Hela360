@@ -70,6 +70,10 @@ class AuditAction(StrEnum):
     CUSTOMER_UPDATED = "CUSTOMER_UPDATED"
     CUSTOMER_DELETED = "CUSTOMER_DELETED"
 
+    CUSTOMER_CONTACT_CREATED = "CUSTOMER_CONTACT_CREATED"
+    CUSTOMER_CONTACT_UPDATED = "CUSTOMER_CONTACT_UPDATED"
+    CUSTOMER_CONTACT_DEACTIVATED = "CUSTOMER_CONTACT_DEACTIVATED"
+
     # ==========================================================
     # Products
     # ==========================================================

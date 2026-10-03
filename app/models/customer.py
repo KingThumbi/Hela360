@@ -21,3 +21,15 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, db.Model):
     city = db.Column(db.String(100))
     loyalty_points = db.Column(db.Numeric(18, 2), nullable=False, default=0)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    credit_limit = db.Column(db.Numeric(18, 2), nullable=False, default=0)
+    payment_terms_days = db.Column(db.Integer, nullable=False, default=0)
+    currency = db.Column(db.String(3))
+    tax_identifier = db.Column(db.String(100))
+    credit_hold = db.Column(db.Boolean, nullable=False, default=False)
+
+    contacts = db.relationship(
+        "CustomerContact",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
