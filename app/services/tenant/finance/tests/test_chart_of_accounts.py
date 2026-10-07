@@ -9,7 +9,11 @@ from app.models import Branch, ChartOfAccount, Permission, Tenant
 from app.services.platform.permission_catalogue_service import (
     PermissionCatalogueService,
 )
-from app.services.tenant.finance import ChartOfAccountsService, DEFAULT_CHART
+from app.services.tenant.finance import (
+    ChartOfAccountsError,
+    ChartOfAccountsService,
+    DEFAULT_CHART,
+)
 
 
 @pytest.fixture()
@@ -35,6 +39,25 @@ def app_context(monkeypatch: pytest.MonkeyPatch):
                 display_name="Tenant 1",
                 base_currency="KES",
             )
+        )
+        db.session.add_all(
+            [
+                Branch(
+                    id="branch-1",
+                    tenant_id="tenant-1",
+                    code="MAIN",
+                    name="Main",
+                    is_head_office=True,
+                    is_active=True,
+                ),
+                Branch(
+                    id="branch-2",
+                    tenant_id="tenant-1",
+                    code="ALT",
+                    name="Alt",
+                    is_active=True,
+                ),
+            ]
         )
         db.session.commit()
 
@@ -161,6 +184,89 @@ def test_update_string_false_deactivates_account(app_context):
     )
 
     assert account.is_active is False
+
+
+def test_system_account_string_false_cannot_deactivate(app_context):
+    service = ChartOfAccountsService(db.session)
+
+    account = service.create_account(
+        "tenant-1",
+        account_code="9993",
+        account_name="System Protection Test",
+        account_type="asset",
+        is_active=True,
+    )
+    account.is_system_account = True
+    db.session.commit()
+
+    with pytest.raises(ChartOfAccountsError, match="cannot be deactivated"):
+        service.update_account(
+            "tenant-1",
+            account.id,
+            fields={"is_active": "false"},
+        )
+
+    assert account.is_active is True
+
+
+def test_branch_change_rejects_incompatible_child_branch(app_context):
+    service = ChartOfAccountsService(db.session)
+
+    parent = service.create_account(
+        "tenant-1",
+        account_code="7000",
+        account_name="Branch Parent",
+        account_type="expense",
+    )
+    service.create_account(
+        "tenant-1",
+        account_code="7010",
+        account_name="Branch Two Child",
+        account_type="expense",
+        branch_id="branch-2",
+        parent_id=parent.id,
+    )
+    db.session.commit()
+
+    with pytest.raises(ChartOfAccountsError, match="different-branch child"):
+        service.update_account(
+            "tenant-1",
+            parent.id,
+            fields={"branch_id": "branch-1"},
+        )
+
+    db.session.refresh(parent)
+    assert parent.branch_id is None
+
+
+def test_branch_change_rejects_tenant_wide_child(app_context):
+    service = ChartOfAccountsService(db.session)
+
+    parent = service.create_account(
+        "tenant-1",
+        account_code="7100",
+        account_name="Branch Parent",
+        account_type="expense",
+        branch_id="branch-1",
+    )
+    service.create_account(
+        "tenant-1",
+        account_code="7110",
+        account_name="Tenant Wide Child",
+        account_type="expense",
+        parent_id=parent.id,
+    )
+    db.session.commit()
+
+    with pytest.raises(ChartOfAccountsError, match="tenant-wide"):
+        service.update_account(
+            "tenant-1",
+            parent.id,
+            fields={"branch_id": "branch-2"},
+        )
+
+    db.session.refresh(parent)
+    assert parent.branch_id == "branch-1"
 
 
 def test_account_type_and_normal_balance_are_coherent(app_context):

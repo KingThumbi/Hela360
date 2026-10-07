@@ -265,6 +265,32 @@ class ChartOfAccountsService:
                 )
             current_id = current.parent_id
 
+    def _assert_children_compatible_with_branch(
+        self,
+        *,
+        tenant_id: str,
+        account_id: str,
+        branch_id: str | None,
+    ) -> None:
+        if branch_id is None:
+            return
+
+        incompatible_child = self.session.scalar(
+            select(ChartOfAccount.id).where(
+                ChartOfAccount.tenant_id == tenant_id,
+                ChartOfAccount.parent_id == account_id,
+                db.or_(
+                    ChartOfAccount.branch_id.is_(None),
+                    ChartOfAccount.branch_id != branch_id,
+                ),
+            ).limit(1)
+        )
+        if incompatible_child is not None:
+            raise ChartOfAccountsError(
+                "A branch-specific parent cannot have tenant-wide "
+                "or different-branch child accounts."
+            )
+
     def _assert_code_available(
         self,
         tenant_id: str,
@@ -389,7 +415,10 @@ class ChartOfAccountsService:
                 raise ChartOfAccountsError(
                     "System account structure cannot be changed."
                 )
-            if "is_active" in fields and not bool(fields["is_active"]):
+            if "is_active" in fields and not self._coerce_bool(
+                fields["is_active"],
+                account.is_active,
+            ):
                 raise ChartOfAccountsError("System accounts cannot be deactivated.")
 
         account_code = account.account_code
@@ -429,6 +458,13 @@ class ChartOfAccountsService:
         if "branch_id" in fields:
             branch_id = fields["branch_id"] or None
             self._branch(tenant_id, branch_id)
+
+            if branch_id != account.branch_id:
+                self._assert_children_compatible_with_branch(
+                    tenant_id=tenant_id,
+                    account_id=account.id,
+                    branch_id=branch_id,
+                )
 
         if "currency" in fields:
             currency = self._normalize_currency(
