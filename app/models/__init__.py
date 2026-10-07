@@ -40,6 +40,7 @@ from app.models.uom_remediation import (
     TenantUOMRemediationReview,
 )
 from app.models.customer import Customer
+from app.models.chart_of_account import ChartOfAccount
 from app.models.customer_contact import CustomerContact
 from app.models.supplier import Supplier
 from app.models.inventory import (
@@ -106,6 +107,7 @@ __all__ = [
     "TenantUOMRemediationProductDecision",
     "TenantUOMRemediationReview",
     "Customer",
+    "ChartOfAccount",
     "CustomerContact",
     "Supplier",
     "Warehouse",
