@@ -89,6 +89,17 @@ _NORMAL_BALANCE_BY_TYPE = {
     "revenue": "credit",
     "expense": "debit",
 }
+
+_ALLOWED_NORMAL_BALANCES_BY_TYPE = {
+    "asset": frozenset({"debit"}),
+    "liability": frozenset({"credit"}),
+    "equity": frozenset({"credit"}),
+    # Contra-revenue accounts such as Sales Returns and
+    # Discounts Allowed naturally carry debit balances.
+    "revenue": frozenset({"debit", "credit"}),
+    "expense": frozenset({"debit"}),
+}
+
 _ACCOUNT_TYPES = frozenset(_NORMAL_BALANCE_BY_TYPE)
 _NORMAL_BALANCES = frozenset({"debit", "credit"})
 
@@ -337,10 +348,10 @@ class ChartOfAccountsService:
             normal_balance or _NORMAL_BALANCE_BY_TYPE[account_type]
         )
 
-        if normal_balance != _NORMAL_BALANCE_BY_TYPE[account_type]:
+        if normal_balance not in _ALLOWED_NORMAL_BALANCES_BY_TYPE[account_type]:
             raise ChartOfAccountsError(
-                f"{account_type} accounts must use a "
-                f"{_NORMAL_BALANCE_BY_TYPE[account_type]} normal balance."
+                f"{account_type} accounts cannot use a "
+                f"{normal_balance} normal balance."
             )
 
         account_code = self._normalize_code(account_code)
@@ -446,10 +457,10 @@ class ChartOfAccountsService:
         elif "account_type" in fields:
             normal_balance = _NORMAL_BALANCE_BY_TYPE[account_type]
 
-        if normal_balance != _NORMAL_BALANCE_BY_TYPE[account_type]:
+        if normal_balance not in _ALLOWED_NORMAL_BALANCES_BY_TYPE[account_type]:
             raise ChartOfAccountsError(
-                f"{account_type} accounts must use a "
-                f"{_NORMAL_BALANCE_BY_TYPE[account_type]} normal balance."
+                f"{account_type} accounts cannot use a "
+                f"{normal_balance} normal balance."
             )
 
         if "parent_id" in fields:

@@ -271,7 +271,7 @@ def test_branch_change_rejects_tenant_wide_child(app_context):
 def test_account_type_and_normal_balance_are_coherent(app_context):
     service = ChartOfAccountsService(db.session)
 
-    with pytest.raises(Exception):
+    with pytest.raises(ChartOfAccountsError):
         service.create_account(
             "tenant-1",
             account_code="9990",
@@ -279,3 +279,13 @@ def test_account_type_and_normal_balance_are_coherent(app_context):
             account_type="liability",
             normal_balance="debit",
         )
+
+    contra_revenue = service.create_account(
+        "tenant-1",
+        account_code="9994",
+        account_name="Sales Returns",
+        account_type="revenue",
+        normal_balance="debit",
+    )
+
+    assert contra_revenue.normal_balance == "debit"
