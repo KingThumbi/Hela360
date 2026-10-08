@@ -124,6 +124,34 @@ class Permissions:
     REPORTS_EXPORT = "reports.export"
 
     # ------------------------------------------------------------------
+    # Finance
+    # ------------------------------------------------------------------
+
+    FINANCE_DASHBOARD_READ = "finance.dashboard.read"
+
+    FINANCE_ACCOUNTS_READ = "finance.accounts.read"
+    FINANCE_ACCOUNTS_CREATE = "finance.accounts.create"
+    FINANCE_ACCOUNTS_UPDATE = "finance.accounts.update"
+
+    FINANCE_JOURNALS_READ = "finance.journals.read"
+    FINANCE_JOURNALS_CREATE = "finance.journals.create"
+    FINANCE_JOURNALS_POST = "finance.journals.post"
+    FINANCE_JOURNALS_REVERSE = "finance.journals.reverse"
+
+    FINANCE_AR_READ = "finance.ar.read"
+    FINANCE_AR_ADJUST = "finance.ar.adjust"
+
+    FINANCE_AP_READ = "finance.ap.read"
+    FINANCE_AP_ADJUST = "finance.ap.adjust"
+
+    FINANCE_EXPENSES_READ = "finance.expenses.read"
+    FINANCE_EXPENSES_CREATE = "finance.expenses.create"
+    FINANCE_EXPENSES_APPROVE = "finance.expenses.approve"
+    FINANCE_EXPENSES_POST = "finance.expenses.post"
+
+    FINANCE_REPORTS_READ = "finance.reports.read"
+
+    # ------------------------------------------------------------------
     # User & Role Administration
     # ------------------------------------------------------------------
 

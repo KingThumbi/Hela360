@@ -1,10 +1,14 @@
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, jsonify, request
 
 from app.extensions import db
 from app.models import Customer
 from app.api.utils import current_identity as _current_identity
+from app.services.common.audit_actions import AuditAction
+from app.services.common.audit_modules import AuditModule
+from app.services.common.audit_service import audit_service
 from app.services.tenant.auth.decorators import require_permission
 
 bp = Blueprint("customers", __name__)
@@ -53,6 +57,70 @@ def _optional_date(value):
         return None, "date_of_birth must use YYYY-MM-DD."
 
 
+def _nonnegative_decimal(value, field_name: str):
+    if value is None or value == "":
+        return Decimal("0.00"), None
+
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None, f"{field_name} must be a valid decimal amount."
+
+    if not parsed.is_finite():
+        return None, f"{field_name} must be a valid decimal amount."
+
+    if parsed < 0:
+        return None, f"{field_name} cannot be negative."
+
+    return parsed, None
+
+
+def _nonnegative_int(value, field_name: str):
+    if value is None or value == "":
+        return 0, None
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None, f"{field_name} must be a non-negative integer."
+
+    if parsed < 0:
+        return None, f"{field_name} cannot be negative."
+
+    return parsed, None
+
+
+def _optional_currency(value):
+    if value is None:
+        return None, None
+
+    raw_value = str(value).strip()
+
+    if not raw_value:
+        return None, None
+
+    normalized = raw_value.upper()
+
+    if len(normalized) != 3 or not normalized.isalpha():
+        return None, "currency must be a 3-letter currency code."
+
+    return normalized, None
+
+
+def _finance_profile_values(customer: Customer) -> dict:
+    return {
+        "credit_limit": (
+            str(customer.credit_limit)
+            if customer.credit_limit is not None
+            else "0.00"
+        ),
+        "payment_terms_days": customer.payment_terms_days,
+        "currency": customer.currency,
+        "tax_identifier": customer.tax_identifier,
+        "credit_hold": customer.credit_hold,
+    }
+
+
 def _serialize_customer(customer: Customer) -> dict:
     return {
         "id": customer.id,
@@ -77,6 +145,15 @@ def _serialize_customer(customer: Customer) -> dict:
         "city": customer.city,
         "loyalty_points": str(customer.loyalty_points) if customer.loyalty_points is not None else "0",
         "is_active": customer.is_active,
+        "credit_limit": (
+            str(customer.credit_limit)
+            if customer.credit_limit is not None
+            else "0.00"
+        ),
+        "payment_terms_days": customer.payment_terms_days,
+        "currency": customer.currency,
+        "tax_identifier": customer.tax_identifier,
+        "credit_hold": customer.credit_hold,
         "created_at": customer.created_at.isoformat() if customer.created_at else None,
         "updated_at": customer.updated_at.isoformat() if customer.updated_at else None,
     }
@@ -188,6 +265,29 @@ def create_customer():
     if date_error:
         return _json_error(date_error)
 
+    credit_limit, credit_limit_error = _nonnegative_decimal(
+        data.get("credit_limit"),
+        "credit_limit",
+    )
+
+    if credit_limit_error:
+        return _json_error(credit_limit_error)
+
+    payment_terms_days, payment_terms_error = _nonnegative_int(
+        data.get("payment_terms_days"),
+        "payment_terms_days",
+    )
+
+    if payment_terms_error:
+        return _json_error(payment_terms_error)
+
+    currency, currency_error = _optional_currency(
+        data.get("currency")
+    )
+
+    if currency_error:
+        return _json_error(currency_error)
+
     if not first_name:
         return _json_error("first_name is required.")
 
@@ -253,6 +353,14 @@ def create_customer():
             data.get("is_active"),
             True,
         ),
+        credit_limit=credit_limit,
+        payment_terms_days=payment_terms_days,
+        currency=currency,
+        tax_identifier=(data.get("tax_identifier") or "").strip() or None,
+        credit_hold=_to_bool(
+            data.get("credit_hold"),
+            False,
+        ),
     )
 
     try:
@@ -275,4 +383,108 @@ def create_customer():
             }
         ),
         201,
+    )
+
+@bp.patch("/customers/<customer_id>/finance-profile")
+@require_permission("customers.edit")
+def update_customer_finance_profile(customer_id: str):
+    identity = _current_identity()
+
+    customer = Customer.query.filter_by(
+        id=customer_id,
+        tenant_id=identity.tenant_id,
+    ).first()
+
+    if customer is None:
+        return _json_error("Customer not found.", 404)
+
+    data = request.get_json(silent=True) or {}
+
+    allowed_fields = {
+        "credit_limit",
+        "payment_terms_days",
+        "currency",
+        "tax_identifier",
+        "credit_hold",
+    }
+
+    supplied_fields = set(data).intersection(allowed_fields)
+
+    if not supplied_fields:
+        return _json_error(
+            "At least one finance profile field is required."
+        )
+
+    old_values = _finance_profile_values(customer)
+
+    if "credit_limit" in data:
+        credit_limit, error = _nonnegative_decimal(
+            data.get("credit_limit"),
+            "credit_limit",
+        )
+        if error:
+            return _json_error(error)
+        customer.credit_limit = credit_limit
+
+    if "payment_terms_days" in data:
+        payment_terms_days, error = _nonnegative_int(
+            data.get("payment_terms_days"),
+            "payment_terms_days",
+        )
+        if error:
+            return _json_error(error)
+        customer.payment_terms_days = payment_terms_days
+
+    if "currency" in data:
+        currency, error = _optional_currency(
+            data.get("currency")
+        )
+        if error:
+            return _json_error(error)
+        customer.currency = currency
+
+    if "tax_identifier" in data:
+        customer.tax_identifier = (
+            (data.get("tax_identifier") or "").strip()
+            or None
+        )
+
+    if "credit_hold" in data:
+        customer.credit_hold = _to_bool(
+            data.get("credit_hold"),
+            False,
+        )
+
+    try:
+        db.session.commit()
+
+    except Exception as exc:
+        db.session.rollback()
+        return _json_error(
+            f"Failed to update customer finance profile: {exc}",
+            500,
+        )
+
+    new_values = _finance_profile_values(customer)
+
+    audit_service.safe_log(
+        module=AuditModule.FINANCE,
+        action=AuditAction.CUSTOMER_UPDATED,
+        entity_type="CustomerFinanceProfile",
+        tenant_id=identity.tenant_id,
+        entity_id=customer.id,
+        user_id=identity.user_id,
+        branch_id=getattr(identity, "branch_id", None),
+        old_values=old_values,
+        new_values=new_values,
+        commit=True,
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "Customer finance profile updated successfully.",
+            "item": _serialize_customer(customer),
+            "finance_profile": new_values,
+        }
     )
