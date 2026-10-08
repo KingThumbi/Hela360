@@ -245,9 +245,8 @@ def test_branch_change_rejects_tenant_wide_child(app_context):
     parent = service.create_account(
         "tenant-1",
         account_code="7100",
-        account_name="Branch Parent",
+        account_name="Tenant Wide Parent",
         account_type="expense",
-        branch_id="branch-1",
     )
     service.create_account(
         "tenant-1",
@@ -262,11 +261,11 @@ def test_branch_change_rejects_tenant_wide_child(app_context):
         service.update_account(
             "tenant-1",
             parent.id,
-            fields={"branch_id": "branch-2"},
+            fields={"branch_id": "branch-1"},
         )
 
     db.session.refresh(parent)
-    assert parent.branch_id == "branch-1"
+    assert parent.branch_id is None
 
 
 def test_account_type_and_normal_balance_are_coherent(app_context):
