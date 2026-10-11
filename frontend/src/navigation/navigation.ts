@@ -13,6 +13,7 @@ import {
   FileBarChart2,
   LayoutDashboard,
   Library,
+  Landmark,
   Package,
   Receipt,
   Settings,
@@ -150,6 +151,22 @@ export const navigation: NavigationSection[] = [
         href: PATHS.PROCUREMENT.SUPPLIERS,
         icon: Truck,
         permission: "suppliers.view",
+      },
+    ],
+  },
+
+  {
+    id: NAVIGATION_SECTION_IDS.FINANCE,
+    title: "Finance",
+    items: [
+      {
+        id: NAVIGATION_ITEM_IDS.CHART_OF_ACCOUNTS,
+        title: "Chart of Accounts",
+        href: PATHS.FINANCE.CHART_OF_ACCOUNTS,
+        icon: Landmark,
+        permission: ROUTE_PERMISSION_REQUIREMENTS[
+          PATHS.FINANCE.CHART_OF_ACCOUNTS
+        ].permission,
       },
     ],
   },

@@ -67,3 +67,18 @@ export type {
   CreateInvoiceRequest,
   UpdateInvoiceRequest,
 } from "./invoiceService";
+
+/* --------------------------------------------------------------------------
+ * Chart of Accounts
+ * -------------------------------------------------------------------------- */
+
+export { chartOfAccountsService } from "./chartOfAccountsService";
+export type {
+  ChartOfAccount,
+  ChartOfAccountBranch,
+  ChartOfAccountParent,
+  ChartOfAccountType,
+  CreateChartOfAccountRequest,
+  NormalBalance,
+  UpdateChartOfAccountRequest,
+} from "./chartOfAccountsService";

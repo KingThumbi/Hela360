@@ -39,6 +39,7 @@ export const NAVIGATION_ITEM_IDS = {
   EXPENSES: "expenses",
   PAYMENTS: "payments",
   CASHBOOK: "cashbook",
+  CHART_OF_ACCOUNTS: "chart-of-accounts",
   REPORTS: "reports",
   ANALYTICS: "analytics",
   USERS: "users",

@@ -67,6 +67,14 @@ export const PERMISSIONS = {
   CUSTOMERS_EDIT: "customers.edit",
 
   /* ------------------------------------------------------------------
+   * Finance
+   * ------------------------------------------------------------------ */
+
+  FINANCE_ACCOUNTS_READ: "finance.accounts.read",
+  FINANCE_ACCOUNTS_CREATE: "finance.accounts.create",
+  FINANCE_ACCOUNTS_UPDATE: "finance.accounts.update",
+
+  /* ------------------------------------------------------------------
    * Suppliers / Procurement
    * ------------------------------------------------------------------ */
 
