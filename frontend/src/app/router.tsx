@@ -53,6 +53,7 @@ import {
   SalesHistoryPage,
 } from "@/features/sales";
 import { SuppliersPage } from "@/features/suppliers";
+import { ChartOfAccountsPage } from "@/features/finance";
 import AdministrationUsersPage from "@/features/administration/pages/AdministrationUsersPage";
 
 /**
@@ -436,7 +437,26 @@ export const router = createBrowserRouter([
 
       {
         path: PATHS.FINANCE.ROOT,
-        element: <div>Finance Module (Coming Soon)</div>,
+        element: (
+          <Navigate
+            to={PATHS.FINANCE.CHART_OF_ACCOUNTS}
+            replace
+          />
+        ),
+      },
+      {
+        path: PATHS.FINANCE.CHART_OF_ACCOUNTS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.FINANCE.CHART_OF_ACCOUNTS
+              ].permission
+            }
+          >
+            <ChartOfAccountsPage />
+          </ProtectedRoute>
+        ),
       },
 
       /*

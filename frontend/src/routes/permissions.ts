@@ -114,6 +114,10 @@ export const ROUTE_PERMISSION_REQUIREMENTS = {
     permission: "suppliers.view",
   },
 
+  [PATHS.FINANCE.CHART_OF_ACCOUNTS]: {
+    permission: "finance.accounts.read",
+  },
+
   [PATHS.SALES.POS]: {
     permission: "sales.create",
   },

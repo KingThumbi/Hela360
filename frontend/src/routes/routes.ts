@@ -62,6 +62,7 @@ export const PATHS = {
 
   FINANCE: {
     ROOT: "/finance",
+    CHART_OF_ACCOUNTS: "/finance/accounts",
     EXPENSES: "/finance/expenses",
     PAYMENTS: "/finance/payments",
     CASHBOOK: "/finance/cashbook",

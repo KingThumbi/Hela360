@@ -1397,6 +1397,17 @@ export const QUERY_KEYS = {
   finance: {
     root: ["finance"] as const,
 
+    chartOfAccounts: (scope: TenantQueryScope, branchId?: string | null) =>
+      createTenantQueryKey(
+        scope,
+        "finance",
+        "chart-of-accounts",
+        branchId ?? "tenant-scope",
+      ),
+
+    disabled: (...segments: readonly QueryKeySegment[]) =>
+      [...QUERY_KEYS.finance.root, "disabled", ...segments] as const,
+
     invoices: () =>
       [...QUERY_KEYS.finance.root, "invoices"] as const,
 
