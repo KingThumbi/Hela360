@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy import select
 
 from app.extensions import db
@@ -494,6 +495,36 @@ class ChartOfAccountsService:
             account_id=account.id,
             parent_id=parent_id,
         )
+
+        structural_change = (
+            account_code != account.account_code
+            or account_type != account.account_type
+            or normal_balance != account.normal_balance
+            or (parent.id if parent else None) != account.parent_id
+            or branch_id != account.branch_id
+            or currency != account.currency
+        )
+        bind = self.session.get_bind()
+        if structural_change and sqlalchemy_inspect(bind).has_table("journal_entries"):
+            from app.models import JournalEntry, JournalEntryLine
+
+            posted_usage = self.session.scalar(
+                select(JournalEntryLine.id)
+                .join(
+                    JournalEntry,
+                    JournalEntry.id == JournalEntryLine.journal_entry_id,
+                )
+                .where(
+                    JournalEntryLine.tenant_id == tenant_id,
+                    JournalEntryLine.account_id == account.id,
+                    JournalEntry.status == "posted",
+                )
+                .limit(1)
+            )
+            if posted_usage is not None:
+                raise ChartOfAccountsError(
+                    "An account used in posted journals cannot have its code, type, normal balance, parent, branch scope or currency changed."
+                )
 
         account.account_code = account_code
         account.account_name = account_name
