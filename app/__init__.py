@@ -87,6 +87,7 @@ def register_blueprints(app: Flask) -> None:
         bp as tenant_administration_bp,
     )
     from app.api.finance_accounts import bp as finance_accounts_bp
+    from app.api.finance_journals import bp as finance_journals_bp
 
     # Enterprise tenant IAM
     init_auth(app)
@@ -114,6 +115,7 @@ def register_blueprints(app: Flask) -> None:
         url_prefix="/api/administration",
     )
     app.register_blueprint(finance_accounts_bp, url_prefix="/api")
+    app.register_blueprint(finance_journals_bp, url_prefix="/api")
 
 
 # =============================================================================

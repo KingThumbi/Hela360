@@ -41,6 +41,7 @@ from app.models.uom_remediation import (
 )
 from app.models.customer import Customer
 from app.models.chart_of_account import ChartOfAccount
+from app.models.journal_entry import JournalEntry, JournalEntryLine
 from app.models.customer_contact import CustomerContact
 from app.models.supplier import Supplier
 from app.models.inventory import (
@@ -108,6 +109,8 @@ __all__ = [
     "TenantUOMRemediationReview",
     "Customer",
     "ChartOfAccount",
+    "JournalEntry",
+    "JournalEntryLine",
     "CustomerContact",
     "Supplier",
     "Warehouse",
