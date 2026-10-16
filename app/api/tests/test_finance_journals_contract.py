@@ -18,6 +18,7 @@ from app.models import (
     NumberSequence,
     Tenant,
 )
+from app.models.audit import AuditLog
 from app.services.tenant.finance import ChartOfAccountsError, ChartOfAccountsService
 
 
@@ -40,6 +41,7 @@ def app_context(monkeypatch: pytest.MonkeyPatch):
             NumberSequence.__table__,
             JournalEntry.__table__,
             JournalEntryLine.__table__,
+            AuditLog.__table__,
         ]
         for table in tables:
             table.create(db.engine)
@@ -324,3 +326,112 @@ def test_journal_total_cannot_overflow_header_numeric_range(client):
 
     assert response.status_code == 400
     assert "total debit exceeds" in response.get_json()["error"].lower()
+
+def test_journal_lifecycle_emits_finance_audit_events(client, monkeypatch):
+    from app.services.common.audit_actions import AuditAction
+    from app.services.common.audit_service import AuditService, audit_service
+
+    http, _identity = client
+    events = []
+
+    def capture_audit_event(**kwargs):
+        events.append(kwargs)
+        return AuditService.log(audit_service, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.tenant.finance.journal_service.audit_service.log",
+        capture_audit_event,
+    )
+
+    # 1. Create a draft.
+    entry = create_draft(http)
+
+    # 2. Update the draft.
+    updated = http.patch(
+        f"/api/finance/journals/{entry['id']}",
+        json={
+            "description": "Updated audit test draft",
+            "reference": "AUDIT-TEST-1",
+        },
+    )
+    assert updated.status_code == 200, updated.get_json()
+
+    # 3. Post the balanced journal.
+    posted = http.post(
+        f"/api/finance/journals/{entry['id']}/post"
+    )
+    assert posted.status_code == 200, posted.get_json()
+
+    # 4. Reverse it using a separate journal.
+    reversed_response = http.post(
+        f"/api/finance/journals/{entry['id']}/reverse",
+        json={
+            "journal_date": "2026-10-15",
+            "reason": "Audit lifecycle test",
+        },
+    )
+    assert reversed_response.status_code == 201, reversed_response.get_json()
+
+    expected_actions = [
+        AuditAction.FINANCE_JOURNAL_CREATED,
+        AuditAction.FINANCE_JOURNAL_UPDATED,
+        AuditAction.FINANCE_JOURNAL_POSTED,
+        AuditAction.FINANCE_JOURNAL_REVERSED,
+    ]
+
+    assert [event["action"] for event in events] == expected_actions
+
+    # Every event must carry the correct audit context.
+    for event in events:
+        assert event["module"] == "FINANCE"
+        assert event["entity_type"] == "JournalEntry"
+        assert event["tenant_id"] == "tenant-1"
+        assert event["branch_id"] == "branch-1"
+        assert event["user_id"] == "user-1"
+        assert event["commit"] is False
+
+    # Creation and update must preserve meaningful snapshots.
+    assert events[0]["new_values"]["status"] == "draft"
+    assert events[0]["entity_id"] == entry["id"]
+
+    assert events[1]["entity_id"] == entry["id"]
+    assert events[1]["old_values"]["description"] == "Manual journal test"
+    assert events[1]["new_values"]["description"] == "Updated audit test draft"
+
+    # Posting must be recorded with the posted state.
+    assert events[2]["entity_id"] == entry["id"]
+    assert events[2]["new_values"]["status"] == "posted"
+
+    # Reversal must be auditable as a separate posted journal.
+    reversal_event = events[3]
+    assert reversal_event["entity_id"] == entry["id"]
+    assert reversal_event["old_values"]["status"] == "posted"
+    assert reversal_event["new_values"]["reason"] == "Audit lifecycle test"
+
+    reversal_snapshot = reversal_event["new_values"]["reversal"]
+    assert reversal_snapshot["status"] == "posted"
+    assert reversal_snapshot["reversal_of_id"] == entry["id"]
+    assert reversal_snapshot["total_debit"] == "100.00"
+    assert reversal_snapshot["total_credit"] == "100.00"
+
+    # Confirm that the real AuditService persisted all four events.
+    persisted = (
+        AuditLog.query.filter_by(
+            tenant_id="tenant-1",
+            entity_type="JournalEntry",
+        )
+        .order_by(AuditLog.id.asc())
+        .all()
+    )
+    assert len(persisted) == 4
+    assert [row.action for row in persisted] == [
+        action.value for action in expected_actions
+    ]
+    assert [row.module_code for row in persisted] == ["FINANCE"] * 4
+    assert [row.entity_id for row in persisted] == [entry["id"]] * 4
+    assert persisted[0].new_values["status"] == "draft"
+    assert persisted[1].old_values["description"] == "Manual journal test"
+    assert persisted[1].new_values["description"] == "Updated audit test draft"
+    assert persisted[2].new_values["status"] == "posted"
+    assert persisted[3].new_values["reason"] == "Audit lifecycle test"
+    assert persisted[3].details["reversal_journal_id"] == reversal_snapshot["id"]
