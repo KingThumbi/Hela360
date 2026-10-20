@@ -603,6 +603,13 @@ export const API_ENDPOINTS = {
   FINANCE: {
     ACCOUNTS: "/finance/accounts",
     ACCOUNT: (id: string) => byId("/finance/accounts", id),
+
+    JOURNALS: "/finance/journals",
+    JOURNAL: (id: string) => byId("/finance/journals", id),
+    POST_JOURNAL: (id: string) =>
+      `${byId("/finance/journals", id)}/post`,
+    REVERSE_JOURNAL: (id: string) =>
+      `${byId("/finance/journals", id)}/reverse`,
   },
 
   /**

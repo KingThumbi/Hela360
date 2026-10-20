@@ -118,6 +118,10 @@ export const ROUTE_PERMISSION_REQUIREMENTS = {
     permission: "finance.accounts.read",
   },
 
+  [PATHS.FINANCE.JOURNALS]: {
+    permission: "finance.journals.read",
+  },
+
   [PATHS.SALES.POS]: {
     permission: "sales.create",
   },

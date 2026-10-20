@@ -6,6 +6,7 @@ import { ROUTE_PERMISSION_REQUIREMENTS } from "@/routes/permissions";
 import { OfficeProtectedRoute } from "@/routes/OfficeProtectedRoute";
 import { OFFICE_PATHS } from "@/routes/officeRoutes";
 import { ProtectedRoute } from "@/routes/ProtectedRoute";
+import { FinanceIndexRedirect } from "@/routes/FinanceIndexRedirect";
 import { PATHS } from "@/routes/routes";
 import {
   ApplicationProvider,
@@ -53,7 +54,10 @@ import {
   SalesHistoryPage,
 } from "@/features/sales";
 import { SuppliersPage } from "@/features/suppliers";
-import { ChartOfAccountsPage } from "@/features/finance";
+import {
+  ChartOfAccountsPage,
+  JournalEntriesPage,
+} from "@/features/finance";
 import AdministrationUsersPage from "@/features/administration/pages/AdministrationUsersPage";
 
 /**
@@ -437,12 +441,7 @@ export const router = createBrowserRouter([
 
       {
         path: PATHS.FINANCE.ROOT,
-        element: (
-          <Navigate
-            to={PATHS.FINANCE.CHART_OF_ACCOUNTS}
-            replace
-          />
-        ),
+        element: <FinanceIndexRedirect />,
       },
       {
         path: PATHS.FINANCE.CHART_OF_ACCOUNTS,
@@ -455,6 +454,20 @@ export const router = createBrowserRouter([
             }
           >
             <ChartOfAccountsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: PATHS.FINANCE.JOURNALS,
+        element: (
+          <ProtectedRoute
+            permission={
+              ROUTE_PERMISSION_REQUIREMENTS[
+                PATHS.FINANCE.JOURNALS
+              ].permission
+            }
+          >
+            <JournalEntriesPage />
           </ProtectedRoute>
         ),
       },

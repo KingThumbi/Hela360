@@ -12,7 +12,9 @@ import type {
   UpdateChartOfAccountRequest,
 } from "@/services/finance";
 
-export function useChartOfAccounts() {
+export function useChartOfAccounts(
+  options: { enabled?: boolean } = {},
+) {
   const { tenantScope, branchId, isTenantScopeReady } = useQueryScope();
 
   return useEntityList<ChartOfAccount>(
@@ -20,7 +22,7 @@ export function useChartOfAccounts() {
       ? QUERY_KEYS.finance.chartOfAccounts(tenantScope, branchId)
       : QUERY_KEYS.finance.disabled("chart-of-accounts"),
     () => chartOfAccountsService.list(),
-    { enabled: isTenantScopeReady },
+    { enabled: isTenantScopeReady && (options.enabled ?? true) },
   );
 }
 
