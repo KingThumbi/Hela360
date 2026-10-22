@@ -1405,6 +1405,48 @@ export const QUERY_KEYS = {
         branchId ?? "tenant-scope",
       ),
 
+    journalLists: (scope: TenantQueryScope, branchId?: string | null) =>
+      [
+        ...createTenantQueryKey(
+          scope,
+          "finance",
+          "journals",
+          branchId ?? "tenant-scope",
+        ),
+        "list",
+      ] as const,
+
+    journals: (
+      scope: TenantQueryScope,
+      branchId?: string | null,
+      params?: { status?: "draft" | "posted"; limit?: number },
+    ) =>
+      [
+        ...QUERY_KEYS.finance.journalLists(scope, branchId),
+        params ?? {},
+      ] as const,
+
+    journalDetails: (scope: TenantQueryScope, branchId?: string | null) =>
+      [
+        ...createTenantQueryKey(
+          scope,
+          "finance",
+          "journals",
+          branchId ?? "tenant-scope",
+        ),
+        "detail",
+      ] as const,
+
+    journal: (
+      scope: TenantQueryScope,
+      branchId: string | null | undefined,
+      journalId: string,
+    ) =>
+      [
+        ...QUERY_KEYS.finance.journalDetails(scope, branchId),
+        journalId.trim(),
+      ] as const,
+
     disabled: (...segments: readonly QueryKeySegment[]) =>
       [...QUERY_KEYS.finance.root, "disabled", ...segments] as const,
 

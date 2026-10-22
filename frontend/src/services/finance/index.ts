@@ -82,3 +82,21 @@ export type {
   NormalBalance,
   UpdateChartOfAccountRequest,
 } from "./chartOfAccountsService";
+
+
+/* --------------------------------------------------------------------------
+ * Manual Journal Entries
+ * -------------------------------------------------------------------------- */
+
+export { journalService } from "./journalService";
+
+export type {
+  CreateJournalEntryRequest,
+  JournalEntry,
+  JournalEntryLine,
+  JournalEntryLineRequest,
+  JournalStatus,
+  ListJournalEntriesParams,
+  ReverseJournalEntryRequest,
+  UpdateJournalEntryRequest,
+} from "./journalService";

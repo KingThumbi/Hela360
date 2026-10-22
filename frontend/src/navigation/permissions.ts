@@ -74,6 +74,11 @@ export const PERMISSIONS = {
   FINANCE_ACCOUNTS_CREATE: "finance.accounts.create",
   FINANCE_ACCOUNTS_UPDATE: "finance.accounts.update",
 
+  FINANCE_JOURNALS_READ: "finance.journals.read",
+  FINANCE_JOURNALS_CREATE: "finance.journals.create",
+  FINANCE_JOURNALS_POST: "finance.journals.post",
+  FINANCE_JOURNALS_REVERSE: "finance.journals.reverse",
+
   /* ------------------------------------------------------------------
    * Suppliers / Procurement
    * ------------------------------------------------------------------ */

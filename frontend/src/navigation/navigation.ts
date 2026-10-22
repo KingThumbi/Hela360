@@ -7,6 +7,7 @@ import {
 } from "./ids";
 
 import {
+  BookOpen,
   Boxes,
   Building2,
   CreditCard,
@@ -166,6 +167,15 @@ export const navigation: NavigationSection[] = [
         icon: Landmark,
         permission: ROUTE_PERMISSION_REQUIREMENTS[
           PATHS.FINANCE.CHART_OF_ACCOUNTS
+        ].permission,
+      },
+      {
+        id: NAVIGATION_ITEM_IDS.JOURNALS,
+        title: "Journal Entries",
+        href: PATHS.FINANCE.JOURNALS,
+        icon: BookOpen,
+        permission: ROUTE_PERMISSION_REQUIREMENTS[
+          PATHS.FINANCE.JOURNALS
         ].permission,
       },
     ],
